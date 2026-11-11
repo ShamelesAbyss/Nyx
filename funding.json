@@ -49,7 +49,7 @@
         "guid": "nyx-development-grant",
         "status": "active",
         "name": "NYX open-source Android development grant",
-        "description": "Requested one-time USD 10,000 grant for a six-month milestone: $6,000 maintainer development time, $1,500 Android test devices and compatibility testing, $1,000 security and regression testing, $1,000 user documentation and onboarding, and $500 build/release infrastructure. Proposed budget; expenditures and milestones subject to funder agreement. Goals include validated Android builds, documented local-model setup, improved agent/workflow reliability, accessibility improvements, and reproducible releases.",
+        "description": "Six-month $10,000 development plan: $6,000 maintainer time; $1,500 Android device testing; $1,000 security and regression tests; $1,000 documentation and onboarding; $500 build and release infrastructure. Deliverables: tested Android builds, reliable local-model agents and workflows, accessibility improvements, setup guides, and reproducible open-source releases. Funding is requested, not awarded.",
         "amount": 10000,
         "currency": "USD",
         "frequency": "one-time",
