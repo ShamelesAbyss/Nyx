@@ -1,0 +1,62 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "individual",
+    "role": "maintainer",
+    "name": "Christopher Dodd",
+    "email": "REPLACE_WITH_YOUR_PUBLIC_EMAIL@example.com",
+    "description": "Independent developer maintaining NYX, a local-first Android AI workstation focused on user control, privacy, and accessible on-device AI workflows. Seeking support to improve reliability, documentation, testing, and open-source sustainability.",
+    "webpageUrl": {
+      "url": "https://github.com/ShamelesAbyss"
+    }
+  },
+  "projects": [
+    {
+      "guid": "nyx",
+      "name": "NYX",
+      "description": "NYX is a Kotlin and Jetpack Compose Android application for interacting with local Ollama models and explicitly configured OpenAI-compatible endpoints. The current public version supports streaming chat, persisted conversation history, bounded AI agents, sequential workflows, locally scoped tools, and encrypted credential storage. Funding would support testing on a wider range of Android devices, accessibility and interface improvements, reliable workflow execution, clearer onboarding and documentation, security reviews, and reproducible open-source releases. The project does not currently claim to provide direct GGUF inference or autonomous unrestricted terminal control.",
+      "webpageUrl": {
+        "url": "https://github.com/ShamelesAbyss/Nyx"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/ShamelesAbyss/Nyx"
+      },
+      "licenses": [
+        "spdx:Apache-2.0"
+      ],
+      "tags": [
+        "android",
+        "artificial-intelligence",
+        "local-first",
+        "privacy",
+        "developer-tools",
+        "kotlin",
+        "open-source"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "private-bank-transfer",
+        "type": "bank",
+        "description": "Banking and tax information will be provided privately to an approved grant administrator after award verification. Do not publish bank details."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "nyx-development-grant",
+        "status": "active",
+        "name": "NYX open-source Android development grant",
+        "description": "Requested one-time USD 10,000 grant for a six-month milestone: $6,000 maintainer development time, $1,500 Android test devices and compatibility testing, $1,000 security and regression testing, $1,000 user documentation and onboarding, and $500 build/release infrastructure. Proposed budget; expenditures and milestones subject to funder agreement. Goals include validated Android builds, documented local-model setup, improved agent/workflow reliability, accessibility improvements, and reproducible releases.",
+        "amount": 10000,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "private-bank-transfer"
+        ]
+      }
+    ]
+  }
+}
