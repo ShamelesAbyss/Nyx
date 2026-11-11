@@ -1,0 +1,13 @@
+# Gradle / Android build outputs
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+
+# Never commit private release signing materials
+*.jks
+*.keystore
+keystore.properties
