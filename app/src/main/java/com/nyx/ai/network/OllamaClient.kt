@@ -26,18 +26,14 @@ data class ApiMessage(
     val toolCallId: String? = null
 )
 data class InferenceOptions(val temperature: Double = 0.7, val contextLength: Int = 4096, val cpuThreads: Int = 4)
+class ToolCallingUnsupportedException(message: String) : IOException(message)
 
 /** Local HTTP client for Ollama and OpenAI-compatible APIs. Requests go only to this configured base URL. */
 class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
     val baseUrl: String = baseUrl.trim().trimEnd('/')
     private val openAiCompatible = this.baseUrl.substringBefore('?').endsWith("/v1")
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .callTimeout(15, TimeUnit.MINUTES)
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .build()
+    // A process-wide client shares its dispatcher and connection pool across endpoint/client instances.
+    private val http = sharedHttp
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
     suspend fun listModels(): List<LocalModel> {
@@ -45,7 +41,10 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
         val request = Request.Builder().url(url).get().apply { addApiKeyIfNeeded() }.build()
         val response = http.newCall(request).await()
         response.use {
-            if (!it.isSuccessful) throw IOException("Inference server returned HTTP ${it.code}")
+            if (!it.isSuccessful) {
+                val detail = readBoundedErrorBody(it)
+                throw IOException("Inference server returned HTTP ${it.code}${if (detail.isNotBlank()) ": $detail" else ""}")
+            }
             val root = JSONObject(it.body?.string().orEmpty())
             val arr = root.optJSONArray(if (openAiCompatible) "data" else "models") ?: JSONArray()
             return (0 until arr.length()).mapNotNull { index ->
@@ -99,7 +98,16 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
             override fun onResponse(call: Call, response: Response) {
                 response.use { res ->
                     if (!res.isSuccessful) {
-                        if (continuation.isActive) continuation.resumeWithException(IOException("Inference server returned HTTP ${res.code}: ${res.message}"))
+                        val detail = readBoundedErrorBody(res)
+                        val message = "Inference server returned HTTP ${res.code}${if (detail.isNotBlank()) ": $detail" else ": ${res.message}"}"
+                        val normalized = detail.lowercase()
+                        val doesNotSupportTools = tools != null && tools.length() > 0 && res.code == 400 && listOf(
+                            "does not support tools", "doesn't support tools", "tool calling is not supported",
+                            "tools are not supported", "does not support tool calling", "unsupported tool calling"
+                        ).any(normalized::contains)
+                        if (continuation.isActive) continuation.resumeWithException(
+                            if (doesNotSupportTools) ToolCallingUnsupportedException(message) else IOException(message)
+                        )
                         return
                     }
                     try {
@@ -166,6 +174,17 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
         return this
     }
 
+    private fun readBoundedErrorBody(response: Response): String {
+        val body = response.body ?: return ""
+        val buffer = okio.Buffer()
+        val count = runCatching { body.source().read(buffer, 2048) }.getOrDefault(0L)
+        if (count <= 0) return ""
+        var text = buffer.readUtf8().replace(Regex("[\\p{Cntrl}&&[^\\t]]"), " ").replace(Regex("\\s+"), " ").trim()
+        val key = apiKey?.takeIf { it.isNotBlank() }
+        if (key != null) text = text.replace(key, "[REDACTED]")
+        return text.take(600)
+    }
+
     private fun argumentsObject(value: Any?): JSONObject = when (value) {
         is JSONObject -> value
         is String -> try { JSONObject(value) } catch (_: Exception) { JSONObject() }
@@ -197,5 +216,15 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
                 if (continuation.isActive) continuation.resume(response) else response.close()
             }
         })
+    }
+
+    companion object {
+        private val sharedHttp: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.MINUTES)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
     }
 }

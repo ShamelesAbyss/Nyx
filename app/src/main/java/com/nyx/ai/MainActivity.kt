@@ -91,6 +91,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -143,7 +144,7 @@ private fun NyxTheme(content: @Composable () -> Unit) {
 @Composable
 private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val state by vm.state.collectAsState()
-    var tab by remember { mutableStateOf(0) }
+    var tab by rememberSaveable { mutableStateOf(0) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.registerGguf(uri, context.displayName(uri))
@@ -234,8 +235,8 @@ private fun ErrorBanner(text: String, dismiss: () -> Unit) {
 
 @Composable
 private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
-    var draft by remember { mutableStateOf("") }
-    var showHistory by remember { mutableStateOf(false) }
+    var draft by rememberSaveable { mutableStateOf("") }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 780.dp
         Row(Modifier.fillMaxSize()) {
@@ -396,6 +397,7 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
         item { Text("AVAILABLE SERVER MODELS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp) }
         if (state.models.isEmpty()) item { EmptyCard("No models listed yet. Pull or install a model in your Ollama environment.") }
         items(state.models, key = { it.name }) { model -> ModelCard(model, model.name == state.selectedModel, if (state.endpoint.substringBefore('?').endsWith("/v1")) "OpenAI-compatible" else "Ollama") { vm.selectModel(model.name) } }
+        item { ModelMemoryAdvisory(state) }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp)) {
@@ -424,6 +426,24 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
 }
 
 @Composable
+private fun ModelMemoryAdvisory(state: NyxState) {
+    val context = LocalContext.current
+    val snapshot = remember(state.models, state.selectedModel) {
+        val memory = ActivityManager.MemoryInfo()
+        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+        state.models.firstOrNull { it.name == state.selectedModel }?.let { it.sizeBytes to memory.availMem }
+    } ?: return
+    val (modelBytes, availableBytes) = snapshot
+    if (modelBytes <= 0 || modelBytes < availableBytes * 0.65) return
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF302619)), shape = RoundedCornerShape(14.dp)) {
+        Text(
+            "RAM advisory: this model's reported file size is about ${modelBytes / (1024 * 1024)} MB, while Android currently reports ${availableBytes / (1024 * 1024)} MB available. Model file size is not the same as runtime RAM; context/cache may need more, and memory mapping varies. This is a caution, not a compatibility prediction.",
+            Modifier.padding(13.dp), color = Color(0xFFF2C879), fontSize = 11.sp, lineHeight = 16.sp
+        )
+    }
+}
+
+@Composable
 private fun ModelCard(model: LocalModel, selected: Boolean, backend: String, onSelect: () -> Unit) {
     Card(onClick = onSelect, colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF20192D) else Surface1), border = if (selected) BorderStroke(1.dp, Violet.copy(alpha = 0.6f)) else null, shape = RoundedCornerShape(15.dp)) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -441,6 +461,7 @@ private fun ModelCard(model: LocalModel, selected: Boolean, backend: String, onS
 @Composable
 private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: () -> Unit) {
     var showCreate by remember { mutableStateOf(false) }
+    var editingAgent by remember { mutableStateOf<AgentEntity?>(null) }
     var createName by remember { mutableStateOf("") }
     var createPrompt by remember { mutableStateOf("") }
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
@@ -451,11 +472,11 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("AGENTS", Modifier.weight(1f), color = VioletSoft, fontSize = 11.sp, letterSpacing = 1.2.sp, fontWeight = FontWeight.SemiBold)
                         IconButton(onClick = onImportDocument) { Icon(Icons.Rounded.FolderOpen, "Import text document", tint = VioletSoft) }
-                        IconButton(onClick = { showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
+                        IconButton(onClick = { editingAgent = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
                     }
                     Text("Choose an agent, then work in the adjacent task pane.", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp))
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId) { vm.selectAgent(agent.id) } }
+                        items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions }) { vm.selectAgent(agent.id) } }
                     }
                 }
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Surface2))
@@ -467,17 +488,17 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SectionIntro("Local agents", "Agents use your selected local inference model and a bounded, allowlisted tool loop.", Modifier.weight(1f))
                         IconButton(onClick = onImportDocument) { Icon(Icons.Rounded.FolderOpen, "Import text document", tint = VioletSoft) }
-                        IconButton(onClick = { showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
+                        IconButton(onClick = { editingAgent = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
                     }
                 }
-                items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId) { vm.selectAgent(agent.id) } }
+                items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions }) { vm.selectAgent(agent.id) } }
                 item { AgentWorkspaceContent(state, vm, Modifier.fillMaxWidth()) }
             }
         }
     }
     if (showCreate) AlertDialog(
         onDismissRequest = { showCreate = false }, containerColor = Surface1,
-        title = { Text("Create an agent", color = TextMain) },
+        title = { Text(if (editingAgent == null) "Create an agent" else "Edit agent", color = TextMain) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(createName, { createName = it }, label = { Text("Name") }, singleLine = true)
@@ -485,7 +506,10 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                 Text("Tools are limited to local calculator, private memory, planning, and the app sandbox workspace.", color = TextMuted, fontSize = 11.sp)
             }
         },
-        confirmButton = { TextButton(onClick = { vm.createAgent(createName, createPrompt); showCreate = false; createName = ""; createPrompt = "" }) { Text("Create") } },
+        confirmButton = { TextButton(onClick = {
+            editingAgent?.let { vm.updateAgent(it, createName, createPrompt) } ?: vm.createAgent(createName, createPrompt)
+            showCreate = false; editingAgent = null; createName = ""; createPrompt = ""
+        }) { Text(if (editingAgent == null) "Create" else "Save") } },
         dismissButton = { TextButton(onClick = { showCreate = false }) { Text("Cancel") } }
     )
 }
@@ -516,7 +540,7 @@ private fun AgentWorkspaceContent(state: NyxState, vm: NyxViewModel, modifier: M
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(15.dp)) {
                 Column(Modifier.padding(14.dp)) {
                     Text("EXECUTION TRACE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                    state.agentEvents.forEach { event -> Text("${event.kind.uppercase(Locale.ROOT)} · ${event.text}", color = if (event.kind == "tool") VioletSoft else TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp)) }
+                    state.agentEvents.forEach { event -> Text("${event.kind.uppercase(Locale.ROOT)} · ${event.text}", color = when (event.kind) { "tool" -> VioletSoft; "warning" -> Color(0xFFF2C879); else -> TextMuted }, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp)) }
                 }
             }
         }
@@ -525,7 +549,7 @@ private fun AgentWorkspaceContent(state: NyxState, vm: NyxViewModel, modifier: M
 }
 
 @Composable
-private fun AgentCard(agent: AgentEntity, selected: Boolean, onClick: () -> Unit) {
+private fun AgentCard(agent: AgentEntity, selected: Boolean, onEdit: () -> Unit, onClick: () -> Unit) {
     Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF20192D) else Surface1), border = if (selected) BorderStroke(1.dp, Violet.copy(alpha = 0.6f)) else null, shape = RoundedCornerShape(15.dp)) {
         Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(36.dp).clip(CircleShape).background(Surface2), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.SmartToy, null, tint = VioletSoft, modifier = Modifier.size(19.dp)) }
@@ -534,6 +558,7 @@ private fun AgentCard(agent: AgentEntity, selected: Boolean, onClick: () -> Unit
                 Text(agent.name, color = TextMain, fontWeight = FontWeight.SemiBold)
                 Text(agent.description.orEmpty(), color = TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, "Edit ${agent.name}", tint = TextMuted, modifier = Modifier.size(18.dp)) }
             RadioButton(selected, onClick)
         }
     }

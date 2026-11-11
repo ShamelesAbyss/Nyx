@@ -1,38 +1,39 @@
-# NYX User Guide
+# NYX User Guide — 0.3.0
 
-## Connect to an inference server
+## Connect to Ollama in Termux
 
-On launch, NYX checks Ollama at `http://127.0.0.1:11434` and lists `/api/tags`. Start Ollama yourself in your Android environment; NYX does not install it. In Termux, after installing/configuring Ollama, run `ollama serve`. Use **Models → Refresh** to check again. For another Ollama service, enter its base URL in **Settings** without `/api`, then choose **Save & connect**.
+NYX checks the local Ollama API at `http://127.0.0.1:11434` on launch. Install/configure Ollama in your supported Android environment (NYX does not install it), then start it in Termux:
 
-NYX also supports OpenAI-compatible APIs when the base URL ends in `/v1`. A local development server can use a URL such as `http://127.0.0.1:8080/v1`; remote endpoints should use HTTPS. The server must expose `GET /models` and streaming `POST /chat/completions`. Function tools require compatible tool support. NYX sends optional standard Bearer authentication on these two routes only. It does not send API keys to Ollama.
+```sh
+ollama serve
+```
 
-### Save an API key
+Use **Models → Refresh** to retry discovery. The default server should expose `GET /api/tags` and `POST /api/chat`. To use another Ollama host/port, open **Settings**, enter its API base URL (without `/api`), and choose **Save & connect**. Non-loopback hosts require the separate **Allow external server** consent. NYX does not scan other apps' private directories.
 
-1. Enter and **Save & connect** the `/v1` endpoint first.
-2. Enable **Allow external server** before connecting to a non-loopback host. Verify that you trust the server.
-3. Enter the key in the masked **API key** field and tap **Save key securely**. Remote hosts require HTTPS; plain HTTP is accepted for loopback development only.
-4. NYX encrypts the credential with AES-GCM using a non-exportable Android Keystore key. The encrypted value is in app-private no-backup storage; the Room database stores only a random credential reference. The key is not displayed again. Use **Remove key** to delete it from this device, or enter a new value to replace it.
+## OpenAI-compatible servers and API keys
 
-A key may be lost if app data is cleared, the app is uninstalled, or device Keystore material becomes unavailable; enter it again in those cases. This storage protects data at rest, but not a rooted/compromised device, runtime memory inspection, or the endpoint receiving the key. NYX does not pin TLS certificates in this build. Do not place secrets in endpoint URLs.
+A compatible base URL ends with `/v1`, such as `http://127.0.0.1:8080/v1` for loopback development. The server must implement `GET /models` and streaming `POST /chat/completions`; function calling requires a compatible tools interface. NYX sends standard Bearer authentication only to those `/v1` model/chat requests and never adds it to Ollama routes.
 
-Select an installed model in Chat or Models. NYX does not download models. Temperature is sent in both modes; context length and CPU-thread values currently apply to Ollama only.
+Save/connect the endpoint first. Then enter an optional key in the masked Settings field. AES-GCM protects it using a non-exportable Android Keystore key; ciphertext is app-private/no-backup and Room stores only a random reference. Remove or replace the key in Settings. Remote keys require HTTPS; loopback HTTP is allowed for local development only. Redirects are disabled. Error diagnostics are bounded and redact the exact configured key, but do not expose keys in a URL. Keystore protection cannot defend against a rooted/compromised OS, runtime memory inspection, or the server that receives the key; TLS certificate pinning is not implemented.
 
-## Chat and screen layouts
+## Models, chat, and troubleshooting
 
-Create a chat and send a prompt. **Stop** cancels an in-flight request; conversation history supports selecting, renaming, copying, deleting, and regenerating. On phones, navigation is at the bottom. At expanded widths, NYX uses a persistent navigation rail and Chat can show the history list beside the conversation. Layouts respond to available width, but hinge/posture-specific pane avoidance has not yet been tested on physical foldables.
+Select a discovered model in Chat or Models. NYX does not download models. Chat is persisted locally, streams tokens, supports stop/copy/regenerate, and the current input/section are retained across Activity recreation. Context length and CPU thread options currently apply to Ollama; temperature is sent to both backends.
 
-## Agents and text documents
+If a model/server rejects native tool calls with an Ollama HTTP 400 capability error, NYX surfaces a bounded server diagnostic, records a warning, and retries that agent turn once without tools. The text-only fallback is instructed not to claim tools ran. No tools run in that fallback. Other HTTP 400 errors include a shortened server response detail when available. Use a model/runtime with tool support for calculator, planning, memory, and workspace operations.
 
-Select a built-in agent or create one with custom instructions. Agents use a bounded loop and can access only the basic arithmetic calculator, per-agent private memory, structured plan storage, and a workspace confined to app-private simple filenames. There is no shell or general Android filesystem access.
+## Agents, documents, and workflows
 
-On the Agents screen, use the folder icon to select a user-approved UTF-8 text, Markdown, CSV, JSON, or log file. The importer enforces a 256 KB file limit and a 60,000-character combined task limit. PDF, DOCX, XLSX, binary files, and OCR are not supported. Imported text is added directly to the current agent task, not kept as a separate document record. When you run the task, that text is sent to the selected inference server; verify the endpoint before importing sensitive material. The agent can also analyze content you paste into the task field.
+The Agents screen provides built-in templates and lets you create or edit an agent's name and system instructions. Agents have bounded steps and only the local allowlisted calculator, per-agent private key/value memory, structured plan, and app-private single-filename workspace tools. Shell access and unrestricted file access are not available. Chat, agent, and workflow inference tasks are serialized so they do not concurrently load the phone's local backend.
 
-## Workflows, models, and GGUF
+Use the folder action to select a user-approved UTF-8 text, Markdown, CSV, JSON, or log file. Each import is limited to 256 KB and the combined task to 60,000 characters. Imported content is appended to the current task; it is not maintained as a separate library or metadata record. It is sent to the configured inference endpoint when you run the agent, so avoid importing sensitive text if you have not verified the endpoint. PDF, office formats, OCR, and binary files are not supported.
 
-Workflows run selected agents sequentially in displayed list order; each receives the goal and earlier results. Logs are stored locally. GGUF selection in Models registers the user-granted URI only; native llama.cpp/JNI loading, generation, and GPU acceleration are not included.
+Workflows run selected agents sequentially in the displayed order and pass accumulated text forward; execution logs are stored locally. NYX does not yet have user-editable workflow templates or parallel execution.
 
-The Settings diagnostics panel shows a snapshot of Android version, ABI, app heap class, available system RAM, thermal state where Android exposes it, and the active endpoint/model. These are informational advisories, not a model-fit estimator or thermal-aware inference scheduler. NYX does not claim Tensor TPU or Gemini Nano acceleration.
+## Pixel Fold, memory, and GGUF
 
-## Privacy and limitations
+The owner reports the previous NYX build worked on the Pixel 10 Pro Fold's cover and unfolded screens with local Ollama. In 0.3, narrow layouts retain bottom navigation and wide layouts use a navigation rail; Chat shows history beside the conversation, while Agents and Workflows use split workspaces. Current section and unsent chat draft are saveable across Activity recreation. Width adapts, but hinge/posture avoidance has not been independently verified on 0.3.
 
-NYX includes no analytics, advertising, account, or built-in cloud service. A user-configured remote server may receive prompts, imported text, conversation context, and the API key. External requests require explicit consent; credentials require TLS for non-loopback hosts. The app supports cleartext network traffic for local development, so do not enter a remote HTTP API key. Chat, agent, and workflow data are stored app-privately and normally removed with the app.
+Models may show a RAM advisory comparing an Ollama-reported model file size with a snapshot of currently available system RAM. File size is not runtime memory demand; treat this only as a rough warning. Settings shows Android/ABI, memory, thermal snapshot, endpoint, and model. There is no automatic thermal scheduler, guaranteed fit prediction, Tensor acceleration, Gemini Nano, or TPU integration.
+
+Choosing a `.gguf` file in Models records the URI only. Embedded llama.cpp/JNI inference, model loading/unloading, and GPU acceleration are not in this build.

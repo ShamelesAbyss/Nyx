@@ -89,6 +89,14 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private var agentJob: Job? = null
     private var workflowJob: Job? = null
     private var messageObservation: Job? = null
+    private val inferenceReservationLock = Any()
+    private var inferenceReserved = false
+
+    private fun reserveInference(): Boolean = synchronized(inferenceReservationLock) {
+        if (inferenceReserved) false else { inferenceReserved = true; true }
+    }
+
+    private fun releaseInference() = synchronized(inferenceReservationLock) { inferenceReserved = false }
 
     init {
         viewModelScope.launch {
@@ -309,6 +317,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun sendMessage(text: String) {
         val prompt = text.trim()
         if (prompt.isBlank() || _state.value.isGenerating) return
+        if (!reserveInference()) {
+            _state.update { it.copy(error = "Another inference task is already running. Stop it before starting chat generation.") }
+            return
+        }
         generationJob = viewModelScope.launch {
             val s = _state.value
             if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Connect to Ollama and select an installed model first.") }; return@launch }
@@ -346,6 +358,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(error = e.message ?: "Inference request failed.") }
             } finally { _state.update { it.copy(isGenerating = false, streamingText = "") } }
         }
+        generationJob?.invokeOnCompletion { releaseInference() }
     }
 
     fun stopGeneration() { generationJob?.cancel(); generationJob = null }
@@ -379,6 +392,14 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (name.isBlank()) return
         val agent = AgentEntity(name = name.trim().take(64), description = "User-created local agent", instructions = instructions.trim().take(5000), configurationJson = agentConfig(6, AgentTools.DEFAULT_TOOLS))
         viewModelScope.launch { db.agentDao().upsert(agent); _state.update { it.copy(selectedAgentId = agent.id) } }
+    }
+
+    fun updateAgent(agent: AgentEntity, name: String, instructions: String) {
+        val cleanName = name.trim().take(64)
+        if (cleanName.isBlank()) return
+        viewModelScope.launch {
+            db.agentDao().upsert(agent.copy(name = cleanName, instructions = instructions.trim().take(5000), updatedAt = System.currentTimeMillis()))
+        }
     }
 
     fun selectAgent(id: String) { _state.update { it.copy(selectedAgentId = id) } }
@@ -427,10 +448,12 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun runAgent() {
         val s = _state.value
+        if (s.isGenerating || s.agentRunning || s.workflowRunning) { _state.update { it.copy(error = "Another inference task is already running. Stop it before starting an agent.") }; return }
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId } ?: run { _state.update { it.copy(error = "Select an agent first.") }; return }
         if (s.selectedModel.isBlank() || !s.connected) { _state.update { it.copy(error = "Connect to an Ollama model before running agents.") }; return }
         if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required before running agents.") }; return }
         if (s.agentTask.isBlank()) return
+        if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is already running.") }; return }
         agentJob = viewModelScope.launch {
             _state.update { it.copy(agentRunning = true, agentOutput = "", agentEvents = emptyList(), error = "") }
             val taskId = UUID.randomUUID().toString()
@@ -453,6 +476,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 logDao.upsert(row.copy(status = "failed", errorMessage = e.message, finishedAt = System.currentTimeMillis()))
             } finally { _state.update { it.copy(agentRunning = false) } }
         }
+        agentJob?.invokeOnCompletion { releaseInference() }
     }
 
     private fun appendAgentEvent(event: AgentEvent) { _state.update { it.copy(agentEvents = (it.agentEvents + event).takeLast(100)) } }
@@ -460,11 +484,13 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun runWorkflow() {
         val s = _state.value
+        if (s.isGenerating || s.agentRunning || s.workflowRunning) { _state.update { it.copy(error = "Another inference task is already running. Stop it before starting a workflow.") }; return }
         val chosen = s.agents.filter { it.id in s.workflowAgentIds }
         if (chosen.isEmpty()) { _state.update { it.copy(error = "Choose at least one agent for the sequential workflow.") }; return }
         if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Connect to an Ollama model before running workflows.") }; return }
         if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required before running workflows.") }; return }
         if (s.workflowTask.isBlank()) return
+        if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is already running.") }; return }
         workflowJob = viewModelScope.launch {
             _state.update { it.copy(workflowRunning = true, workflowOutput = "", error = "") }
             val id = UUID.randomUUID().toString(); val start = System.currentTimeMillis()
@@ -494,6 +520,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 db.executionLogDao().upsert(log.copy(status = "failed", outputText = outputs.joinToString("\n\n"), errorMessage = e.message, finishedAt = System.currentTimeMillis()))
             } finally { _state.update { it.copy(workflowRunning = false) } }
         }
+        workflowJob?.invokeOnCompletion { releaseInference() }
     }
     fun stopWorkflow() { workflowJob?.cancel(); workflowJob = null }
 

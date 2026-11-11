@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -46,6 +47,40 @@ class OllamaClientAuthTest {
             val request = server.takeRequest()
             assertEquals("/api/tags", request.path)
             assertNull(request.getHeader("Authorization"))
+        }
+    }
+
+    @Test
+    fun toolUnsupported400IsClassifiedForAgentFallback() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(400).setBody("{\"error\":\"model does not support tools\"}"))
+            val tool = org.json.JSONArray().put(org.json.JSONObject().put("type", "function").put("function", org.json.JSONObject().put("name", "calculator")))
+            try {
+                OllamaClient(server.url("/").toString().trimEnd('/')).chat("no-tools-model", emptyList(), tool)
+                throw AssertionError("Expected tool-calling capability error")
+            } catch (e: ToolCallingUnsupportedException) {
+                assertTrue(e.message.orEmpty().contains("model does not support tools"))
+            }
+            assertEquals("/api/chat", server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun http400DetailsAreBoundedAndRedactApiKey() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(400).setBody("{\"error\":\"invalid model; key=test-secret\"}"))
+            val base = server.url("/v1").toString().trimEnd('/')
+            try {
+                OllamaClient(base, "test-secret").chat("m", emptyList())
+                throw AssertionError("Expected HTTP error")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message.orEmpty().contains("HTTP 400"))
+                assertTrue(e.message.orEmpty().contains("invalid model"))
+                assertTrue(e.message.orEmpty().contains("[REDACTED]"))
+                assertTrue(!e.message.orEmpty().contains("test-secret"))
+            }
         }
     }
 }

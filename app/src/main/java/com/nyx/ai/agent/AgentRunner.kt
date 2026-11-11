@@ -5,6 +5,7 @@ import com.nyx.ai.network.ApiMessage
 import com.nyx.ai.network.InferenceOptions
 import com.nyx.ai.network.OllamaClient
 import com.nyx.ai.network.ToolCall
+import com.nyx.ai.network.ToolCallingUnsupportedException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -48,7 +49,19 @@ class AgentRunner(context: Context, private val client: OllamaClient) {
         while (currentStep < maxSteps) {
             currentStep++
             onEvent(AgentEvent("thinking", "${spec.name}: reasoning step $currentStep/$maxSteps"))
-            val response = client.chat(spec.model, messages, if (allowed.isEmpty()) null else toolSchemas, options, onToken)
+            val response = try {
+                client.chat(spec.model, messages, if (allowed.isEmpty()) null else toolSchemas, options, onToken)
+            } catch (e: ToolCallingUnsupportedException) {
+                val detail = e.message?.take(260)?.let { " Server: $it" }.orEmpty()
+                val warning = "${spec.name}: native tool calling is unavailable for this model/server; retrying once without tools.$detail"
+                val event = AgentEvent("warning", warning)
+                events += event
+                onEvent(event)
+                messages[0] = ApiMessage("system", system + "\n\nThe server rejected native tool calling. Do not request tools or claim to have run tools. Answer directly from the available conversation context; be explicit about the limitation.")
+                val fallback = client.chat(spec.model, messages, null, options, onToken).content
+                val result = fallback.ifBlank { "Native tool calling is unsupported by this model/server. No tools were executed. Retry with a tool-capable model or ask for a text-only answer." }
+                return AgentOutcome(result, events, currentStep)
+            }
             if (response.toolCalls.isEmpty()) {
                 val result = response.content.ifBlank { "The model returned an empty response." }
                 return AgentOutcome(result, events, currentStep)
