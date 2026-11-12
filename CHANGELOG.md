@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 — Project Ascension (published)
+
+Package metadata: versionCode 8 / versionName 0.7.0, min API 26, compile/target API 37, ARM64 JNI. Debug-signed and published as v0.7.0.
+
+### Central autonomy policy
+
+A single policy engine now governs terminal commands, workspace changes, package installs, network access, objectives, and delegated workers. Manual asks before consequential actions; Smart runs routine work inside explicit grants and asks for higher-risk work; Full runs routine and elevated work but still stops for publishing, APK installation, private-data transfers, system changes, and credential disclosure. Emergency Stop denies every new request, grants are persisted and revocable, and every decision is written to a bounded audit journal. Full mode never grants root or bypasses Android permissions.
+
+### Environment intelligence and automatic provisioning
+
+Capability probes now record executable origin, not just a path. A Termux binary found inside a Debian guest is labelled inherited and treated as unusable; `apt` and `dpkg` are probed separately from `pkg`. A deterministic dependency planner derives the required toolchain from the project kind, proposes only official-repository packages, refuses Android SDK installs inside an ARM64 guest, and blocks when no trusted source exists. The installer authorizes the whole plan before running anything, retries once on a lock or temporary network failure, then re-probes and reports tools that are still unverified. Workspaces can be created and write-verified without the user running `mkdir`, with collision-safe names and quoted paths.
+
+### Controlled network access
+
+`fetch_url` is available to objectives through a policy-gated provider. Public requests require HTTPS, credentials in URLs are refused, private/link-local/CGNAT addresses and loopback pivots are blocked, redirects are re-validated, DNS answers are checked, text bodies are size-capped, and fetched content enters a prompt only inside an explicit untrusted-content block. Binary content is rejected. The download implementation uses a temporary file, a hard byte cap, fsync, atomic rename, and SHA-256; the agent tool surface intentionally exposes text fetch only, not arbitrary file drops.
+
+### Delegation and supervision
+
+Objective tasks are assigned deterministic specialist roles (planner, research, coder, environment, tester, verifier, documenter) with role-specific instructions, and a supervisor policy decides continue, replan, pause, or fail from task state, repeated-failure signatures, and remaining budget. A composite tool provider merges terminal and network tools and rejects duplicate names. This is role-based delegation over the existing bounded workers, not one model process per role.
+
+### Reliability
+
+Source batch reads are limited to four files and a 96 KB payload per Termux IPC call, with individual fallback for omitted files, avoiding oversized Binder callbacks. The service refuses to start while Emergency Stop is active. Crash recovery and the existing durable objective leases remain in force.
+
+### Verification and limits
+
+The frozen source completed a clean debug build, 450 JVM tests with zero failures, and instrumentation-test APK compilation. No physical Android device was available, so Termux dispatch, PRoot guest execution, package installation, Keystore storage, notifications, and restart recovery are compiled and unit-tested but not device-verified. The installer applies a verified plan but does not resolve every distribution-specific package split. Full mode is powerful by design; grants default to the selected environment and workspace and should be revoked when work is finished.
+
 ## 0.6.1 — Environment truth and verified developer (published)
 
 Package metadata: versionCode 7/versionName 0.6.1, min API 26, compile/target API 37, ARM64 JNI. This is a debug-signed development release, published as v0.6.1.

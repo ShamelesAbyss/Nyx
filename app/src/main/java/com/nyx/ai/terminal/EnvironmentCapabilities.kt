@@ -29,6 +29,8 @@ data class ToolCapability(
     val path: String? = null,
     val version: String? = null,
     val detail: String? = null,
+    /** Where the executable really comes from; a guest must not use inherited Termux binaries. */
+    val origin: ExecutableOrigin = ExecutableOrigin.UNKNOWN,
 )
 
 /**
@@ -51,6 +53,17 @@ data class EnvironmentCapabilities(
 ) {
     /** Returns the recorded state for [name], or [CapabilityState.NOT_CHECKED] when absent. */
     fun stateOf(name: String): CapabilityState = tools[name]?.state ?: CapabilityState.NOT_CHECKED
+
+    /**
+     * The environment's own package manager, proven by a verified executable. A guest that inherited
+     * Termux's `pkg` reports null rather than pretending APT is available.
+     */
+    val packageManager: String?
+        get() = when {
+            kind.startsWith("proot:") && stateOf("apt") == CapabilityState.VERIFIED -> "apt"
+            kind == "termux_host" && stateOf("pkg") == CapabilityState.VERIFIED -> "pkg"
+            else -> null
+        }
 
     /**
      * True when this snapshot can no longer be trusted. A snapshot taken in the future is always
@@ -96,6 +109,8 @@ object CapabilityProbe {
         "node",
         "npm",
         "pkg",
+        "apt",
+        "dpkg",
     )
 
     const val CAP_PREFIX = "NYX_CAP:"
@@ -108,6 +123,7 @@ object CapabilityProbe {
     private const val MAX_LINE_CHARS = 8_192
     private const val MAX_TOOL_NAME_CHARS = 32
     private val TOOL_NAME = Regex("[A-Za-z0-9][A-Za-z0-9._+-]{0,$MAX_TOOL_NAME_CHARS}")
+    private val ORIGIN_TOKENS = ExecutableOrigin.entries.map { it.name }.toSet()
     private val STATE_BY_TOKEN: Map<String, CapabilityState> =
         CapabilityState.entries.associateBy { it.name }
 
@@ -116,7 +132,8 @@ object CapabilityProbe {
      * `NYX_STORAGE_FREE=<bytes>` and `NYX_WORKSPACE=<0|1>`. `NYX_WS` optionally selects the
      * directory used for the write check; the current directory is used otherwise.
      */
-    fun script(): String = SCRIPT
+    fun script(environmentKind: String = "termux_host"): String =
+        "NYX_ENV_KIND=" + shellQuote(environmentKind) + "\n" + SCRIPT
 
     /**
      * Parses probe output. Malformed lines are ignored, repeated tools keep the last observation,
@@ -164,8 +181,8 @@ object CapabilityProbe {
      * without an absolute executable path is rejected because a name alone is not evidence.
      */
     private fun parseToolLine(line: String): ToolCapability? {
-        val parts = line.removePrefix(CAP_PREFIX).split(':', limit = 4)
-        if (parts.size < 3) return null
+        val parts = line.removePrefix(CAP_PREFIX).split(':', limit = 5)
+        if (parts.size < 4) return null
         val name = parts[0].trim()
         if (!TOOL_NAME.matches(name)) return null
         val state = STATE_BY_TOKEN[parts[1].trim().uppercase()] ?: return null
@@ -173,10 +190,15 @@ object CapabilityProbe {
         if (parts[2].trim().isNotEmpty() && path == null) return null
         if (state == CapabilityState.VERIFIED && path == null) return null
         if ((state == CapabilityState.MISSING || state == CapabilityState.NOT_CHECKED) && path != null) return null
-        val text = sanitizeVersion(parts.getOrNull(3))
+        val originToken = parts.getOrNull(3)?.trim()?.uppercase()
+        val hasOrigin = parts.size == 5 && originToken in ORIGIN_TOKENS
+        val origin = if (hasOrigin) ExecutableOrigin.valueOf(originToken!!) else ExecutableOrigin.UNKNOWN
+        // Four-field legacy lines may contain colons in the diagnostic/version; rejoin them instead
+        // of misreading the first fragment as an origin token.
+        val text = sanitizeVersion(if (hasOrigin) parts[4] else parts.drop(3).joinToString(":"))
         return when (state) {
-            CapabilityState.VERIFIED -> ToolCapability(name, state, path, text)
-            else -> ToolCapability(name, state, path, null, text)
+            CapabilityState.VERIFIED -> ToolCapability(name, state, path, text, null, origin)
+            else -> ToolCapability(name, state, path, null, text, origin)
         }
     }
 
@@ -202,11 +224,26 @@ object CapabilityProbe {
 
     private val MULTIPLE_SPACES = Regex(" {2,}")
 
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
     private val SCRIPT: String = """
         # NYX capability probe. Read-only: resolves tools and prints bounded evidence.
         # NYX_WS optionally selects the directory used for the write-access check.
         export LC_ALL=C
-        emit() { printf 'NYX_CAP:%s:%s:%s:%s\n' "${'$'}1" "${'$'}2" "${'$'}3" "${'$'}4"; }
+        emit() { printf 'NYX_CAP:%s:%s:%s:%s:%s\n' "${'$'}1" "${'$'}2" "${'$'}3" "${'$'}4" "${'$'}5"; }
+        classify_origin() {
+          case "${'$'}NYX_ENV_KIND" in
+            termux_host) printf '%s' TERMUX_HOST ;;
+            proot:*)
+              case "${'$'}1" in
+                /data/data/com.termux/files/usr/*) printf '%s' GUEST_INHERITED_TERMUX ;;
+                /system/*|/apex/*) printf '%s' ANDROID_NATIVE ;;
+                /*) printf '%s' GUEST_NATIVE ;;
+                *) printf '%s' UNKNOWN ;;
+              esac ;;
+            *) printf '%s' UNKNOWN ;;
+          esac
+        }
         version_args() {
           case "${'$'}1" in
             java|javac) printf '%s' '-version' ;;
@@ -233,16 +270,17 @@ object CapabilityProbe {
               done
               IFS=${'$'}_old_ifs
               if [ -n "${'$'}_path" ]; then
-                emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" 'present but not executable'
+                emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" "${'$'}(classify_origin "${'$'}_path")" 'present but not executable'
               else
-                emit "${'$'}_name" MISSING '' ''
+                emit "${'$'}_name" MISSING '' UNKNOWN ''
               fi
               return 0 ;;
-            *) emit "${'$'}_name" MISSING '' ''; return 0 ;;
+            *) emit "${'$'}_name" MISSING '' UNKNOWN ''; return 0 ;;
           esac
           if [ ! -e "${'$'}_path" ] || [ ! -f "${'$'}_path" ] || [ ! -x "${'$'}_path" ]; then
-            emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" ''; return 0
+            emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" "${'$'}(classify_origin "${'$'}_path")" ''; return 0
           fi
+          _origin=${'$'}(classify_origin "${'$'}_path")
           if [ "${'$'}_name" = sh ]; then
             # The shell running this probe has no portable version flag; its path is the evidence.
             _out=
@@ -251,17 +289,21 @@ object CapabilityProbe {
           fi
           case "${'$'}_out" in
             *"Permission denied"*|*"permission denied"*|*EACCES*|*"Operation not permitted"*)
-              emit "${'$'}_name" PERMISSION_DENIED "${'$'}_path" "${'$'}(first_line "${'$'}_out")"
+              emit "${'$'}_name" PERMISSION_DENIED "${'$'}_path" "${'$'}_origin" "${'$'}(first_line "${'$'}_out")"
               return 0 ;;
           esac
           case "${'$'}_out" in
             *"cannot execute"*|*"Exec format error"*|*"bad ELF interpreter"*|*"not found"*|*"No such file or directory"*)
-              emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" "${'$'}(first_line "${'$'}_out")"
+              emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" "${'$'}_origin" "${'$'}(first_line "${'$'}_out")"
               return 0 ;;
           esac
-          emit "${'$'}_name" VERIFIED "${'$'}_path" "${'$'}(first_line "${'$'}_out")"
+          if [ "${'$'}NYX_ENV_KIND" != termux_host ] && [ "${'$'}_origin" = GUEST_INHERITED_TERMUX ]; then
+            emit "${'$'}_name" INCOMPATIBLE "${'$'}_path" "${'$'}_origin" 'inherited Termux binary; install the guest-native package'
+            return 0
+          fi
+          emit "${'$'}_name" VERIFIED "${'$'}_path" "${'$'}_origin" "${'$'}(first_line "${'$'}_out")"
         }
-        for _tool in sh git java javac kotlinc gradle sdkmanager adb clang gcc make cmake python3 node npm pkg; do
+        for _tool in sh git java javac kotlinc gradle sdkmanager adb clang gcc make cmake python3 node npm pkg apt dpkg; do
           probe "${'$'}_tool"
         done
         if command -v df >/dev/null 2>&1; then

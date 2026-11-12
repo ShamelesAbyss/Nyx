@@ -20,6 +20,8 @@ import com.nyx.ai.autonomy.ExecutionMonitor
 import com.nyx.ai.autonomy.InferenceSession
 import com.nyx.ai.autonomy.InferenceSessionFactory
 import com.nyx.ai.autonomy.ObjectiveExecutionEngine
+import com.nyx.ai.agent.NetworkAgentTools
+import com.nyx.ai.autonomy.policy.AutonomyRuntime
 import com.nyx.ai.autonomy.PauseRequested
 import com.nyx.ai.autonomy.ResourcePolicy
 import com.nyx.ai.context.ContextStore
@@ -113,6 +115,12 @@ class ObjectiveExecutionService : Service() {
                 val objectiveId = intent?.getStringExtra(EXTRA_OBJECTIVE_ID)
                 if (objectiveId.isNullOrBlank()) {
                     stopSelf()
+                    return START_NOT_STICKY
+                }
+                AutonomyRuntime.initialize(this)
+                if (AutonomyRuntime.policy().stopped) {
+                    updateNotification("Emergency stop is active. Resume autonomy before starting work.")
+                    stopSelf(startId)
                     return START_NOT_STICKY
                 }
                 if (runJob?.isActive == true) {
@@ -253,6 +261,7 @@ class ObjectiveExecutionService : Service() {
                 database = database,
                 sessions = sessions,
                 terminalTools = terminalTools,
+                extraTools = NetworkAgentTools(this),
                 fileProbe = terminalTools,
                 contextStore = contextStore,
             )

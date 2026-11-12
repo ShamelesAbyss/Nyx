@@ -112,7 +112,10 @@ import androidx.compose.ui.unit.sp
 import com.nyx.ai.terminal.TerminalEnvironment
 import com.nyx.ai.terminal.CapabilityState
 import com.nyx.ai.terminal.WorkspaceCheck
+import com.nyx.ai.terminal.ExecutableOrigin
+import com.nyx.ai.terminal.ProjectKind
 import com.nyx.ai.autonomy.PreflightResult
+import com.nyx.ai.autonomy.policy.AutonomyMode
 import com.nyx.ai.nativeinference.NativePhase
 import com.nyx.ai.network.InferenceFabric
 import com.nyx.ai.settings.MemoryTelemetry
@@ -238,6 +241,7 @@ private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
 private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
     var command by rememberSaveable { mutableStateOf("") }
     var workspace by rememberSaveable { mutableStateOf(state.terminalWorkspace) }
+    var projectName by rememberSaveable { mutableStateOf("nyx-app") }
     val profile = state.terminalProfile
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.refreshTerminalEnvironment() }
     Column(
@@ -339,6 +343,9 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                                 modifier = Modifier.width(92.dp)
                             )
                             Text(tool.version ?: tool.path ?: "", color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (capabilities.kind.startsWith("proot:") && tool.origin == ExecutableOrigin.GUEST_INHERITED_TERMUX) {
+                                Text(" · inherited", color = Color(0xFFF2C879), fontSize = 9.sp)
+                            }
                         }
                     }
                     capabilities.storageFreeBytes?.let { bytes ->
@@ -413,6 +420,78 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                 }
                 if (state.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
                     Text("Guest paths belong to the PRoot filesystem. /storage/emulated/0 and /sdcard are Android paths and are rejected here.", color = TextMuted, fontSize = 10.sp)
+                }
+            }
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("AUTONOMOUS PROVISIONING", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                Text(
+                    "Mode: ${state.autonomyMode.name.lowercase().replaceFirstChar { it.uppercase() }}${if (state.autonomyStopped) " · STOPPED" else ""}. " +
+                        "Workspaces are created and write-verified in the selected environment; installs use only planner-generated package commands.",
+                    color = if (state.autonomyStopped) Color(0xFFF28B82) else TextMuted,
+                    fontSize = 11.sp
+                )
+                OutlinedTextField(
+                    value = projectName,
+                    onValueChange = { projectName = it.take(40) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("New project name") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { vm.createWorkspace(projectName) },
+                        enabled = !state.workspaceProvisioning,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (state.workspaceProvisioning) "Creating…" else "Create workspace", fontSize = 11.sp) }
+                    OutlinedButton(
+                        onClick = { vm.prepareEnvironment(ProjectKind.KOTLIN_JVM) },
+                        enabled = state.environmentCapabilities != null && !state.terminalDiscovering,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Prepare Kotlin env", fontSize = 11.sp) }
+                }
+                state.dependencyPlan?.let { plan ->
+                    Text(
+                        "Requirements: ${plan.requirements.joinToString { it.tool }}",
+                        color = TextMuted, fontSize = 10.sp
+                    )
+                    if (plan.missing.isNotEmpty()) {
+                        Text("Missing: ${plan.missing.joinToString { it.tool }}", color = Color(0xFFF2C879), fontSize = 10.sp)
+                    }
+                    plan.candidates.take(4).forEach { candidate ->
+                        Text("${candidate.manager} · ${candidate.packageName}", color = TextMuted, fontSize = 10.sp)
+                    }
+                    plan.blockers.forEach { blocker -> Text(blocker, color = Color(0xFFF28B82), fontSize = 10.sp) }
+                }
+                if (state.pendingInstallApproval.isNotEmpty()) {
+                    Text("INSTALL APPROVAL REQUIRED", color = Color(0xFFF2C879), fontSize = 10.sp, letterSpacing = 1.sp)
+                    Text(
+                        state.pendingInstallApproval.joinToString { "${it.manager} ${it.packageName}" },
+                        color = TextMain, fontSize = 11.sp
+                    )
+                    Button(
+                        onClick = vm::approveDependencies,
+                        colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)
+                    ) { Text("Approve installation") }
+                }
+                state.installationReport?.let { report ->
+                    Text(report.message, color = if (report.succeeded) Green else Color(0xFFF2C879), fontSize = 11.sp)
+                    report.steps.takeLast(4).forEach { step ->
+                        Text(
+                            "${step.packageName}: ${step.status}${step.exitCode?.let { " · exit $it" } ?: ""}",
+                            color = TextMuted, fontSize = 10.sp
+                        )
+                    }
+                }
+                if (state.policyMessage.isNotBlank()) Text(state.policyMessage, color = TextMuted, fontSize = 11.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = vm::emergencyStopAutonomy,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D), contentColor = Color.White)
+                    ) { Text("Emergency stop") }
+                    if (state.autonomyStopped) OutlinedButton(onClick = vm::resumeAutonomy) { Text("Resume") }
                 }
             }
         }
@@ -1019,6 +1098,7 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                 }
             }
         }
+        item { AutonomyPolicyCard(state, vm) }
         item { ExecutionPermissions() }
         item { RepairBudgetCard() }
         item { DiagnosticsCard(state) }
@@ -1034,6 +1114,70 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AutonomyPolicyCard(state: NyxState, vm: NyxViewModel) {
+    var confirmFull by remember { mutableStateOf(false) }
+    Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("AUTONOMY POLICY", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+            Text(
+                "One policy governs terminal commands, file changes, package installs, network access, objectives, and delegated workers. Android permissions and privacy stops still apply.",
+                color = TextMuted, fontSize = 11.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AutonomyMode.entries.forEach { mode ->
+                    val selected = state.autonomyMode == mode
+                    OutlinedButton(
+                        onClick = {
+                            if (mode == AutonomyMode.FULL) confirmFull = true else vm.setAutonomyMode(mode)
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = if (selected) ButtonDefaults.outlinedButtonColors(contentColor = Violet)
+                        else ButtonDefaults.outlinedButtonColors()
+                    ) { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 11.sp) }
+                }
+            }
+            Text(
+                state.policyMessage.ifBlank { "Manual approval is the default: consequential actions ask first." },
+                color = if (state.autonomyStopped) Color(0xFFF28B82) else TextMuted,
+                fontSize = 11.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.autonomyStopped) {
+                    Button(onClick = vm::resumeAutonomy) { Text("Resume autonomy") }
+                } else {
+                    Button(
+                        onClick = vm::emergencyStopAutonomy,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D), contentColor = Color.White)
+                    ) { Text("Emergency stop") }
+                }
+                OutlinedButton(onClick = vm::revokeAutonomyGrants) { Text("Revoke grants") }
+            }
+            Text(
+                "Full autonomy never grants root, bypasses Android permissions, or silently reveals credentials. Publishing, APK installation, system changes, and private-data transfers still require explicit approval.",
+                color = TextMuted, fontSize = 10.sp
+            )
+        }
+    }
+    if (confirmFull) {
+        AlertDialog(
+            onDismissRequest = { confirmFull = false },
+            title = { Text("Enable Full Autonomy?") },
+            text = {
+                Text(
+                    "NYX may run terminal commands, edit authorized files, install packages from official repositories, " +
+                        "use the network, and delegate tasks without asking each time. Grants are limited to the current " +
+                        "environment and workspace, can be revoked here, and Emergency Stop blocks new actions."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmFull = false; vm.setAutonomyMode(AutonomyMode.FULL) }) { Text("Enable") }
+            },
+            dismissButton = { TextButton(onClick = { confirmFull = false }) { Text("Cancel") } }
+        )
     }
 }
 

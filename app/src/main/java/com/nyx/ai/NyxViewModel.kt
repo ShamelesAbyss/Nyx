@@ -25,6 +25,21 @@ import com.nyx.ai.terminal.TerminalEnvironment
 import com.nyx.ai.terminal.TerminalRepository
 import com.nyx.ai.terminal.TerminalResultKind
 import com.nyx.ai.terminal.WorkspaceCheck
+import com.nyx.ai.terminal.DependencyInstaller
+import com.nyx.ai.terminal.DependencyPlan
+import com.nyx.ai.terminal.DependencyPlanner
+import com.nyx.ai.terminal.ExecutableOrigin
+import com.nyx.ai.terminal.InstallationReport
+import com.nyx.ai.terminal.PackageCandidate
+import com.nyx.ai.terminal.ProjectKind
+import com.nyx.ai.terminal.ToolState
+import com.nyx.ai.terminal.WorkspaceProvisionRequest
+import com.nyx.ai.terminal.WorkspaceProvisionResult
+import com.nyx.ai.terminal.WorkspaceProvisioner
+import com.nyx.ai.autonomy.policy.ActionKind
+import com.nyx.ai.autonomy.policy.ActionRequest
+import com.nyx.ai.autonomy.policy.AutonomyMode
+import com.nyx.ai.autonomy.policy.AutonomyRuntime
 import com.nyx.ai.data.TerminalCommandEntity
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
@@ -115,6 +130,13 @@ data class NyxState(
     val environmentCapabilities: EnvironmentCapabilities? = null,
     val workspaceCheck: WorkspaceCheck? = null,
     val preflight: PreflightResult? = null,
+    val autonomyMode: com.nyx.ai.autonomy.policy.AutonomyMode = com.nyx.ai.autonomy.policy.AutonomyMode.MANUAL,
+    val autonomyStopped: Boolean = false,
+    val dependencyPlan: DependencyPlan? = null,
+    val installationReport: InstallationReport? = null,
+    val pendingInstallApproval: List<PackageCandidate> = emptyList(),
+    val workspaceProvisioning: Boolean = false,
+    val policyMessage: String = "",
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
@@ -162,6 +184,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private fun releaseInference() = synchronized(inferenceReservationLock) { inferenceReserved = false }
 
     init {
+        AutonomyRuntime.initialize(app)
+        _state.update {
+            it.copy(autonomyMode = AutonomyRuntime.mode(), autonomyStopped = AutonomyRuntime.policy().stopped)
+        }
         viewModelScope.launch {
             ensureStarterRecords()
             db.conversationDao().observeConversations().collect { items -> _state.update { it.copy(conversations = items) } }
@@ -886,6 +912,206 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 val invalid = check as WorkspaceCheck.Invalid
                 _state.update { it.copy(workspaceCheck = invalid, error = invalid.message) }
+            }
+        }
+    }
+
+    /** Switches the one shared policy mode and creates the routine grants implied by that choice. */
+    fun setAutonomyMode(mode: AutonomyMode) {
+        AutonomyRuntime.setMode(app, mode)
+        if (mode != AutonomyMode.MANUAL) {
+            AutonomyRuntime.grantRoutineScope(
+                app,
+                policyEnvironmentId(),
+                _state.value.terminalWorkspace.takeIf { it.startsWith('/') },
+            )
+        }
+        _state.update {
+            it.copy(
+                autonomyMode = mode,
+                autonomyStopped = AutonomyRuntime.policy().stopped,
+                policyMessage = when (mode) {
+                    AutonomyMode.MANUAL -> "Manual approval: every consequential action asks first."
+                    AutonomyMode.SMART -> "Smart approval: routine authorized work runs; higher-risk actions ask."
+                    AutonomyMode.FULL -> "Full autonomy inside the granted scope. Android permissions and privacy stops still apply."
+                },
+            )
+        }
+    }
+
+    fun emergencyStopAutonomy() {
+        AutonomyRuntime.emergencyStop(app)
+        terminalRepository.cancelAll()
+        _state.update {
+            it.copy(
+                autonomyStopped = true,
+                policyMessage = "Emergency stop active. New consequential actions are denied until you resume.",
+            )
+        }
+    }
+
+    fun resumeAutonomy() {
+        AutonomyRuntime.resetStop(app)
+        _state.update {
+            it.copy(autonomyStopped = false, policyMessage = "Autonomy resumed. Existing grants remain in effect.")
+        }
+    }
+
+    fun revokeAutonomyGrants() {
+        AutonomyRuntime.clearGrants(app)
+        _state.update {
+            it.copy(
+                autonomyMode = AutonomyMode.MANUAL,
+                autonomyStopped = false,
+                policyMessage = "All grants revoked. Manual approval restored.",
+            )
+        }
+    }
+
+    private fun policyEnvironmentId(): String =
+        if (_state.value.terminalEnvironment == TerminalEnvironment.TERMUX_HOST) "termux_host"
+        else "proot:${_state.value.guestAlias}"
+
+    /** Builds a real dependency plan from the last capability probe; never guesses tool availability. */
+    fun prepareEnvironment(projectKind: ProjectKind = ProjectKind.KOTLIN_JVM) {
+        if (_state.value.autonomyStopped) {
+            _state.update { it.copy(policyMessage = "Emergency stop is active; environment work is blocked.") }
+            return
+        }
+        val capabilities = _state.value.environmentCapabilities
+        if (capabilities == null) {
+            _state.update { it.copy(policyMessage = "Run Detect environment before preparing the toolchain.") }
+            return
+        }
+        val host = _state.value.terminalEnvironment == TerminalEnvironment.TERMUX_HOST
+        val tools = capabilities.tools.mapValues { (_, tool) ->
+            ToolState(
+                present = tool.state != CapabilityState.MISSING && tool.state != CapabilityState.NOT_CHECKED,
+                usable = tool.state == CapabilityState.VERIFIED &&
+                    (host || tool.origin == ExecutableOrigin.GUEST_NATIVE),
+                origin = tool.origin,
+                version = tool.version,
+            )
+        }
+        val plan = DependencyPlanner.plan(projectKind, policyEnvironmentId(), tools)
+        _state.update {
+            it.copy(
+                dependencyPlan = plan,
+                installationReport = null,
+                pendingInstallApproval = emptyList(),
+                policyMessage = when {
+                    plan.blockers.isNotEmpty() -> plan.blockers.first()
+                    plan.candidates.isEmpty() -> "All required tools are already verified."
+                    else -> "${plan.candidates.size} package(s) required for ${projectKind.name.replace('_', ' ').lowercase()}."
+                },
+            )
+        }
+        if (plan.canProceed && plan.candidates.isNotEmpty() &&
+            (_state.value.autonomyMode == AutonomyMode.FULL || _state.value.autonomyMode == AutonomyMode.SMART)
+        ) {
+            installDependencies(userApproved = false)
+        }
+    }
+
+    fun approveDependencies() = installDependencies(userApproved = true)
+
+    private fun installDependencies(userApproved: Boolean) {
+        val plan = _state.value.dependencyPlan ?: return
+        if (plan.candidates.isEmpty()) return
+        viewModelScope.launch {
+            _state.update {
+                it.copy(policyMessage = "Installing ${plan.candidates.size} package(s)…", pendingInstallApproval = emptyList())
+            }
+            val report = withContext(Dispatchers.IO) {
+                DependencyInstaller(terminalRepository).install(
+                    plan = plan,
+                    environment = _state.value.terminalEnvironment,
+                    guestAlias = _state.value.guestAlias,
+                    authorize = { candidate: PackageCandidate ->
+                        val decision = AutonomyRuntime.authorize(
+                            app,
+                            ActionRequest(
+                                kind = ActionKind.INSTALL_PACKAGE,
+                                target = candidate.packageName,
+                                environmentId = policyEnvironmentId(),
+                                trustedSource = candidate.trusted,
+                            ),
+                        )
+                        decision.allowed || (decision.requiresApproval && userApproved)
+                    },
+                )
+            }
+            _state.update {
+                it.copy(
+                    installationReport = report,
+                    pendingInstallApproval = report.needsApproval,
+                    policyMessage = report.message,
+                )
+            }
+            if (report.succeeded) refreshEnvironmentCapabilities()
+        }
+    }
+
+    /** Creates a verified project workspace without requiring the user to run mkdir. */
+    fun createWorkspace(projectName: String) {
+        val s = _state.value
+        if (s.autonomyStopped) {
+            _state.update { it.copy(policyMessage = "Emergency stop is active; workspace creation is blocked.") }
+            return
+        }
+        if (s.environmentCapabilities == null) {
+            _state.update { it.copy(policyMessage = "Run Detect environment before creating a workspace.") }
+            return
+        }
+        val base = WorkspaceProvisioner.defaultBase(s.terminalEnvironment, s.terminalProfile?.home)
+        if (base == null) {
+            _state.update { it.copy(policyMessage = "Environment HOME is unknown; run Detect environment again.") }
+            return
+        }
+        val target = WorkspaceProvisioner.planPath(base, projectName)
+        val decision = AutonomyRuntime.authorize(
+            app,
+            ActionRequest(
+                kind = ActionKind.WRITE_WORKSPACE,
+                target = base,
+                environmentId = policyEnvironmentId(),
+                insideAuthorizedWorkspace = true,
+            ),
+        )
+        if (!decision.allowed && !decision.requiresApproval) {
+            _state.update { it.copy(policyMessage = "Workspace creation was denied: ${decision.reason}") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(workspaceProvisioning = true, policyMessage = "Creating $target…") }
+            val result = withContext(Dispatchers.IO) {
+                WorkspaceProvisioner.provision(
+                    repository = terminalRepository,
+                    request = WorkspaceProvisionRequest(
+                        environment = s.terminalEnvironment,
+                        baseDirectory = base,
+                        projectName = projectName,
+                        guestAlias = s.guestAlias,
+                    ),
+                )
+            }
+            when (result) {
+                is WorkspaceProvisionResult.Created -> {
+                    prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, result.path).apply()
+                    _state.update {
+                        it.copy(
+                            workspaceProvisioning = false,
+                            terminalWorkspace = result.path,
+                            workspaceCheck = WorkspaceCheck.Valid(result.path),
+                            policyMessage = "Workspace ready: ${result.path}",
+                            error = "",
+                        )
+                    }
+                }
+
+                is WorkspaceProvisionResult.Failed -> _state.update {
+                    it.copy(workspaceProvisioning = false, policyMessage = result.message, error = result.message)
+                }
             }
         }
     }

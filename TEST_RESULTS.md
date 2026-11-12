@@ -1,76 +1,42 @@
-# NYX 0.6.1 Test Results
+# NYX 0.7.0 Test Results
 
-## Final clean automated build
+## Final automated build
 
-Executed on 2026-11-12 UTC from the frozen application source:
+Executed on 2026-11-12 UTC from the frozen application source in `/home/ubuntu/nyx`:
 
 ```bash
-export ANDROID_HOME="$HOME/Android/Sdk"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+ANDROID_HOME="$HOME/Android/Sdk" JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+  ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
 ```
 
-Result: **BUILD SUCCESSFUL in 56 seconds**. The debug application APK and the instrumentation-test APK were both assembled.
+Result: **BUILD SUCCESSFUL**. The run executed **450 JVM tests in 43 classes with 0 failures, 0 errors, and 0 skipped tests**, assembled the debug application APK, and compiled the Android instrumentation-test APK. The count includes the new policy, executable-origin, dependency-planning, network-policy, network-tool, supervisor, worker-role, and workspace-provisioning suites. A separate clean JVM run after parser and redirect corrections also reported zero failures.
 
-## JVM tests
+## Artifact verification
 
-**350 tests ran: 0 failures, 0 errors, 0 skipped.** Counts were read from the Gradle XML result files, not from console summaries.
-
-Coverage added or strengthened in this release:
-
-| Area | Tests |
-| :--- | :--- |
-| PRoot distro-list formats, failure-versus-empty, nested-PRoot refusal | `DistroListingTest` |
-| Guest probe marker/facts/tools and host-versus-guest identity | `DistroListingTest` |
-| Isolated host request (`--noprofile --norc`, `BASH_ENV`/`ENV` cleared) and alias rejection | `DistroListingTest` |
-| Capability states, paths, versions, storage, workspace writability | `EnvironmentCapabilitiesTest` |
-| Workspace syntax, real-probe parsing, guest/Android path rules | `WorkspaceManagerTest` |
-| Preflight blockers and readiness | `PreflightTest` |
-| Goal classification and acceptance criteria/outcomes | `DevelopmentGoalTest`, `AcceptanceTest` |
-| Relevance ranking and bounded context selection | `SourceRelevanceTest` |
-| Batch source reading, markers, truncation, hash checks | `SourceBatchReaderTest` |
-| Four required development fixtures plus unsafe path and missing toolchain | `VerifiedDevelopmentFixturesTest` |
-
-Two existing tests were tightened rather than weakened:
-
-- `alreadyPassingBaselineIsPreciselyReportedNotClaimedAsRepair` now requires `passed=false`, reason `baseline_healthy`, and outcome `BASELINE_HEALTHY`.
-- `profile reports debian availability` now requires `debianAvailable=false` for a merely listed alias and `true` only with `verifiedDistros`.
-
-## APK identity
-
-| Field | Value |
+| Property | Verified value |
 | :--- | :--- |
 | Package | `com.nyx.ai` |
-| versionName | `0.6.1` |
-| versionCode | `7` |
-| compileSdk / targetSdk | `37` / `37` |
-| minSdk | `26` |
-| Native ABI | `arm64-v8a` |
-| Debug signer SHA-256 | `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` |
-| Application APK size | 33 MB |
-| Instrumentation APK | 581 KB |
+| Version | `versionName 0.7.0`, `versionCode 8` |
+| Compile / target SDK | 37 / 37 |
+| Minimum SDK | 26 |
+| Native ABI | `arm64-v8a` only |
+| APK signing | Android debug certificate, SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` |
+| Upgrade compatibility | Same certificate as the delivered v0.6.1 APK; in-place update is possible when that build is installed |
+| Debug APK | 33 MB, SHA-256 `ebbdb32b5fb772f632939bd7a803e50eae9d64fe48f964fdd120da4822e2aa00` |
+| Instrumentation APK | 581 KB, compiled only |
 
-The signer digest matches the previously delivered debug builds, so an in-place update is possible when the installed copy uses the same certificate.
+## What the automated tests establish
 
-## What is actually verified
+The policy tests exercise Manual, Smart, and Full decisions, grant scope and expiry, revocation, delegated-scope narrowing, emergency stop, risk escalation, and journal recording. Environment tests establish that an inherited Termux binary is never accepted as a guest-native tool, that guest plans never contain `pkg`, that host plans never contain `apt`, that Android SDK work is blocked inside an ARM64 guest, and that a satisfied toolchain produces no install candidates. Workspace tests cover name sanitization, traversal rejection, collision suffixes, environment-specific bases, path quoting, and writability checks. Network tests cover HTTPS enforcement, private/loopback handling, credential-bearing URLs, redirect refusal, text truncation, binary rejection, download hashing, and deletion of partial downloads. Supervisor and role tests cover bounded retry, repeated-failure pauses, budget exhaustion, deterministic role assignment, and the prohibition on concurrent coder/environment self-duplication.
 
-- Kotlin compilation of the complete application, including the new environment, workspace, preflight, capability, and verified-developer modules.
-- All 350 JVM tests, including the four required development scenarios.
-- Debug and instrumentation APK assembly and signing.
-- Package metadata and ABI as reported by `aapt2`.
+These tests do **not** prove Termux dispatch, PRoot execution, package installation, Android Keystore behavior, foreground-service lifecycle, notification actions, or restart recovery on a real phone. Those paths require a physical device.
 
-## What is not verified
+## Not executed
 
-No emulator or physical Android device was used. The following remain device-only checks and are not claimed as passing:
+No physical Android device or emulator was attached during this cycle. The following remain device-only checks: installing and launching the APK; granting `com.termux.permission.RUN_COMMAND`; Termux `RUN_COMMAND` callbacks; Debian guest verification; origin labels from a real guest; `apt`/`pkg` package installs; Android SDK blocker behavior; workspace creation through ROOT/PRoot; Emergency Stop through a service restart; objective pause/cancel and process-death recovery; Room 3 migration preservation; Keystore credential round-trip and tamper detection; native GGUF load/stream/cancel/unload; notification permission and actions; fold/unfold layout; and network access from the device.
 
-1. Termux `RUN_COMMAND` round trip with the owner's real Termux profile, including the isolated host shell.
-2. PRoot guest verification on the device and correct reporting of a nested-PRoot configuration.
-3. Debian workspace creation, write probe, and Android-path rejection on a real guest.
-4. Capability versions and permission states for real tools.
-5. Foreground-service execution, notification actions, pause/cancel, and process-death recovery.
-6. Native GGUF load/generation on ARM64 hardware.
-7. Fold/unfold layout and insets on the Pixel Fold.
-8. Real-model autonomous development on a phone; the fixture provider is deterministic, not a model.
+The instrumentation APK was compiled but not executed. A debug-signed APK is a development artifact, not a production or Play Store release.
 
-A debug-signed APK is a development artifact, not a production or Play Store release.
+## Scope notes
+
+Package installation is implemented as an approved, planner-generated sequence, not as a general package resolver; distribution-specific package splits can still leave a tool unverified, which the installer reports instead of hiding. Role delegation is prompt-level specialization over the existing bounded workers, not separate model processes. The objective network tool exposes text fetch only; the download implementation exists in the network layer but is not offered as a model tool.

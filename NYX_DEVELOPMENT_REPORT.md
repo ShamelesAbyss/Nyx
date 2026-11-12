@@ -1,6 +1,31 @@
 # NYX Eclipse AI — Development Reports
 
-## v0.6.1 continuation (current release)
+## v0.7.0 — Project Ascension (published)
+
+NYX 0.7.0 turns the previous execution foundations into a governed autonomy layer. It is versionCode 8 / versionName 0.7.0, debug-signed, and published as v0.7.0.
+
+| Directive area | Status | What exists |
+| :--- | :--- | :--- |
+| Central autonomy policy | Implemented | `AutonomyPolicyEngine` with Manual/Smart/Full, capability grants, scope and expiry checks, delegated-scope narrowing, risk classifier, persisted snapshot, audit journal, process-wide `AutonomyRuntime`, and Emergency Stop enforced at the terminal repository, installer, and objective service |
+| Capability and environment model | Implemented | Origin-aware capability probe, `apt`/`dpkg` detection, inherited-Termux rejection inside guests, workspace package-manager derivation, timestamped profiles |
+| Automatic provisioning | Implemented | Deterministic `DependencyPlanner`, trusted candidates only, `DependencyInstaller` with whole-plan authorization and re-probe, `WorkspaceProvisioner` with collision-safe creation and write verification |
+| Isolated Debian tools | Implemented with blocker | Guest tools must be `GUEST_NATIVE`; Android SDK builds are explicitly blocked in an ARM64 guest instead of attempting an impossible install |
+| Controlled network | Implemented | `fetch_url` objective tool, HTTPS/public-host policy, private-address and loopback-pivot refusal, redirect re-validation, guarded DNS, size caps, untrusted-content wrapping, atomic SHA-256 downloads in the network layer |
+| Supervisor and delegation | Implemented as role-based | Deterministic `WorkerRoles`, role prompts, `SupervisorPolicy` with continue/replan/pause/fail, repeated-failure and budget guards; not one process or model per role |
+| Autonomy UI | Implemented, compact | Settings policy card with Full consent dialog, Emergency Stop/Resume, revoke grants; Terminal panel with project creation, dependency plan, install approval, and inherited-tool labels |
+| Verification | Compiled and JVM-tested | Clean build, 450 JVM tests, 0 failures, instrumentation APK compiled; no device execution |
+
+The policy is deliberately centralized. Terminal commands that pass through `TerminalRepository` carry an optional `ActionRequest` and are denied or held before dispatch. Package installation authorizes every candidate before the first command runs, so a mid-plan denial cannot leave a partial surprise install. Workspace creation is an explicit user action and still checks policy first. Full mode creates only routine grants for the selected environment and workspace; publishing, Git pushes, APK installation, system configuration, credential use, and private-data transfers remain outside those grants.
+
+The environment work fixes a concrete failure mode from earlier releases: a Debian guest whose `PATH` includes the Termux prefix could report `git`, `clang`, or `make` as present even though they were host binaries. The probe now reports origin, the capability state marks inherited binaries incompatible, and the planner treats them as missing. Installation candidates are generated from a fixed table (`apt` for guests, `pkg` for the host), never from model text.
+
+The network tool exposes only text fetch to objectives. The download implementation is present and tested at the network layer but is not offered as a model tool, because arbitrary file drops into a Termux or PRoot workspace require a terminal-mediated transfer path that is not implemented yet. This is an intentional boundary, not an oversight.
+
+Source batch reads were reduced to four files and 96 KB per IPC call with per-file fallback. That addresses the large-callback truncation observed on the device without weakening hash verification.
+
+Remaining gaps are explicit: no multi-model worker tree or live delegation graph, no full active-agent roster UI, no device verification of Termux/PRoot/Keystore/service behavior, no distribution-specific dependency resolution beyond the planner table, and no publication authorization. The next sensible step is a physical-device pass focused on origin labels, `apt` installation, workspace creation, Emergency Stop across service restart, and network fetches from the objective engine.
+
+## v0.6.1 continuation (previous release)
 
 NYX 0.6.1 addresses the environment failures observed on the Pixel Fold and closes the "passing baseline equals success" gap in development objectives. Package metadata is versionCode 7 / versionName 0.6.1. The build is debug-signed and verified by compilation and JVM tests only; no physical device was available.
 

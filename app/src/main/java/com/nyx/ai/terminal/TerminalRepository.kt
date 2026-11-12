@@ -1,6 +1,8 @@
 package com.nyx.ai.terminal
 
 import android.content.Context
+import com.nyx.ai.autonomy.policy.ActionRequest
+import com.nyx.ai.autonomy.policy.AutonomyRuntime
 import com.nyx.ai.data.NyxDatabase
 import com.nyx.ai.data.TerminalCommandEntity
 import kotlinx.coroutines.flow.Flow
@@ -19,6 +21,8 @@ class TerminalRepository(
     private val database: NyxDatabase,
     private val bridge: TerminalBridge = TerminalBridge(context),
 ) {
+    private val appContext = context.applicationContext
+
     fun readiness(): TermuxReadiness = bridge.readiness()
 
     fun observeHistory(limit: Int = 50): Flow<List<TerminalCommandEntity>> =
@@ -38,7 +42,8 @@ class TerminalRepository(
         environment: TerminalEnvironment,
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
     ): EnvironmentCapabilities {
-        val script = CapabilityProbe.script()
+        val kind = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
+        val script = CapabilityProbe.script(kind)
         val result = when (environment) {
             TerminalEnvironment.TERMUX_HOST -> bridge.runHostIsolated(script, timeoutSeconds = 60)
             TerminalEnvironment.DEBIAN_PROOT -> bridge.runShell(
@@ -46,7 +51,6 @@ class TerminalRepository(
                 useTimeoutBinary = false, approved = true, guestAlias = guestAlias,
             )
         }
-        val kind = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
         return CapabilityProbe.parse(result.stdout, kind, kind, System.currentTimeMillis())
     }
 
@@ -79,8 +83,10 @@ class TerminalRepository(
         taskId: String? = null,
         useTimeoutBinary: Boolean = true,
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
+        policyRequest: ActionRequest? = null,
     ): TerminalCommandResult {
         val assessment = CommandPolicy.assess(command)
+        val authorization = policyRequest?.let { AutonomyRuntime.authorize(appContext, it) }
         val id = UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         val row = TerminalCommandEntity(
@@ -103,7 +109,11 @@ class TerminalRepository(
         )
         database.terminalCommandDao().upsert(row)
 
-        val result = try { if (assessment.blocked) {
+        val result = try { if (authorization != null && !authorization.allowed && !authorization.requiresApproval) {
+            TerminalCommandResult(null, TerminalResultKind.POLICY_BLOCKED, message = authorization.reason)
+        } else if (authorization?.requiresApproval == true && !approvedByUser) {
+            TerminalCommandResult(null, TerminalResultKind.CONFIRMATION_REQUIRED, message = authorization.reason)
+        } else if (assessment.blocked) {
             TerminalCommandResult(null, TerminalResultKind.POLICY_BLOCKED, message = assessment.reasons.joinToString("; "))
         } else if (assessment.requiresConfirmation && !approvedByUser) {
             TerminalCommandResult(null, TerminalResultKind.CONFIRMATION_REQUIRED, message = assessment.reasons.joinToString("; "))

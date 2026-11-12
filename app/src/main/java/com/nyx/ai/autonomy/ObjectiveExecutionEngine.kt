@@ -9,8 +9,11 @@ import com.nyx.ai.development.*
 import com.nyx.ai.skills.*
 import com.nyx.ai.agent.AgentRunner
 import com.nyx.ai.agent.AgentSpec
-import com.nyx.ai.agent.AgentToolProvider
 import com.nyx.ai.agent.AgentTools
+import com.nyx.ai.agent.AgentToolProvider
+import com.nyx.ai.agent.CompositeToolProvider
+import com.nyx.ai.agent.NetworkAgentTools
+import com.nyx.ai.agent.WorkerRoles
 import com.nyx.ai.agent.FileProbe
 import com.nyx.ai.agent.ToolExecutionEvidence
 import com.nyx.ai.context.ContextEngine
@@ -55,6 +58,7 @@ class ObjectiveExecutionEngine(
     private val database: NyxDatabase,
     private val sessions: InferenceSessionFactory,
     private val terminalTools: AgentToolProvider?,
+    private val extraTools: AgentToolProvider? = null,
     private val fileProbe: FileProbe?,
     private val contextStore: ContextStore,
     private val onToken: (String) -> Unit = {},
@@ -296,6 +300,11 @@ class ObjectiveExecutionEngine(
         val configured = config.optJSONArray("tools")?.let { raw ->
             (0 until raw.length()).map { raw.optString(it) }.toSet()
         } ?: AgentTools.DEFAULT_TOOLS
+        val objectiveTools: AgentToolProvider? = when {
+            terminalTools != null && extraTools != null -> CompositeToolProvider(listOf(terminalTools, extraTools))
+            terminalTools != null -> terminalTools
+            else -> extraTools
+        }
         val approvedSkills = if (terminalTools != null) {
             val project = (terminalTools as? TerminalAgentTools)?.inspectProject()
             val preconditions = setOf(SkillPrecondition.WORKSPACE_SELECTED, SkillPrecondition.TERMINAL_AVAILABLE) +
@@ -309,13 +318,17 @@ class ObjectiveExecutionEngine(
                 requireNotNull(checked.skill) { "Builtin skill validation failed: ${checked.issues.joinToString { it.message }}" }
             }
         } else emptyList()
-        val allowed = configured + approvedSkills.flatMap { it.allowedTools }
+        val allowed = configured + approvedSkills.flatMap { it.allowedTools } +
+            if (objectiveTools?.names?.contains(NetworkAgentTools.TOOL_FETCH) == true) setOf(NetworkAgentTools.TOOL_FETCH) else emptySet()
         if (approvedSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", approvedSkills.joinToString { "${it.manifest.id}@${it.manifest.version}" })
+        val role = WorkerRoles.forTask(task.workerKind, task.title)
+        event(objectiveId, task.id, "delegation_role", "${role.label} worker assigned to \"${task.title.take(80)}\".")
         val spec = AgentSpec(
             id = agent.id,
             name = agent.name,
             model = session.modelId,
-            systemPrompt = agent.instructions + approvedSkills.joinToString("\n", prefix = "\nValidated offline procedures:\n") { it.manifest.instructions.joinToString("\n") },
+            systemPrompt = WorkerRoles.prompt(role) + "\n\n" + agent.instructions +
+                approvedSkills.joinToString("\n", prefix = "\nValidated offline procedures:\n") { it.manifest.instructions.joinToString("\n") },
             maxSteps = config.optInt("maxSteps", 8),
             allowedTools = allowed,
         )
@@ -354,7 +367,7 @@ class ObjectiveExecutionEngine(
                     report.commands.joinToString("\n") { "${it.kind}: ${it.command} -> exit ${it.exitCode}" } +
                     "\nChanged files: ${report.files.joinToString()}\nCheckpoints: ${report.checkpoints.joinToString { it.id }}\nDiff:\n${report.diff}"
                 AgentOutcome(text, emptyList(), report.inferenceCalls, report.evidence)
-            } else AgentRunner(app, session.provider, terminalTools).run(
+            } else AgentRunner(app, session.provider, objectiveTools).run(
                 spec = spec,
                 task = task.instructions,
                 sharedContext = built.text,

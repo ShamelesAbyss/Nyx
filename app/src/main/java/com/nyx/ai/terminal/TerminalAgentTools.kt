@@ -218,7 +218,15 @@ class TerminalAgentTools(
             }
             val result = controlled("source_batch", rootGuard() + SourceBatchReader.script(request), timeout = 90, files = group)
             when (val parsed = SourceBatchReader.parse(result.stdout, request)) {
-                is BatchReadResult.Success -> parsed.files.forEach { snapshots[it.path] = SourceSnapshot(it.path, it.sha256, it.content) }
+                is BatchReadResult.Success -> {
+                    parsed.files.forEach { snapshots[it.path] = SourceSnapshot(it.path, it.sha256, it.content) }
+                    // The script stops at maxTotalBytes, so later files in a group may be absent.
+                    // Read only those omitted paths individually; parsed files are already verified.
+                    val returned = parsed.files.map { it.path }.toSet()
+                    group.filterNot { it in returned }.forEach { path ->
+                        snapshot(path, effective)?.let { snapshots[it.path] = it }
+                    }
+                }
                 is BatchReadResult.Failure -> group.forEach { path -> snapshot(path, effective)?.let { snapshots[it.path] = it } }
             }
         }
@@ -434,7 +442,10 @@ class TerminalAgentTools(
     companion object {
         const val MAX_FILE_BYTES = 128_000
         private const val CHUNK_BYTES = 4_096
-        private const val BATCH_FILES_PER_COMMAND = 12
-        private const val MAX_BATCH_TOTAL_BYTES = 384_000
+        // Termux returns results through a Binder Bundle. Twelve large files produced a base64
+        // payload close to the transaction limit and could fail with a truncated callback. Four
+        // files and a 96 KB payload keep the encoded result well below that bound.
+        private const val BATCH_FILES_PER_COMMAND = 4
+        private const val MAX_BATCH_TOTAL_BYTES = 96_000
     }
 }

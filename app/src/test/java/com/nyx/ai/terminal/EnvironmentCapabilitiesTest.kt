@@ -166,7 +166,7 @@ class EnvironmentCapabilitiesTest {
         assertEquals(
             listOf(
                 "sh", "git", "java", "javac", "kotlinc", "gradle", "sdkmanager", "adb",
-                "clang", "gcc", "make", "cmake", "python3", "node", "npm", "pkg",
+                "clang", "gcc", "make", "cmake", "python3", "node", "npm", "pkg", "apt", "dpkg",
             ),
             CapabilityProbe.TOOL_NAMES,
         )
@@ -180,13 +180,14 @@ class EnvironmentCapabilitiesTest {
         for (tool in CapabilityProbe.TOOL_NAMES) {
             assertTrue("probe script is missing $tool", loopTools.contains(tool))
         }
-        assertTrue(script.contains("NYX_CAP:%s:%s:%s:%s"))
+        assertTrue(script.contains("NYX_CAP:%s:%s:%s:%s:%s"))
         assertTrue(script.contains("NYX_STORAGE_FREE=%s"))
         assertTrue(script.contains("NYX_WORKSPACE=%s"))
         assertTrue(script.contains("PERMISSION_DENIED"))
         assertTrue(script.contains("INCOMPATIBLE"))
         assertTrue(script.contains("MISSING"))
         assertFalse(script.contains("curl"))
-        assertFalse(script.contains("apt "))
+        assertFalse(script.contains("apt-get"))
+        assertFalse(script.contains("pkg install"))
     }
 }
