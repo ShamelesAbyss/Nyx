@@ -193,4 +193,50 @@ class TerminalAgentToolsSecurityTest {
         val tools = TerminalAgentTools(TerminalToolExecutor { _, _, _, _, _ -> throw CancellationException("cancelled IPC") }, "/tmp/fixture", workspaceApproved = true)
         try { tools.inspectProject(); fail("cancellation swallowed") } catch (expected: CancellationException) { assertEquals("cancelled IPC", expected.message) }
     }
+    @Test fun modelCommandGateAllowsScopedCommandAndRecordsExitEvidence() = runBlocking {
+        fixture { root, executor, _ ->
+            val gate = ModelCommandGate { _, _, _ ->
+                ModelCommandDecision(
+                    allowed = true,
+                    reason = "test policy",
+                    workingDirectory = root.toString(),
+                    timeoutSeconds = 10,
+                    risk = CommandRisk.READ_ONLY,
+                )
+            }
+            val tools = TerminalAgentTools(executor, root.toString(), workspaceApproved = true, modelCommandGate = gate)
+            val result = tools.execute(
+                ToolCall("x", "terminal_run", JSONObject().put("command", "printf 'ok'").put("working_directory", ".")),
+            )
+            assertTrue(result, result.contains("\"stdout\":\"ok\""))
+            assertTrue(executor.commands.any { it.contains("printf 'ok'") })
+            assertTrue(tools.drainEvidence().any { it.toolName == "terminal_run" && it.exitCode == 0 })
+        }
+    }
+    @Test fun modelCommandGateDenialPreventsExecution() = runBlocking {
+        fixture { root, executor, _ ->
+            val gate = ModelCommandGate { _, _, _ -> ModelCommandDecision(allowed = false, reason = "policy denied") }
+            val tools = TerminalAgentTools(executor, root.toString(), workspaceApproved = true, modelCommandGate = gate)
+            val result = tools.execute(ToolCall("x", "terminal_run", JSONObject().put("command", "touch forbidden")))
+            assertTrue(result.startsWith("Tool denied"))
+            assertTrue(executor.commands.isEmpty())
+        }
+    }
+    @Test fun modelCommandGateCannotReturnAnOutsideWorkingDirectory() = runBlocking {
+        fixture { root, executor, _ ->
+            val gate = ModelCommandGate { _, _, _ ->
+                ModelCommandDecision(
+                    allowed = true,
+                    reason = "malformed test gate",
+                    workingDirectory = "/tmp",
+                    timeoutSeconds = 10,
+                    risk = CommandRisk.READ_ONLY,
+                )
+            }
+            val tools = TerminalAgentTools(executor, root.toString(), workspaceApproved = true, modelCommandGate = gate)
+            val result = tools.execute(ToolCall("x", "terminal_run", JSONObject().put("command", "touch forbidden")))
+            assertTrue(result, result.startsWith("Tool denied"))
+            assertTrue(executor.commands.isEmpty())
+        }
+    }
 }

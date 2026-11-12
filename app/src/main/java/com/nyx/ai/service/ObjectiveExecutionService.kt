@@ -20,6 +20,8 @@ import com.nyx.ai.autonomy.ExecutionMonitor
 import com.nyx.ai.autonomy.InferenceSession
 import com.nyx.ai.autonomy.InferenceSessionFactory
 import com.nyx.ai.autonomy.ObjectiveExecutionEngine
+import com.nyx.ai.autonomy.WorkerActivityBus
+import com.nyx.ai.autonomy.WorkerActivityKind
 import com.nyx.ai.agent.NetworkAgentTools
 import com.nyx.ai.autonomy.policy.AutonomyRuntime
 import com.nyx.ai.autonomy.PauseRequested
@@ -35,6 +37,18 @@ import com.nyx.ai.settings.InferenceClientFactory
 import com.nyx.ai.terminal.TerminalAgentTools
 import com.nyx.ai.terminal.TerminalBridge
 import com.nyx.ai.terminal.TerminalEnvironment
+import com.nyx.ai.terminal.AutonomyModelCommandGate
+import com.nyx.ai.terminal.BootstrapRequest
+import com.nyx.ai.terminal.BootstrapStatus
+import com.nyx.ai.terminal.DependencyBootstrap
+import com.nyx.ai.terminal.DependencyPlanner
+import com.nyx.ai.terminal.EnvironmentConsistency
+import com.nyx.ai.terminal.ProjectKind
+import com.nyx.ai.terminal.TerminalDependencyGateway
+import com.nyx.ai.terminal.TerminalRepository
+import com.nyx.ai.autonomy.policy.ActionKind
+import com.nyx.ai.autonomy.policy.ActionRequest
+import com.nyx.ai.development.DevelopmentPaths
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -234,24 +248,83 @@ class ObjectiveExecutionService : Service() {
         return try {
             val snapshot = dao.observeEvents(objectiveId).first().lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
                 ?: error("No approved execution settings for this objective.")
+            val tasks = dao.getTasks(objectiveId)
             terminalTools = null
             if (terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
-                val profile = EnvironmentDiscovery(bridge).discover()
-                require(profile.hostAvailable) { profile.detail ?: "Termux setup is incomplete." }
+                val environmentProfile = EnvironmentDiscovery(bridge).discover()
+                require(environmentProfile.hostAvailable) { environmentProfile.detail ?: "Termux setup is incomplete." }
                 val environment = runCatching { TerminalEnvironment.valueOf(snapshot.optString("environment", "TERMUX_HOST")) }.getOrDefault(TerminalEnvironment.TERMUX_HOST)
                 val guestAlias = snapshot.optString("guestAlias", "debian")
                 require(com.nyx.ai.terminal.HostShell.isSafeAlias(guestAlias)) { "The selected PRoot distribution alias is invalid." }
-                val guestVerified = profile.verifiedDistros.any { it.equals(guestAlias, ignoreCase = true) }
-                require(environment != TerminalEnvironment.DEBIAN_PROOT || guestVerified) {
-                    profile.listError ?: "PRoot guest '$guestAlias' is not verified: no real command inside it returned the expected marker."
+                val environmentState = EnvironmentConsistency.evaluate(
+                    profile = environmentProfile,
+                    environment = environment,
+                    guestAlias = guestAlias,
+                    previousError = objective.error,
+                )
+                if (!environmentState.usable) {
+                    markNeedsAttention(objectiveId, environmentState.message)
+                    recordEvent(objectiveId, "environment_unavailable", environmentState.message)
+                    return "needs_attention"
+                }
+                if (environmentState.stalePreviousError) {
+                    recordEvent(objectiveId, "environment_refreshed", "Current environment probe succeeded; the historical error was stale.")
                 }
                 val workspace = snapshot.optString("workspace")
-                require(workspace.startsWith("/") && workspace.length <= 4096) { "Select an absolute authorized workspace." }
+                require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspace)) { "Select an absolute normalized authorized workspace." }
+                val environmentId = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
+                val projectKind = DependencyPlanner.inferProjectKind(
+                    buildString {
+                        append(objective.goal)
+                        tasks.forEach { append(' ').append(it.title).append(' ').append(it.instructions) }
+                    },
+                )
+                if (tasks.any { it.workerKind == "development" } || projectKind != ProjectKind.GENERIC) {
+                    val terminalRepository = TerminalRepository(this, database, bridge)
+                    val bootstrap = DependencyBootstrap.prepare(
+                        request = BootstrapRequest(
+                            objectiveId = objectiveId,
+                            projectKind = projectKind,
+                            environment = environment,
+                            guestAlias = guestAlias,
+                            workspace = workspace,
+                            environmentId = environmentId,
+                        ),
+                        gateway = TerminalDependencyGateway(terminalRepository),
+                        authorize = { candidate ->
+                            AutonomyRuntime.authorize(
+                                this,
+                                ActionRequest(
+                                    kind = ActionKind.INSTALL_PACKAGE,
+                                    target = "$workspace/.nyx/package/${candidate.packageName}",
+                                    environmentId = environmentId,
+                                    insideAuthorizedWorkspace = true,
+                                    trustedSource = candidate.trusted,
+                                ),
+                            ).allowed
+                        },
+                        onProgress = { kind, detail -> recordEvent(objectiveId, kind, detail) },
+                    )
+                    when (bootstrap.status) {
+                        BootstrapStatus.READY, BootstrapStatus.INSTALLED -> {
+                            recordEvent(objectiveId, "dependency_ready", bootstrap.message)
+                        }
+
+                        BootstrapStatus.APPROVAL_REQUIRED,
+                        BootstrapStatus.BLOCKED,
+                        BootstrapStatus.FAILED -> {
+                            markNeedsAttention(objectiveId, bootstrap.message)
+                            recordEvent(objectiveId, "dependency_blocked", bootstrap.message)
+                            return "needs_attention"
+                        }
+                    }
+                }
                 terminalTools = TerminalAgentTools(
                     bridge, workspace, environment,
-                    useTimeoutBinary = profile.timeoutAvailable,
+                    useTimeoutBinary = environmentProfile.timeoutAvailable,
                     workspaceApproved = true,
                     guestAlias = guestAlias,
+                    modelCommandGate = AutonomyModelCommandGate(this, environmentId, workspace, environment),
                 )
             }
             val gatewayExtra = runCatching {
@@ -273,8 +346,8 @@ class ObjectiveExecutionService : Service() {
                 ).takeIf { it.names.isNotEmpty() }
             }.getOrNull()
             val resources = DeviceResourceReader.read(this)
-            val profile = ResourcePolicy.profile(resources, objective.parallelism)
-            ExecutionMonitor.update { it.copy(phase = "executing", message = profile.reason) }
+            val resourceProfile = ResourcePolicy.profile(resources, objective.parallelism)
+            ExecutionMonitor.update { it.copy(phase = "executing", message = resourceProfile.reason) }
             val engine = ObjectiveExecutionEngine(
                 context = this,
                 database = database,
@@ -293,17 +366,56 @@ class ObjectiveExecutionService : Service() {
                 fileProbe = terminalTools,
                 contextStore = contextStore,
             )
-            val tasks = dao.getTasks(objectiveId)
             val result = if (tasks.isEmpty()) {
-                engine.planAndExecute(objectiveId, agent, profile.policy, executionControl)
+                engine.planAndExecute(objectiveId, agent, resourceProfile.policy, executionControl)
             } else {
-                engine.resumeAfterReview(objectiveId, agent, profile.policy, executionControl)
+                engine.resumeAfterReview(objectiveId, agent, resourceProfile.policy, executionControl)
             }
             result.status
         } finally {
             heartbeat.cancel()
             withContext(NonCancellable) { dao.releaseLease(objectiveId, ownerId) }
         }
+    }
+
+    private suspend fun markNeedsAttention(objectiveId: String, message: String) {
+        val dao = database.objectiveDao()
+        dao.getObjective(objectiveId)?.let { objective ->
+            dao.upsertObjective(
+                objective.copy(
+                    status = "needs_attention",
+                    error = message.take(600),
+                    updatedAt = System.currentTimeMillis(),
+                )
+            )
+        }
+    }
+
+    private suspend fun recordEvent(objectiveId: String, kind: String, detail: String) {
+        database.objectiveDao().appendEvent(
+            ObjectiveEventEntity(
+                id = UUID.randomUUID().toString(),
+                objectiveId = objectiveId,
+                taskId = null,
+                kind = kind,
+                detail = detail.take(1_000),
+                createdAt = System.currentTimeMillis(),
+            )
+        )
+        WorkerActivityBus.record(
+            kind = when {
+                kind.contains("install") || kind.contains("dependency") -> WorkerActivityKind.TOOL
+                kind.contains("file") -> WorkerActivityKind.FILE
+                kind.contains("terminal") -> WorkerActivityKind.TERMINAL
+                kind.contains("environment") -> WorkerActivityKind.INFO
+                kind.contains("recover") -> WorkerActivityKind.RECOVERY
+                kind.contains("error") || kind.contains("failed") -> WorkerActivityKind.ERROR
+                else -> WorkerActivityKind.INFO
+            },
+            title = kind.replace('_', ' '),
+            detail = detail,
+            objectiveId = objectiveId,
+        )
     }
 
     private fun startForegroundSafely(text: String) {

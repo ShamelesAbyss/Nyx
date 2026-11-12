@@ -39,6 +39,11 @@ import com.nyx.ai.terminal.ToolState
 import com.nyx.ai.terminal.WorkspaceProvisionRequest
 import com.nyx.ai.terminal.WorkspaceProvisionResult
 import com.nyx.ai.terminal.WorkspaceProvisioner
+import com.nyx.ai.terminal.WorkspaceDeleteResult
+import com.nyx.ai.terminal.WorkspaceLifecycle
+import com.nyx.ai.terminal.WorkspaceRecord
+import com.nyx.ai.terminal.WorkspaceRegistry
+import com.nyx.ai.terminal.WorkspaceStartupDecision
 import com.nyx.ai.autonomy.policy.ActionKind
 import com.nyx.ai.autonomy.policy.ActionRequest
 import com.nyx.ai.autonomy.policy.AutonomyMode
@@ -152,6 +157,10 @@ data class NyxState(
     val pendingInstallApproval: List<PackageCandidate> = emptyList(),
     val workspaceProvisioning: Boolean = false,
     val pendingWorkspaceCreation: String? = null,
+    val managedWorkspaces: List<WorkspaceRecord> = emptyList(),
+    val pendingWorkspaceDeletion: List<WorkspaceRecord> = emptyList(),
+    val workspaceLifecycleBusy: Boolean = false,
+    val workspaceLifecycleMessage: String = "",
     val policyMessage: String = "",
     val arsenalSkills: List<ArsenalSkill> = emptyList(),
     val arsenalMessage: String = "",
@@ -202,6 +211,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     )
     val state: StateFlow<NyxState> = _state.asStateFlow()
     private val terminalRepository = TerminalRepository(application, db, terminalBridge)
+    private val workspaceRegistry = WorkspaceRegistry(application)
     private var generationJob: Job? = null
     private var agentJob: Job? = null
     private var workflowJob: Job? = null
@@ -225,8 +235,13 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             ollamaManager.state.collect { server -> _state.update { it.copy(ollamaServer = server) } }
         }
         _state.update {
-            it.copy(autonomyMode = AutonomyRuntime.mode(), autonomyStopped = AutonomyRuntime.policy().stopped)
+            it.copy(
+                autonomyMode = AutonomyRuntime.mode(),
+                autonomyStopped = AutonomyRuntime.policy().stopped,
+                managedWorkspaces = workspaceRegistry.list(),
+            )
         }
+        viewModelScope.launch { restoreSavedWorkspace() }
         viewModelScope.launch {
             ensureStarterRecords()
             db.conversationDao().observeConversations().collect { items -> _state.update { it.copy(conversations = items) } }
@@ -693,6 +708,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val s = _state.value
+        workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId }
         if (agent == null) { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
         if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
@@ -758,6 +774,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     /** Re-running failed or interrupted tools is always an explicit user action. */
     fun resumeObjective(id: String, userApprovedRetry: Boolean) {
         val s = _state.value
+        workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
         val objective = s.objectives.firstOrNull { it.id == id } ?: return
         val agent = s.agents.firstOrNull { it.id == objective.agentId } ?: run { _state.update { it.copy(error = "The objective's agent is unavailable.") }; return }
         if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
@@ -867,6 +884,16 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                     workspaceCheck = check ?: it.workspaceCheck,
                     terminalMessage = profile.detail ?: if (profile.hostAvailable) "Termux host is ready." else "Termux is unavailable.",
                 )
+            }
+            when (check) {
+                is WorkspaceCheck.Valid -> {
+                    registerManagedWorkspace(environment, alias, check.normalizedPath)
+                    _state.update { it.copy(managedWorkspaces = workspaceRegistry.list()) }
+                    syncWorkspaceAuthority(check.normalizedPath)
+                }
+
+                is WorkspaceCheck.Invalid -> syncWorkspaceAuthority(null)
+                null -> Unit
             }
             withContext(Dispatchers.IO) { runCatching { ollamaManager.refresh() } }
         }
@@ -1333,6 +1360,97 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Verifies the saved workspace on every process start. A verified folder is reused as-is; an
+     * unavailable folder is reported and its routine grants are removed, never silently replaced
+     * with a new numbered workspace.
+     */
+    private suspend fun restoreSavedWorkspace() {
+        val snapshot = _state.value
+        val saved = snapshot.terminalWorkspace.trim()
+        if (saved.isBlank()) {
+            syncWorkspaceAuthority(null)
+            _state.update { it.copy(managedWorkspaces = workspaceRegistry.list()) }
+            return
+        }
+        _state.update { it.copy(terminalMessage = "Verifying the saved workspace on startup…") }
+        val check = withContext(Dispatchers.IO) {
+            runCatching {
+                terminalRepository.validateWorkspace(snapshot.terminalEnvironment, saved, snapshot.guestAlias)
+            }.getOrElse {
+                WorkspaceCheck.Invalid(
+                    "probe_failed",
+                    it.message?.take(200) ?: "Workspace probe failed",
+                    "Run Detect environment and select the workspace again.",
+                )
+            }
+        }
+        when (val decision = WorkspaceLifecycle.startupDecision(saved, check)) {
+            is WorkspaceStartupDecision.Reuse -> {
+                prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, decision.path).apply()
+                registerManagedWorkspace(snapshot.terminalEnvironment, snapshot.guestAlias, decision.path)
+                _state.update {
+                    it.copy(
+                        terminalWorkspace = decision.path,
+                        workspaceCheck = check,
+                        managedWorkspaces = workspaceRegistry.list(),
+                        terminalMessage = "Reused verified workspace: ${decision.path}",
+                        workspaceLifecycleMessage = "",
+                    )
+                }
+                syncWorkspaceAuthority(decision.path)
+            }
+
+            WorkspaceStartupDecision.Unavailable -> {
+                _state.update {
+                    it.copy(
+                        workspaceCheck = check as? WorkspaceCheck.Invalid,
+                        terminalMessage = "Saved workspace was not reused: ${(check as? WorkspaceCheck.Invalid)?.message ?: "probe failed"}",
+                        workspaceLifecycleMessage = "Saved workspace is unavailable; no replacement was created.",
+                    )
+                }
+                syncWorkspaceAuthority(null)
+            }
+
+            WorkspaceStartupDecision.None -> syncWorkspaceAuthority(null)
+        }
+    }
+
+    /** Replaces routine grants so the policy scope always follows the verified workspace. */
+    private fun syncWorkspaceAuthority(verifiedPath: String?) {
+        val check = _state.value.workspaceCheck
+        val path = verifiedPath
+            ?.takeIf { check is WorkspaceCheck.Valid && check.normalizedPath == it }
+            ?.takeIf { _state.value.autonomyMode != AutonomyMode.MANUAL }
+        AutonomyRuntime.grantRoutineScope(app, policyEnvironmentId(), path)
+    }
+
+    private fun registerManagedWorkspace(environment: TerminalEnvironment, alias: String, path: String) {
+        val base = WorkspaceProvisioner.defaultBase(environment, _state.value.terminalProfile?.home)
+            ?: inferManagedBase(path)
+            ?: return
+        if (!WorkspaceLifecycle.isManaged(base, path)) return
+        workspaceRegistry.upsert(
+            WorkspaceRecord(
+                environment = environment,
+                guestAlias = alias,
+                base = base,
+                path = path,
+                verifiedAt = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    private fun inferManagedBase(path: String): String? {
+        val marker = "/${WorkspaceProvisioner.DEFAULT_HOST_FOLDER}/"
+        val index = path.indexOf(marker)
+        return if (index > 0) path.substring(0, index + marker.length - 1) else null
+    }
+
+    fun refreshManagedWorkspaces() {
+        _state.update { it.copy(managedWorkspaces = workspaceRegistry.list()) }
+    }
+
     fun setTerminalWorkspace(path: String) {
         val raw = path.trim().trimEnd('/')
         val clean = if (raw == "~" || raw.startsWith("~/")) _state.value.terminalProfile?.home?.let { it + raw.removePrefix("~") } ?: raw else raw
@@ -1346,20 +1464,22 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (check is WorkspaceCheck.Valid) {
                 prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, check.normalizedPath).apply()
-                if (AutonomyRuntime.mode() != AutonomyMode.MANUAL) {
-                    AutonomyRuntime.grantRoutineScope(app, policyEnvironmentId(), check.normalizedPath)
-                }
+                registerManagedWorkspace(s.terminalEnvironment, s.guestAlias, check.normalizedPath)
                 _state.update {
                     it.copy(
                         terminalWorkspace = check.normalizedPath,
                         workspaceCheck = check,
+                        managedWorkspaces = workspaceRegistry.list(),
                         terminalMessage = "Workspace verified: ${check.normalizedPath}",
+                        workspaceLifecycleMessage = "",
                         error = "",
                     )
                 }
+                syncWorkspaceAuthority(check.normalizedPath)
             } else {
                 val invalid = check as WorkspaceCheck.Invalid
                 _state.update { it.copy(workspaceCheck = invalid, error = invalid.message) }
+                syncWorkspaceAuthority(null)
             }
         }
     }
@@ -1367,11 +1487,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     /** Switches the one shared policy mode and creates the routine grants implied by that choice. */
     fun setAutonomyMode(mode: AutonomyMode) {
         AutonomyRuntime.setMode(app, mode)
-        AutonomyRuntime.grantRoutineScope(
-            app,
-            policyEnvironmentId(),
-            _state.value.terminalWorkspace.takeIf { it.startsWith('/') && mode != AutonomyMode.MANUAL },
-        )
+        val check = _state.value.workspaceCheck
+        val verified = _state.value.terminalWorkspace.takeIf {
+            mode != AutonomyMode.MANUAL && check is WorkspaceCheck.Valid && check.normalizedPath == it
+        }
+        AutonomyRuntime.grantRoutineScope(app, policyEnvironmentId(), verified)
         _state.update {
             it.copy(
                 autonomyMode = mode,
@@ -1627,19 +1747,19 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             when (result) {
                 is WorkspaceProvisionResult.Created -> {
                     prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, result.path).apply()
-                    if (AutonomyRuntime.mode() != AutonomyMode.MANUAL) {
-                        AutonomyRuntime.grantRoutineScope(app, policyEnvironmentId(), result.path)
-                    }
+                    registerManagedWorkspace(s.terminalEnvironment, s.guestAlias, result.path)
                     _state.update {
                         it.copy(
                             workspaceProvisioning = false,
                             pendingWorkspaceCreation = null,
                             terminalWorkspace = result.path,
                             workspaceCheck = WorkspaceCheck.Valid(result.path),
+                            managedWorkspaces = workspaceRegistry.list(),
                             policyMessage = "Workspace ready: ${result.path}",
                             error = "",
                         )
                     }
+                    syncWorkspaceAuthority(result.path)
                 }
 
                 is WorkspaceProvisionResult.Failed -> _state.update {
@@ -1652,6 +1772,141 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun requestDeleteWorkspace(record: WorkspaceRecord) {
+        if (!WorkspaceLifecycle.isManaged(record.base, record.path)) {
+            _state.update { it.copy(workspaceLifecycleMessage = "Refused: this path is not a direct child of a NYX-managed workspace root.") }
+            return
+        }
+        if (hasActiveObjective()) {
+            _state.update {
+                it.copy(
+                    pendingWorkspaceDeletion = emptyList(),
+                    workspaceLifecycleMessage = "Refused: pause or cancel the active objective before deleting a workspace.",
+                )
+            }
+            return
+        }
+        _state.update { it.copy(pendingWorkspaceDeletion = listOf(record), workspaceLifecycleMessage = "") }
+    }
+
+    fun requestDeleteAllWorkspaces() {
+        if (hasActiveObjective()) {
+            _state.update {
+                it.copy(
+                    pendingWorkspaceDeletion = emptyList(),
+                    workspaceLifecycleMessage = "Refused: pause or cancel the active objective before deleting workspaces.",
+                )
+            }
+            return
+        }
+        val candidates = _state.value.managedWorkspaces.filter { WorkspaceLifecycle.isManaged(it.base, it.path) }
+        _state.update {
+            it.copy(
+                pendingWorkspaceDeletion = candidates,
+                workspaceLifecycleMessage = if (candidates.isEmpty()) "No NYX-managed workspaces to delete." else "",
+            )
+        }
+    }
+
+    fun cancelWorkspaceDeletion() {
+        _state.update { it.copy(pendingWorkspaceDeletion = emptyList(), workspaceLifecycleMessage = "Deletion cancelled. Nothing was removed.") }
+    }
+
+    fun confirmWorkspaceDeletion() {
+        val pending = _state.value.pendingWorkspaceDeletion
+        if (pending.isEmpty() || _state.value.workspaceLifecycleBusy) return
+        if (hasActiveObjective()) {
+            _state.update {
+                it.copy(
+                    pendingWorkspaceDeletion = emptyList(),
+                    workspaceLifecycleMessage = "Refused: an objective became active. Nothing was deleted.",
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    workspaceLifecycleBusy = true,
+                    pendingWorkspaceDeletion = emptyList(),
+                    workspaceLifecycleMessage = "Deleting ${pending.size} verified workspace(s)…",
+                )
+            }
+            val failures = mutableListOf<String>()
+            var deleted = 0
+            for (record in pending) {
+                if (!WorkspaceLifecycle.isManaged(record.base, record.path)) {
+                    failures += "${record.path}: outside the managed root"
+                    continue
+                }
+                val decision = AutonomyRuntime.authorize(
+                    app,
+                    ActionRequest(
+                        kind = ActionKind.DELETE_WORKSPACE,
+                        target = record.path,
+                        environmentId = if (record.environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:${record.guestAlias}",
+                        insideAuthorizedWorkspace = true,
+                    ),
+                )
+                if (decision.reason == "emergency_stop") {
+                    failures += "${record.path}: emergency stop is active"
+                    continue
+                }
+                // The exact path list was confirmed by the user in the UI. The policy decision is
+                // recorded for audit, but a missing routine grant for a non-selected managed folder
+                // must not make the explicit "delete all test workspaces" action unusable.
+                val result = withContext(Dispatchers.IO) {
+                    terminalRepository.execute(
+                        command = WorkspaceLifecycle.deleteScript(record.base, record.path),
+                        environment = record.environment,
+                        workingDirectory = null,
+                        timeoutSeconds = 60,
+                        approvedByUser = true,
+                        guestAlias = record.guestAlias,
+                        useTimeoutBinary = false,
+                    )
+                }
+                when (val parsed = WorkspaceLifecycle.parseDelete(result.stdout, result.stderr, result.exitCode, record.path)) {
+                    is WorkspaceDeleteResult.Deleted -> {
+                        deleted++
+                        workspaceRegistry.remove(record.path)
+                        if (_state.value.terminalWorkspace == record.path) {
+                            prefs.edit().remove(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE).apply()
+                            _state.update { it.copy(terminalWorkspace = "", workspaceCheck = null) }
+                            syncWorkspaceAuthority(null)
+                        }
+                    }
+
+                    is WorkspaceDeleteResult.Refused -> failures += "${record.path}: ${parsed.message}"
+                }
+            }
+            _state.update {
+                it.copy(
+                    workspaceLifecycleBusy = false,
+                    managedWorkspaces = workspaceRegistry.list(),
+                    workspaceLifecycleMessage = when {
+                        failures.isEmpty() -> "Deleted $deleted workspace(s). The parent root and unrelated files were not touched."
+                        deleted == 0 -> "Deletion refused: ${failures.first()}"
+                        else -> "Deleted $deleted workspace(s); ${failures.size} refused: ${failures.first()}"
+                    },
+                )
+            }
+        }
+    }
+
+    private fun hasActiveObjective(): Boolean =
+        WorkspaceLifecycle.hasActiveObjective(
+            running = _state.value.objectiveRunning,
+            statuses = _state.value.objectives.map { it.status },
+        )
+
+    private fun workspaceProblem(s: NyxState): String? {
+        if (!s.terminalToolsEnabled) return null
+        val check = s.workspaceCheck
+        if (check is WorkspaceCheck.Valid && check.normalizedPath == s.terminalWorkspace) return null
+        return "Verify the selected workspace before starting an objective with terminal tools. NYX will not run mutating commands against an unverified or mismatched scope."
     }
 
     /** Turns stable policy reasons into a user action instead of exposing internal codes. */

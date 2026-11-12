@@ -23,6 +23,8 @@ data class WorkerActivity(
     val title: String,
     val detail: String,
     val toolName: String? = null,
+    val toolInput: String? = null,
+    val toolOutput: String? = null,
 )
 
 /**
@@ -63,9 +65,13 @@ object WorkerActivityBus {
         objectiveId: String? = null,
         taskId: String? = null,
         toolName: String? = null,
+        toolInput: String? = null,
+        toolOutput: String? = null,
     ) {
         val safeTitle = redact(title).take(120).ifBlank { kind.name.lowercase() }
         val safeDetail = redact(detail).take(2_000)
+        val safeInput = toolInput?.let { redact(it).take(4_000) }?.takeIf { it.isNotBlank() }
+        val safeOutput = toolOutput?.let { redact(it).take(4_000) }?.takeIf { it.isNotBlank() }
         synchronized(lock) {
             val item = WorkerActivity(
                 id = "activity-${System.currentTimeMillis()}-${next++}",
@@ -76,6 +82,8 @@ object WorkerActivityBus {
                 title = safeTitle,
                 detail = safeDetail,
                 toolName = toolName?.take(80),
+                toolInput = safeInput,
+                toolOutput = safeOutput,
             )
             buffer.addLast(item)
             while (buffer.size > MAX_EVENTS) buffer.removeFirst()
@@ -108,6 +116,8 @@ object WorkerActivityBus {
                 put("title", item.title)
                 put("detail", item.detail)
                 put("toolName", item.toolName ?: "")
+                put("toolInput", item.toolInput ?: "")
+                put("toolOutput", item.toolOutput ?: "")
             }.toString() + "\n")
             // Keep the file bounded even after many sessions.
             if (target.length() > 1_500_000L) {
@@ -125,6 +135,8 @@ object WorkerActivityBus {
         put("title", item.title)
         put("detail", item.detail)
         put("toolName", item.toolName ?: "")
+        put("toolInput", item.toolInput ?: "")
+        put("toolOutput", item.toolOutput ?: "")
     }.toString()
 
     private fun decode(line: String): WorkerActivity? = runCatching {
@@ -139,6 +151,8 @@ object WorkerActivityBus {
             title = json.optString("title").take(120),
             detail = json.optString("detail").take(2_000),
             toolName = json.optString("toolName").takeIf { it.isNotBlank() },
+            toolInput = json.optString("toolInput").take(4_000).takeIf { it.isNotBlank() },
+            toolOutput = json.optString("toolOutput").take(4_000).takeIf { it.isNotBlank() },
         )
     }.getOrNull()
 
@@ -146,7 +160,7 @@ object WorkerActivityBus {
     internal fun redact(raw: String): String {
         var text = raw
         val patterns = listOf(
-            Regex("(?i)(authorization\\s*[:=]\\s*)([^\\s,;]+)"),
+            Regex("(?i)(authorization\\s*[:=]\\s*(?:bearer|basic|token)?\\s*)([^\\s,;]+)"),
             Regex("(?i)(api[_-]?key\\s*[:=]\\s*)([^\\s,;]+)"),
             Regex("(?i)(token\\s*[:=]\\s*)([^\\s,;]+)"),
             Regex("(?i)(bearer\\s+)([A-Za-z0-9._~+/=-]{12,})"),
@@ -156,4 +170,51 @@ object WorkerActivityBus {
         }
         return text
     }
+}
+
+/**
+ * Bounded plain-text diagnostics for copy/share. It exports only observable worker events and
+ * already-redacted tool payloads; it never adds model reasoning or reads arbitrary files.
+ */
+object WorkerActivityExport {
+    const val MAX_CHARS = 60_000
+    private const val MAX_EVENT_CHARS = 3_000
+
+    fun toText(
+        activities: List<WorkerActivity>,
+        objectiveTitle: String = "",
+        phase: String = "",
+        status: String = "",
+        activeTask: String = "",
+        limit: Int = MAX_CHARS,
+    ): String {
+        val bounded = limit.coerceIn(1_000, MAX_CHARS)
+        val out = StringBuilder()
+        fun line(text: String) {
+            if (out.length >= bounded) return
+            out.append(text.take(bounded - out.length)).append('\n')
+        }
+        line("NYX LIVE ACTIVITY")
+        if (objectiveTitle.isNotBlank()) line("Objective: ${WorkerActivityBus.redact(objectiveTitle).take(200)}")
+        if (phase.isNotBlank()) line("Phase: ${phase.take(80)}")
+        if (status.isNotBlank()) line("Status: ${status.take(80)}")
+        if (activeTask.isNotBlank()) line("Active task: ${WorkerActivityBus.redact(activeTask).take(200)}")
+        line("Exported: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
+        line("")
+        activities.takeLast(300).forEach { event ->
+            val body = buildString {
+                append('[').append(formatTime(event.at)).append("] ")
+                append(event.kind.name).append(" · ").append(WorkerActivityBus.redact(event.title)).append('\n')
+                if (event.detail.isNotBlank()) append("  ").append(WorkerActivityBus.redact(event.detail)).append('\n')
+                if (!event.toolName.isNullOrBlank()) append("  tool: ").append(WorkerActivityBus.redact(event.toolName)).append('\n')
+                if (!event.toolInput.isNullOrBlank()) append("  input: ").append(WorkerActivityBus.redact(event.toolInput)).append('\n')
+                if (!event.toolOutput.isNullOrBlank()) append("  output: ").append(WorkerActivityBus.redact(event.toolOutput)).append('\n')
+            }.take(MAX_EVENT_CHARS)
+            line(body.trimEnd())
+        }
+        return out.toString().trimEnd()
+    }
+
+    private fun formatTime(at: Long): String =
+        java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(at))
 }

@@ -1,6 +1,8 @@
 # Changelog
 
-> Historical v0.1.0 notes retained from the initial project publication. The current, canonical release history through v0.7.9 is in [CHANGELOG.md](CHANGELOG.md).
+> **Legacy filename:** this file is retained for existing links. The canonical, maintained release history is [CHANGELOG.md](CHANGELOG.md). Current release: **v0.8.0 — Project Autonomous Bootstrap** (published).
+
+> Historical v0.1.0 notes retained from the initial project publication. The current, canonical release history through v0.8.0 is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 0.1.0 — Initial implementation
 

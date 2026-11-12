@@ -13,8 +13,8 @@ import java.util.Collections
  *   `workspace_write`.
  * - [com.nyx.ai.terminal.TerminalAgentTools] exposes `terminal_run`, `file_read`, `file_write`,
  *   `file_list`, `file_search`, `project_detect`, `project_inspect`, `source_search`, `repo_diff`,
- *   `repo_status`, `project_run`, `build_run`, `test_run`. `terminal_run` always denies
- *   model-directed shell, and `project_inspect`/`project_run`/`source_search` are real but absent from
+ *   `repo_status`, `project_run`, `build_run`, `test_run`. `terminal_run` is available only through a
+ *   workspace-confined policy gate supplied by the objective runtime, and `project_inspect`/`project_run`/`source_search` are real but absent from
  *   the validator's fixed tool table, so no manifest may declare them.
  * - [com.nyx.ai.agent.NetworkAgentTools] exposes `fetch_url`, which stays host-mediated through the
  *   network policy and is likewise not declarable by a skill.
@@ -44,8 +44,8 @@ object ArsenalSkills {
 
     /**
      * Real capabilities that are intentionally not declarable, and are disjoint from [DECLARABLE_TOOLS]:
-     * `fetch_url` (host network policy), `terminal_run` (model-directed shell is always denied by the
-     * terminal provider), `project_inspect`/`project_run`/`source_search` (real terminal tools the
+     * `fetch_url` (host network policy), `terminal_run` (model-directed shell is denied unless the
+     * execution supplies a workspace-confined policy gate), `project_inspect`/`project_run`/`source_search` (real terminal tools the
      * validator's fixed table does not authorize for skills), and the private agent-memory tools
      * `calculator`, `memory_read`, `memory_write`, `plan_task`.
      */

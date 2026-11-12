@@ -125,6 +125,8 @@ import com.nyx.ai.ollama.OllamaServerStatus
 import com.nyx.ai.network.InferenceFabric
 import com.nyx.ai.settings.MemoryTelemetry
 import com.nyx.ai.autonomy.WorkerActivityBus
+import com.nyx.ai.terminal.WorkspaceRecord
+import com.nyx.ai.ui.WorkerActivityEntry
 import com.nyx.ai.ui.WorkerActivityPreview
 import com.nyx.ai.ui.WorkerConsoleDialog
 import com.nyx.ai.ui.ArsenalScreen
@@ -514,6 +516,42 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                         }
                     }
                 }
+                Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("MANAGE WORKSPACES", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                            TextButton(onClick = vm::refreshManagedWorkspaces) { Text("Refresh", color = VioletSoft, fontSize = 11.sp) }
+                        }
+                        Text("Only verified direct children of a NYX-managed workspace parent are listed. Selecting a path re-probes it and updates the policy scope.", color = TextMuted, fontSize = 11.sp)
+                        if (state.managedWorkspaces.isEmpty()) {
+                            Text("No managed workspaces yet. Create one only when you need it.", color = TextMuted, fontSize = 11.sp)
+                        } else {
+                            state.managedWorkspaces.forEach { record ->
+                                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF181820)), shape = RoundedCornerShape(11.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(record.path, color = TextMain, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                        Text(
+                                            "${record.environment.name.replace('_', ' ')} · parent ${record.base}",
+                                            color = TextMuted, fontSize = 9.sp,
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            OutlinedButton(onClick = { vm.setTerminalWorkspace(record.path) }, enabled = !state.workspaceLifecycleBusy) { Text("Use", fontSize = 10.sp) }
+                                            OutlinedButton(onClick = { vm.requestDeleteWorkspace(record) }, enabled = !state.workspaceLifecycleBusy) { Text("Delete", fontSize = 10.sp) }
+                                        }
+                                    }
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = vm::requestDeleteAllWorkspaces,
+                                enabled = !state.workspaceLifecycleBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Delete all test workspaces", fontSize = 11.sp) }
+                        }
+                        if (state.workspaceLifecycleMessage.isNotBlank()) {
+                            Text(state.workspaceLifecycleMessage, color = Color(0xFFF2C879), fontSize = 10.sp)
+                        }
+                    }
+                }
                 state.dependencyPlan?.let { plan ->
                     Text(
                         "Requirements: ${plan.requirements.joinToString { it.tool }}",
@@ -582,6 +620,22 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
             fontSize = 10.sp
         )
     }
+    if (state.pendingWorkspaceDeletion.isNotEmpty()) AlertDialog(
+        onDismissRequest = vm::cancelWorkspaceDeletion,
+        containerColor = Surface1,
+        title = { Text("Delete verified workspace?", color = TextMain) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("NYX will remove exactly these directories and nothing else:", color = TextMuted, fontSize = 12.sp)
+                state.pendingWorkspaceDeletion.forEach { record ->
+                    Text(record.path, color = TextMain, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+                Text("The parent root, Ollama models, the Debian installation, and unrelated files are never deleted. This cannot be undone.", color = Color(0xFFF2C879), fontSize = 11.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = vm::confirmWorkspaceDeletion) { Text("Delete these directories") } },
+        dismissButton = { TextButton(onClick = vm::cancelWorkspaceDeletion) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -589,9 +643,28 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
     var goal by rememberSaveable { mutableStateOf("") }
     var confirmResume by rememberSaveable { mutableStateOf(false) }
     var development by rememberSaveable { mutableStateOf(false) }
+    var showConsole by rememberSaveable { mutableStateOf(false) }
     val selected = state.objectives.firstOrNull { it.id == state.selectedObjectiveId }
+    val liveObjective = state.objectives.firstOrNull { it.status == "running" }
+        ?: selected
+        ?: state.objectives.firstOrNull { it.status in setOf("planning", "paused", "needs_attention") }
+    val activeTask = state.objectiveTasks.firstOrNull {
+        (liveObjective == null || it.objectiveId == liveObjective.id) && it.status in setOf("running", "verifying")
+    }
+    val activities by WorkerActivityBus.events.collectAsState()
+    val consoleActivities = if (liveObjective == null) activities else activities.filter {
+        it.objectiveId == null || it.objectiveId == liveObjective.id
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionIntro("Autonomy control center", "Create a goal, let NYX build a bounded dependency graph, and review each real agent/tool result. Execution runs in a foreground service; terminal tools are optional and off by default.")
+        WorkerActivityEntry(
+            activities = consoleActivities,
+            running = state.objectiveRunning,
+            objectiveTitle = liveObjective?.title.orEmpty(),
+            phase = state.objectivePhase,
+            status = liveObjective?.status.orEmpty(),
+            onOpen = { showConsole = true },
+        )
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("NEW OBJECTIVE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
@@ -686,6 +759,18 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
         confirmButton = { TextButton(onClick = { confirmResume = false; vm.resumeObjective(selected.id, userApprovedRetry = true) }) { Text("I reviewed · resume") } },
         dismissButton = { TextButton(onClick = { confirmResume = false }) { Text("Not now") } }
     )
+    if (showConsole) WorkerConsoleDialog(
+        activities = consoleActivities,
+        running = state.objectiveRunning,
+        objectiveTitle = liveObjective?.title.orEmpty(),
+        phase = state.objectivePhase,
+        objectiveStatus = liveObjective?.status.orEmpty(),
+        activeTask = activeTask?.title.orEmpty(),
+        onDismiss = { showConsole = false },
+        onPause = vm::pauseObjective,
+        onResume = liveObjective?.let { objective -> { vm.resumeObjective(objective.id, userApprovedRetry = true) } },
+        onCancel = liveObjective?.let { objective -> { vm.cancelObjective(objective.id) } },
+    )
 }
 
 @Composable
@@ -728,6 +813,15 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showConsole by rememberSaveable { mutableStateOf(false) }
     val activities by WorkerActivityBus.events.collectAsState()
+    val activeObjective = state.objectives.firstOrNull { it.status == "running" }
+        ?: state.objectives.firstOrNull { it.id == state.selectedObjectiveId }
+        ?: state.objectives.firstOrNull { it.status in setOf("planning", "paused", "needs_attention") }
+    val activeTask = state.objectiveTasks.firstOrNull {
+        (activeObjective == null || it.objectiveId == activeObjective.id) && it.status in setOf("running", "verifying")
+    }
+    val consoleActivities = if (activeObjective == null) activities else activities.filter {
+        it.objectiveId == null || it.objectiveId == activeObjective.id
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 780.dp
         Row(Modifier.fillMaxSize()) {
@@ -746,7 +840,7 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
                     items(state.messages, key = { it.id }) { message -> MessageBubble(message) }
                     if (state.streamingText.isNotEmpty()) item(key = "streaming") { StreamingBubble(state.streamingText) }
                 }
-                WorkerActivityPreview(activities, state.objectiveRunning, onOpen = { showConsole = true })
+                WorkerActivityPreview(consoleActivities, state.objectiveRunning, onOpen = { showConsole = true })
                 Composer(draft, onDraft = { draft = it }, generating = state.isGenerating, enabled = state.connected && state.selectedModel.isNotBlank(), onSend = { vm.sendMessage(draft); draft = "" }, onStop = vm::stopGeneration)
             }
         }
@@ -758,7 +852,18 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
         text = { HistoryPanel(state.conversations, state.activeConversationId, vm, Modifier.heightIn(max = 440.dp).fillMaxWidth(), onSelected = { showHistory = false }) },
         confirmButton = { TextButton(onClick = { showHistory = false }) { Text("Close") } }
     )
-    if (showConsole) WorkerConsoleDialog(activities, state.objectiveRunning, onDismiss = { showConsole = false })
+    if (showConsole) WorkerConsoleDialog(
+        activities = consoleActivities,
+        running = state.objectiveRunning,
+        objectiveTitle = activeObjective?.title.orEmpty(),
+        phase = state.objectivePhase,
+        objectiveStatus = activeObjective?.status.orEmpty(),
+        activeTask = activeTask?.title.orEmpty(),
+        onDismiss = { showConsole = false },
+        onPause = vm::pauseObjective,
+        onResume = activeObjective?.let { objective -> { vm.resumeObjective(objective.id, userApprovedRetry = true) } },
+        onCancel = activeObjective?.let { objective -> { vm.cancelObjective(objective.id) } },
+    )
 }
 
 @Composable

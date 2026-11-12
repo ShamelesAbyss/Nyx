@@ -1,5 +1,15 @@
 package com.nyx.ai.terminal
 
+/** Why an installation step failed, when the output provides recognizable evidence. */
+enum class InstallFailureKind {
+    PACKAGE_MANAGER_LOCK,
+    REPOSITORY_UNAVAILABLE,
+    INCOMPATIBLE_PACKAGE,
+    STORAGE_EXHAUSTED,
+    NETWORK,
+    UNKNOWN,
+}
+
 /** One package installation attempt and its real process result. */
 data class InstallStep(
     val packageName: String,
@@ -8,6 +18,7 @@ data class InstallStep(
     val status: String,
     val exitCode: Int? = null,
     val output: String = "",
+    val failure: InstallFailureKind? = null,
 )
 
 /** Aggregate result of applying a [DependencyPlan]. */
@@ -17,6 +28,7 @@ data class InstallationReport(
     val verifiedTools: Set<String> = emptySet(),
     val stillMissing: List<String> = emptyList(),
     val message: String = "",
+    val failure: InstallFailureKind? = null,
 ) {
     val succeeded: Boolean get() = needsApproval.isEmpty() && stillMissing.isEmpty() && steps.all { it.status == "succeeded" }
 }
@@ -37,6 +49,60 @@ class DependencyInstaller(private val repository: TerminalRepository) {
             "connection timed out",
             "network is unreachable",
         )
+
+        private val LOCK_FAILURES = listOf(
+            "could not get lock",
+            "unable to acquire the dpkg frontend lock",
+            "dpkg frontend lock",
+            "another process is using",
+        )
+
+        private val STORAGE_FAILURES = listOf(
+            "no space left on device",
+            "not enough free space",
+            "insufficient disk space",
+            "disk quota exceeded",
+        )
+
+        private val REPOSITORY_FAILURES = listOf(
+            "failed to fetch",
+            "unable to locate package",
+            "has no installation candidate",
+            "does not have a release file",
+            "repository",
+            "gpg error",
+            "404  not found",
+            "404 not found",
+        )
+
+        private val INCOMPATIBLE_FAILURES = listOf(
+            "unmet dependencies",
+            "but it is not going to be installed",
+            "is not available",
+            "architecture",
+            "incompatible",
+        )
+
+        private val NETWORK_FAILURES = listOf(
+            "temporary failure resolving",
+            "network is unreachable",
+            "connection timed out",
+            "could not resolve",
+        )
+
+        /** Deterministic classification used in the report and in bounded retry decisions. */
+        fun classifyFailure(output: String, exitCode: Int?): InstallFailureKind {
+            val text = output.lowercase()
+            return when {
+                LOCK_FAILURES.any { text.contains(it) } -> InstallFailureKind.PACKAGE_MANAGER_LOCK
+                STORAGE_FAILURES.any { text.contains(it) } -> InstallFailureKind.STORAGE_EXHAUSTED
+                NETWORK_FAILURES.any { text.contains(it) } -> InstallFailureKind.NETWORK
+                REPOSITORY_FAILURES.any { text.contains(it) } -> InstallFailureKind.REPOSITORY_UNAVAILABLE
+                INCOMPATIBLE_FAILURES.any { text.contains(it) } -> InstallFailureKind.INCOMPATIBLE_PACKAGE
+                exitCode == null -> InstallFailureKind.UNKNOWN
+                else -> InstallFailureKind.UNKNOWN
+            }
+        }
     }
 
     /**
@@ -77,10 +143,11 @@ class DependencyInstaller(private val repository: TerminalRepository) {
             verifiedTools = verified,
             stillMissing = stillMissing,
             message = when {
-                failedStep != null -> "Installation stopped at ${failedStep.packageName}: ${failedStep.output.take(240)}"
+                failedStep != null -> "Installation stopped at ${failedStep.packageName} (${failedStep.failure?.name?.lowercase() ?: "unknown"}): ${failedStep.output.take(240)}"
                 stillMissing.isNotEmpty() -> "Packages installed but these tools are still unverified: ${stillMissing.joinToString()}."
                 else -> "All required tools are verified."
             },
+            failure = failedStep?.failure,
         )
     }
 
@@ -126,6 +193,7 @@ class DependencyInstaller(private val repository: TerminalRepository) {
             status = if (succeeded) "succeeded" else "failed",
             exitCode = result.exitCode,
             output = output,
+            failure = if (succeeded) null else classifyFailure(output, result.exitCode),
         )
     }
 

@@ -13,8 +13,8 @@ class GuestJdkResolverTest {
         codename: String = "trixie",
         sources: Int = 3,
         packages: Map<String, String> = mapOf(
-            "default-jdk-headless" to "(none)",
-            "openjdk-21-jdk-headless" to "21.0.8+9-Debian-1",
+            "default-jdk-headless" to "2:1.21-76",
+            "openjdk-21-jdk-headless" to "21.0.13+9-1~deb13u2",
             "openjdk-17-jdk-headless" to "(none)",
         ),
         gradle: String? = "8.14",
@@ -41,6 +41,31 @@ class GuestJdkResolverTest {
         assertEquals("8.14", resolution.gradleVersion)
         assertTrue(resolution.diagnostic.contains("Resolved openjdk-21-jdk-headless"))
         assertTrue(resolution.diagnostic.contains("APT candidate"))
+    }
+
+    @Test
+    fun `valid deb822 source count resolves openjdk 21 on trixie`() {
+        val resolution = GuestJdkResolver.parse(probe(sources = 2), "", 0)
+        assertEquals("openjdk-21-jdk-headless", resolution.packageName)
+        assertEquals(2, resolution.aptSourceCount)
+        assertTrue(resolution.diagnostic.contains("21.0.13+9-1~deb13u2"))
+    }
+
+    @Test
+    fun `disabled deb822 sources do not trust a cached candidate`() {
+        val resolution = GuestJdkResolver.parse(probe(sources = 0), "", 0)
+        assertNull(resolution.packageName)
+        assertTrue(resolution.diagnostic.contains("No APT deb sources"))
+    }
+
+    @Test
+    fun `missing source marker cannot trust a cached candidate`() {
+        val output = probe().lineSequence()
+            .filterNot { it.startsWith("NYX_APT_SOURCES=") }
+            .joinToString("\n")
+        val resolution = GuestJdkResolver.parse(output, "", 0)
+        assertNull(resolution.packageName)
+        assertNull(resolution.aptSourceCount)
     }
 
     @Test

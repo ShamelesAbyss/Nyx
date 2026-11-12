@@ -79,7 +79,7 @@ object GuestJdkResolver {
           printf 'NYX_VERSION_CODENAME=%s\n' "${'$'}{VERSION_CODENAME:-}"
         fi
         printf 'NYX_ARCH=%s\n' "$(dpkg --print-architecture 2>/dev/null || uname -m 2>/dev/null)"
-        sources=$(grep -RhsE '^[[:space:]]*deb[[:space:]]' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null | wc -l | tr -d ' ')
+        ${aptSourceCountScript()}
         printf 'NYX_APT_SOURCES=%s\n' "${'$'}{sources:-0}"
         if command -v apt-cache >/dev/null 2>&1; then
           printf 'NYX_APT_CACHE=1\n'
@@ -130,7 +130,7 @@ object GuestJdkResolver {
         val order = candidateOrder(osId, versionId, codename)
         // A cached apt-cache answer is not proof that a repository is configured. With no deb
         // sources, treat every candidate as unresolved instead of installing from stale lists.
-        val repositoryEvidence = aptCache && aptSources != 0
+        val repositoryEvidence = aptCache && (aptSources ?: 0) > 0
         val selected = if (!repositoryEvidence) {
             null
         } else {
@@ -183,7 +183,7 @@ object GuestJdkResolver {
             !resolution.aptCacheAvailable ->
                 "apt-cache is unavailable in the guest, so JDK package candidates could not be verified."
             (resolution.aptSourceCount ?: 0) == 0 ->
-                "No APT deb sources were found in /etc/apt/sources.list or /etc/apt/sources.list.d."
+                "No APT deb sources were found in /etc/apt/sources.list, enabled sources.list.d/*.list entries, or enabled Deb822 *.sources stanzas."
             else ->
                 "No installable JDK package was found for $distro (${resolution.architecture ?: "unknown arch"}). " +
                     "The APT sources may be stale."
@@ -197,4 +197,60 @@ object GuestJdkResolver {
 
     private fun clean(value: String): String? =
         value.trim().removeSurrounding("\"").takeIf { it.isNotBlank() }?.take(MAX_VERSION_CHARS)
+
+    /**
+     * Read-only shell fragment that counts enabled binary (`deb`) repositories in the traditional
+     * one-line `*.list` format and in Debian Deb822 `*.sources` stanzas. It reads files only; it
+     * never rewrites sources, runs `apt-get update`, or installs anything.
+     *
+     * Deb822 is stanza-based. A stanza counts only when it has `Types` containing `deb` (not only
+     * `deb-src`), is not `Enabled: no`, and has non-empty `URIs` and `Suites` fields. Traditional
+     * `.list` lines count only when they begin with `deb` and are not commented out.
+     */
+    fun aptSourceCountScript(aptRoot: String = "/etc/apt"): String {
+        val root = shellQuote(aptRoot)
+        return """
+            list_sources=0
+            for f in $root/sources.list $root/sources.list.d/*.list; do
+              [ -f "${'$'}f" ] || continue
+              n=${'$'}(grep -cE '^[[:space:]]*deb[[:space:]]' "${'$'}f" 2>/dev/null || true)
+              list_sources=${'$'}((list_sources + ${'$'}{n:-0}))
+            done
+            deb822_sources=0
+            for f in $root/sources.list.d/*.sources; do
+              [ -f "${'$'}f" ] || continue
+              n=${'$'}(awk '
+                function reset() { types=0; enabled=1; uris=0; suites=0; have=0 }
+                function flush() {
+                  if (have && types && enabled && uris && suites) count++
+                  reset()
+                }
+                BEGIN { reset(); count=0 }
+                /^[[:space:]]*${'$'}/ { flush(); next }
+                /^[[:space:]]*#/ { next }
+                {
+                  line=${'$'}0
+                  if (line ~ /^[^[:space:]][^:]*:/) {
+                    key=line
+                    sub(/:.*/, "", key)
+                    key=tolower(key)
+                    value=line
+                    sub(/^[^:]*:[[:space:]]*/, "", value)
+                    sub(/[[:space:]]*#.*${'$'}/, "", value)
+                    gsub(/^[[:space:]]+|[[:space:]]+${'$'}/, "", value)
+                    if (key == "types") { types = (tolower(value) ~ /(^|[[:space:]])deb([[:space:]]|${'$'})/); have=1 }
+                    else if (key == "enabled") { enabled = (tolower(value) != "no"); have=1 }
+                    else if (key == "uris") { uris = (value != ""); have=1 }
+                    else if (key == "suites") { suites = (value != ""); have=1 }
+                  }
+                }
+                END { flush(); print count+0 }
+              ' "${'$'}f" 2>/dev/null || true)
+              deb822_sources=${'$'}((deb822_sources + ${'$'}{n:-0}))
+            done
+            sources=${'$'}((list_sources + deb822_sources))
+        """.trimIndent()
+    }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 }

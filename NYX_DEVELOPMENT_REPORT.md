@@ -1,5 +1,28 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.0 — Project Autonomous Bootstrap (published)
+
+NYX 0.8.0 is versionCode 13 / versionName 0.8.0, debug-signed with the established certificate, and published as GitHub release v0.8.0. It turns verified dependency preparation into part of objective execution and adds a policy-gated terminal, an expandable Live Worker Console, and a guarded workspace lifecycle. It is not a claim of full autonomous development.
+
+| Directive area | Status | What changed |
+| :--- | :--- | :--- |
+| Environment reconciliation | Implemented, JVM-tested | The objective service re-discovers the selected environment on every start and compares it with the stored snapshot. A current verified guest clears a stale error; an unavailable or diverted environment stops before task execution. |
+| Dependency bootstrap | Implemented, device-fix pending re-test | `DependencyBootstrap` probes, plans, installs only approved candidates, re-probes required executables, and continues the original objective. A blocked or failed install stops with `needs_attention`. |
+| Debian 13 / Deb822 | Implemented, regression-tested | `GuestJdkResolver` reads traditional `*.list` and Deb822 `*.sources` files, requires an enabled `deb` stanza with `URIs` and `Suites`, and selects a real `apt-cache policy` candidate. Trixie prefers OpenJDK 21 when available. |
+| Policy-gated terminal | Implemented, JVM-tested | `terminal_run` requires a verified workspace, safe working directory, bounded timeout, credential-path denial, and `RUN_READONLY_COMMAND`/`RUN_MUTATING_COMMAND` authorization. Publishing, system changes, credentials, and destructive work remain outside ordinary model authority. |
+| Objective continuation | Implemented, JVM-tested | Successful provisioning returns to the existing objective engine with its task graph and checkpoints intact. Installation success is not treated as task or objective success. |
+| Live Worker Console | Implemented, device-untested | The persisted bus now carries bounded tool input/output. Chat and Autonomy open a full-height expandable timeline with objective/phase/task/status, pause/resume/cancel, copy, and redacted export. |
+| Workspace lifecycle | Implemented, JVM-tested | The saved workspace is re-probed and reused on startup. A managed registry, synchronized policy scope, explicit creation, and guarded per-path or delete-all cleanup replace silent numbered-folder churn. |
+| Tests | Implemented | Full suite: **679 JVM tests, 0 failures, 0 errors, 0 skips** across 64 classes. New coverage includes workspace lifecycle and export redaction. |
+
+### Physical-device evidence and limits
+
+The owner’s Android 17 device running Debian 13.7 Trixie reproduced the original blocker: NYX reported `APT sources: 0` while valid enabled Deb822 `deb` repositories existed in `/etc/apt/sources.list.d/debian.sources`; `apt-cache policy` showed `openjdk-21-jdk-headless` available. That evidence drove the resolver and continuation fix. The fixed APK’s successful install and objective continuation, the new console rendering, and workspace deletion have not been re-run on a device and are not claimed as device-verified. End-to-end calculator verification remains unfinished. Native GGUF, Termux IPC, Keystore, notifications, foreground-service lifetime, Room migration, and fold/unfold behavior remain device checks. The APK is debug-signed and is not a Play Store artifact.
+
+### Verification
+
+The final clean build, test counts, APK identity, signer, and checksums are recorded in `TEST_RESULTS.md` and `V080_LIVE_WORKSPACE_REPORT.md`.
+
 ## v0.7.9 — Project Persistence (published)
 
 NYX 0.7.9 is versionCode 12 / versionName 0.7.9. It is a focused fix for the failure mode where a Debian-hosted Ollama server started successfully but did not stay alive, or stayed alive without a reliable owner. It is published as GitHub release v0.7.9; no physical-device claim is made.
@@ -147,7 +170,7 @@ Chat, agents, workflows and objectives resolve through `InferenceClientFactory`.
 
 `InferenceFabric` permits one active model request globally and at most 24 waiting requests. Task concurrency is separate, and shared terminal tool/evidence scopes are serialized. The HTTP path retains HTTPS-only remote Bearer credentials, redirect refusal and Keystore encryption. There is no automatic fallback that sends native prompts elsewhere.
 
-Native function calling is not advertised. `StructuredActions` uses a strict text-JSON protocol with tool allowlists, required fields, argument types and byte/character ceilings. One response-repair attempt is permitted; malformed output is denied rather than converted into shell text. HTTP function calls use their own protocol and the same tool validation. Raw model-directed shell execution is disabled.
+Native function calling is not advertised. `StructuredActions` uses a strict text-JSON protocol with tool allowlists, required fields, argument types and byte/character ceilings. One response-repair attempt is permitted; malformed output is denied rather than converted into shell text. HTTP function calls use their own protocol and the same tool validation. Raw model-directed shell is not available by default; policy-gated `terminal_run` is available only when an execution supplies a workspace-confined command gate.
 
 ## Development repair loop
 

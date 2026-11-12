@@ -99,7 +99,7 @@ Each file replacement is atomic; an entire multi-file patch is **not** a filesys
 
 ## Terminal capabilities and discovery
 
-`terminal_run` always returns denied, even for apparently harmless shell strings. `build_run` and `test_run` reject command/timeout overrides. `project_run` accepts only `kind: "build"` or `"test"`. Read-only hooks are `project_inspect`/`project_detect`, `file_list`, `file_read`, `source_search`/`file_search` and `repo_diff`. `file_write` requires an expected hash and goes through the same checkpointed write path. `repo_diff` compares NYX checkpoints only; it never executes git, commits, pushes or publishes.
+`terminal_run` is denied unless the objective execution supplies a workspace-confined policy gate; when present, `ModelCommandPolicy` validates the working directory, command risk, credential paths and timeout before the shared autonomy policy authorizes it. `build_run` and `test_run` reject command/timeout overrides. `project_run` accepts only `kind: "build"` or `"test"`. Read-only hooks are `project_inspect`/`project_detect`, `file_list`, `file_read`, `source_search`/`file_search` and `repo_diff`. `file_write` requires an expected hash and goes through the same checkpointed write path. `repo_diff` compares NYX checkpoints only; it never executes git, commits, pushes or publishes.
 
 Before each project invocation, discovery rechecks remote tool availability. Fixed recipes are:
 

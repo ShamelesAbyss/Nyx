@@ -46,6 +46,7 @@ class TerminalAgentTools(
     private val useTimeoutBinary: Boolean = true,
     private val workspaceApproved: Boolean = false,
     private val guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
+    private val modelCommandGate: ModelCommandGate? = null,
 ) : AgentToolProvider, FileProbe {
     constructor(
         bridge: TerminalBridge,
@@ -55,9 +56,10 @@ class TerminalAgentTools(
         useTimeoutBinary: Boolean = true,
         workspaceApproved: Boolean = false,
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
+        modelCommandGate: ModelCommandGate? = null,
     ) : this(TerminalToolExecutor { command, env, directory, timeout, hardTimeout ->
         bridge.runShell(command, env, directory, timeout, hardTimeout, approved = true, guestAlias = guestAlias)
-    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias)
+    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias, modelCommandGate)
 
     init { require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspaceRoot)) { "Workspace must be absolute and normalized; resolve ~/ before constructing terminal tools" } }
 
@@ -71,7 +73,7 @@ class TerminalAgentTools(
     private val knownCheckpoints = mutableMapOf<String, DevelopmentCheckpoint>()
 
     override fun schemas(): JSONArray = JSONArray().apply {
-        put(schema("terminal_run", "Disabled. Model-directed shell commands are always denied.", obj("command" to "string"), emptyList()))
+        put(schema("terminal_run", "Run one policy-validated command in the approved workspace. Destructive and credential commands are denied; the environment is not a security sandbox.", obj("command" to "string", "working_directory" to "string", "timeout_seconds" to "integer"), listOf("command")))
         put(schema("file_read", "Read a bounded UTF-8 source file in the authorized workspace.", obj("path" to "string"), listOf("path")))
         put(schema("file_write", "Checkpoint and atomically replace one file after checking its exact SHA-256; trusted workspace opt-in required.", obj("path" to "string", "content" to "string", "expectedSha256" to "string"), listOf("path", "content", "expectedSha256")))
         for (name in listOf("file_list", "project_detect", "project_inspect")) put(schema(name, "Read-only confined project inspection.", obj("path" to "string"), emptyList()))
@@ -84,8 +86,10 @@ class TerminalAgentTools(
 
     override suspend fun execute(call: ToolCall): String {
         val args = call.arguments
-        if (call.name == "terminal_run") return denied("terminal_run", "Model-directed shell is disabled; use project_run build/test")
-        if (args.has("command") || args.has("timeout_seconds")) return denied(call.name, "Command and timeout overrides are denied")
+        if (call.name == "terminal_run") return runModelCommand(args)
+        if (args.has("command") || args.has("timeout_seconds") || args.has("working_directory")) {
+            return denied(call.name, "Command, timeout and working-directory overrides are denied")
+        }
         val path = args.optString("path")
         return when (call.name) {
             "file_read" -> read(path, MAX_FILE_BYTES) ?: "Tool denied/error: file is not a bounded confined UTF-8 source"
@@ -124,6 +128,47 @@ class TerminalAgentTools(
             }
             else -> denied(call.name, "Unknown terminal capability")
         }
+    }
+
+    /**
+     * Runs one model-proposed command only after [ModelCommandPolicy] validates the working directory
+     * and the shared autonomy policy authorizes the action. The command is still an ordinary shell
+     * command; this is a policy boundary, not an OS sandbox.
+     */
+    private suspend fun runModelCommand(args: JSONObject): String {
+        val gate = modelCommandGate ?: return denied("terminal_run", "Model-directed shell is disabled for this execution.")
+        if (!workspaceApproved) return denied("terminal_run", "Approved trusted workspace required for terminal commands.")
+        val command = args.optString("command")
+        if (command.isBlank()) return denied("terminal_run", "A non-empty command is required.")
+        val requestedDirectory = if (args.has("working_directory")) args.optString("working_directory") else null
+        val requestedTimeout = if (args.has("timeout_seconds")) args.optLong("timeout_seconds") else null
+        val decision = gate.authorize(command, requestedDirectory.orEmpty(), requestedTimeout ?: ModelCommandPolicy.DEFAULT_TIMEOUT_SECONDS)
+        if (!decision.allowed) return denied("terminal_run", decision.reason)
+        val workingDirectory = decision.workingDirectory ?: return denied("terminal_run", "No validated working directory.")
+        if (ModelCommandPolicy.resolveWorkingDirectory(workspaceRoot, workingDirectory) != workingDirectory) {
+            return denied("terminal_run", "The gate returned a working directory outside the approved workspace.")
+        }
+        val timeout = decision.timeoutSeconds.coerceIn(1L, ModelCommandPolicy.MAX_TIMEOUT_SECONDS)
+        val guarded = rootGuard() +
+            "[ \"\$(realpath -e -- ${quote(workingDirectory)})\" = ${quote(workingDirectory)} ] && [ -d ${quote(workingDirectory)} ] || exit 72; " +
+            "cd -- ${quote(workingDirectory)} && $command"
+        val result = controlled(
+            "terminal_run",
+            guarded,
+            timeout = timeout,
+            mutating = decision.risk != CommandRisk.READ_ONLY,
+            hardTimeout = true,
+        )
+        return JSONObject()
+            .put("command", command.take(4_000))
+            .put("workingDirectory", workingDirectory)
+            .put("risk", decision.risk.name)
+            .put("status", result.kind.name)
+            .put("exitCode", result.exitCode ?: JSONObject.NULL)
+            .put("stdout", result.stdout.take(12_000))
+            .put("stderr", result.stderr.take(4_000))
+            .put("message", result.message?.take(600) ?: JSONObject.NULL)
+            .toString()
     }
 
     override fun drainEvidence(): List<ToolExecutionEvidence> = synchronized(evidence) {

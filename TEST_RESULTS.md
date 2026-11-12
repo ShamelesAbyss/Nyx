@@ -1,8 +1,33 @@
-# NYX 0.7.9 Test Results
+# NYX Test Results
+
+## 0.8.0 — Project Autonomous Bootstrap (published build)
+
+Executed on 2026-11-12 UTC from `/home/ubuntu/nyx` for the published v0.8.0 build:
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" \
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+
+Result: `BUILD SUCCESSFUL in 1m 15s`.
+
+- JVM tests: **679**, failures **0**, errors **0**, skipped **0** across 64 classes.
+- New focused coverage: `DependencyBootstrapTest` (7), `ModelCommandPolicyTest` (10), `EnvironmentConsistencyTest` (5), `PackageInstallerTest` (6), `GuestJdkResolverTest` (9), `GuestJdkResolverAptSourcesTest` (5), `WorkspaceLifecycleTest` (6), `WorkerActivityExportTest` (2), plus three new `TerminalAgentToolsSecurityTest` gate cases.
+- Pre-existing warnings remain: `Divider` deprecation in `MainActivity.kt` and Room migration parameter-name warnings. No compile errors.
+- Debug APK: `com.nyx.ai`, versionCode **13**, versionName **0.8.0**, minSdk 26, compile/target 37, `arm64-v8a`.
+- Debug APK SHA-256: `a67790fa2f13c66210e7635ce013af92ac77e61f4d6417877a6e547779b080be`.
+- Instrumentation APK SHA-256: `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3`.
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` (unchanged).
+- 16 KB ZIP alignment check passed (`zipalign -c -P 16 -v 4`).
+
+No physical Android device was attached. Termux `RUN_COMMAND`, Android foreground-service behavior, guest APT installation, real working-directory commands, live console rendering, workspace deletion, and actual model execution remain device checks. The JVM tests prove the new policy, planning, continuation, classification, workspace-lifecycle, and export-redaction logic; they do not replace an on-device run.
+
+## 0.7.9 — previous published build
 
 ## Clean build
 
-Executed on 2026-11-12 UTC from `/home/ubuntu/nyx`:
+Executed on 2026-11-12 UTC from `/home/ubuntu/nyx` for the published v0.8.0 build:
 
 ```bash
 ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" \

@@ -649,11 +649,16 @@ class ObjectiveExecutionEngine(
             objectiveId = objectiveId,
             taskId = taskId,
             toolName = toolName,
+            toolInput = toolInput,
+            toolOutput = toolOutput,
         )
     }
 
     private fun activityKind(kind: String): WorkerActivityKind = when {
         kind.startsWith("tool") -> WorkerActivityKind.TOOL
+        kind.startsWith("install") || kind.startsWith("dependency") -> WorkerActivityKind.TOOL
+        kind.startsWith("terminal") -> WorkerActivityKind.TERMINAL
+        kind.startsWith("file") -> WorkerActivityKind.FILE
         kind.startsWith("skill") -> WorkerActivityKind.SKILL
         kind.startsWith("delegation") -> WorkerActivityKind.DELEGATION
         kind.startsWith("verification") -> WorkerActivityKind.VERIFICATION

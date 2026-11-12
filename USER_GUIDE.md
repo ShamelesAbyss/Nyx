@@ -1,6 +1,20 @@
-# NYX User Guide — 0.7.9
+# NYX User Guide — 0.8.0
 
-> 0.7.9 “Project Persistence” is the latest published release. Physical-device execution of Debian Ollama, Termux IPC, Keystore, and gateway flows is still pending.
+> 0.8.0 “Project Autonomous Bootstrap” is the latest published release. Physical-device execution of the fixed Debian install path, the new Live Worker Console rendering, and workspace deletion is still pending.
+
+## What changed in 0.8.0 — Project Autonomous Bootstrap
+
+**Environment preparation is now part of the objective.** Before a task runs, the objective foreground service re-discovers the current Termux/PRoot state and reconciles it with the objective's stored environment. A current verified guest clears a stale historical error; an unavailable or diverted environment records a diagnostic and stops before any task executes. `DependencyBootstrap` probes the guest, builds the existing trusted dependency plan, installs only approved candidates, re-probes every required executable, and then continues the original objective with its task graph and checkpoints intact.
+
+**Debian 13 and Deb822 repositories are understood.** Open **Autonomy → Terminal → Prepare Kotlin env** after selecting Debian. The resolver reads both traditional `*.list` files and Debian Deb822 `*.sources` stanzas. It counts a stanza only when `Types` contains `deb`, `Enabled` is not `no`, and both `URIs` and `Suites` are present. It then uses `apt-cache policy` evidence to choose a real candidate; on Debian 13 Trixie this is normally `openjdk-21-jdk-headless`. A failed or interrupted install stops with a visible `needs_attention` diagnostic rather than retrying blindly.
+
+**Model terminal commands are policy-gated.** When terminal tools are enabled, `terminal_run` must stay inside the verified workspace or a safe subdirectory, avoid credential and private-data paths, respect a bounded timeout, and pass the read-only or mutating command policy. Publishing, APK installation, system changes, private-data transfers, credential disclosure, root escalation, and destructive commands remain outside ordinary model authority. This is a policy boundary, not a security sandbox.
+
+**The Live Worker Console is expandable.** Open the live preview in Chat or the **Live Activity** card in Autonomy. It shows the current objective, phase, active task, status, and timestamped planning, task, tool, terminal, installation, file, verification, recovery, and failure events. Tap an event to expand bounded tool input/output. Pause, Resume, and Cancel use the existing service controls. Copy or share a bounded, redacted diagnostic log; no hidden model reasoning or credentials are included.
+
+**Workspaces are reused and cleaned up safely.** On startup, NYX re-probes the saved workspace and reuses it when the canonical path matches. It does not silently create a numbered replacement. The Terminal screen has **Manage Workspaces**, showing verified direct children of the managed parent with exact paths and **Use**, **Delete**, and **Delete all test workspaces** actions. Deletion requires an exact path-list confirmation and refuses roots, symlinks, traversal, non-canonical paths, paths outside the managed parent, and workspaces belonging to active objectives. The parent root, Ollama models, Debian installation, and unrelated files are never targeted.
+
+**Limits.** The fixed Debian installation and objective continuation have not been re-run on a physical device. The new console rendering, share flow, workspace deletion, and startup reuse are covered by JVM tests and guarded command generation, not device execution. End-to-end calculator verification remains unfinished.
 
 ## What changed in 0.7.9 — Project Persistence
 
@@ -32,7 +46,7 @@
 
 **MCP and GitHub gateways.** Open **Gateways** to add a streamable-HTTP MCP server or a GitHub token gateway. Tokens are encrypted in Android Keystore-backed storage; the gateway record stores only an opaque reference. Each server has an allowlist and a per-run call budget. Check health and list tools before invoking one manually; GitHub writes are separate tools and remain policy-gated. Objective execution snapshots the allowed tools before a run, so a model cannot enable a server or widen its allowlist mid-task.
 
-**Live worker console.** While an objective runs, Chat shows a compact live preview. Tap it for the full console timeline: plans, delegated roles, tool calls, skill scopes, gateway calls, verification, recovery decisions, metrics, and errors. The timeline is persisted locally and is evidence-backed, not simulated.
+**Live worker console.** While an objective runs, Chat shows a compact live preview and Autonomy shows a Live Activity card. Tap either for the expandable full-height timeline: plans, delegated roles, tool calls, terminal output, installation, file operations, skill scopes, gateway calls, verification, recovery decisions, metrics, and errors. Pause, Resume, Cancel, copy, and redacted export are available. The timeline is persisted locally and is evidence-backed, not simulated.
 
 **Project memory.** Verified task outcomes, build instructions, and lessons are stored per workspace with evidence hashes. Relevant memory is injected into later prompts; stale or unverified claims are suppressed. Use the workspace diagnostics if you need to confirm what was recorded.
 
@@ -48,7 +62,7 @@ Selecting **Full** shows a consent dialog. Choosing a mode creates revocable gra
 
 **Environment preparation.** In **Autonomy → Terminal**, run **Detect environment**, then **Refresh** capabilities. The table now shows inherited Termux binaries inside Debian as `inherited`; they are not treated as Debian tools. **Prepare Kotlin env** builds a dependency plan from verified evidence. Manual mode shows an approval card; Smart and Full run the trusted plan automatically. Installing a package never comes from model text: the command is generated by the planner for the selected distribution.
 
-**Workspace creation.** Enter a project name and tap **Create workspace**. NYX creates it under `/root/nyx-workspaces` in Debian or `~/nyx-workspaces` in Termux, verifies it is writable, and selects it. Existing directories are never overwritten; a numeric suffix is added. In Full mode you can repeat this for multiple projects under the same root; in Manual mode an explicit approval card appears first.
+**Workspace lifecycle.** Enter a project name and tap **Create workspace** only when you need a new folder. NYX creates it under `/root/nyx-workspaces` in Debian or `~/nyx-workspaces` in Termux, verifies it is writable, and selects it. Existing directories are never overwritten; a numeric suffix is added. On later starts the verified saved workspace is reused. **Manage Workspaces** lists managed paths and offers guarded deletion; the parent root is never deleted. In Full mode you can create multiple projects under the same root; in Manual mode an explicit approval card appears first.
 
 **Network tools.** Objectives can call `fetch_url` for public HTTPS documentation. Manual mode refuses until you choose Smart or Full; redirects to private addresses, credentials in URLs, and non-text responses are refused. Fetched text is labelled untrusted and capped before it reaches a model. There is no arbitrary download-to-device tool in the objective surface.
 
@@ -109,7 +123,7 @@ NYX executes real commands through Termux's `RUN_COMMAND` service and reads real
 
 The manual terminal panel classifies user-entered commands and requires explicit approval of the exact command before execution, including read-only commands. Privileged/protected-Android/destructive operations are blocked. This manual route does **not** authorize arbitrary model shell commands, and a risk classifier is not a shell sandbox.
 
-Objective workspace hooks support bounded file inspection/search, expected-hash writes/checkpoints, project detection, and detected fixed build/test commands. Arbitrary model `terminal_run` is always denied; models cannot override build/test command strings or timeouts. Remote `realpath` checks reject symlink/path escapes, and exact hashes protect supported edits. Standalone agents and sequential workflows keep their app-private tools; enabling objectives' workspace is not a general Termux grant to those features.
+Objective workspace hooks support bounded file inspection/search, expected-hash writes/checkpoints, project detection, and detected fixed build/test commands. Model `terminal_run` is policy-gated: only workspace-confined, non-destructive commands authorized by the active autonomy policy run; otherwise it is denied. Models cannot override build/test command strings or timeouts. Remote `realpath` checks reject symlink/path escapes, and exact hashes protect supported edits. Standalone agents and sequential workflows keep their app-private tools; enabling objectives' workspace is not a general Termux grant to those features.
 
 **Only approve trusted projects.** Gradle wrappers, npm/Make scripts, imports/tests, and other project build hooks can execute arbitrary code with Termux/PRoot user permissions, read outside the workspace, or use the network. Supported offline flags are best effort, not an OS sandbox or firewall. Existing scripts are trusted code; do not approve an untrusted repository merely because path checks passed.
 

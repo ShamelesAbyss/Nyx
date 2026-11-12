@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.0 — Project Autonomous Bootstrap (published)
+
+Package metadata: versionCode 13 / versionName 0.8.0, min API 26, compile/target API 37, ARM64 JNI. Published as GitHub release v0.8.0 with the APK, instrumentation APK, source archive, and checksum manifest. See `RELEASE_NOTES_v0.8.0.md`.
+
+### Verified environment before objective execution
+
+The objective foreground service now re-discovers Termux/PRoot state on every start and reconciles it with the objective's stored environment snapshot. A current verified guest clears a stale historical error; an unavailable or diverted environment records a current diagnostic and stops before any task runs. `DependencyBootstrap` probes the guest, resolves the Debian JDK candidate from APT evidence, builds the existing trusted plan, installs only approved candidates, re-probes every required executable, and then continues the original objective with its task graph and checkpoints unchanged.
+
+`GuestJdkResolver` now recognizes both traditional `*.list` repositories and Debian Deb822 `*.sources` stanzas. A Deb822 stanza counts only when `Types` contains `deb`, `Enabled` is not `no`, and `URIs` and `Suites` are present. This fixes the Debian 13 Trixie false `APT sources: 0` diagnostic while still requiring a real `apt-cache policy` candidate before selecting a JDK.
+
+### Full Autonomy scope and audit
+
+Installation is authorized through the existing `INSTALL_PACKAGE` policy and workspace-scoped routine grants. Full Autonomy can therefore reuse a previously granted scoped installation without a redundant prompt; Manual and Smart retain their approval requirements. Each step is recorded as a dependency event and through the existing terminal command history, including stdout, stderr, and exit code.
+
+### Policy-gated model commands
+
+`terminal_run` is no longer unconditionally denied. A model command must pass `ModelCommandPolicy`: the working directory must be the approved workspace or a safe subdirectory, the command must be non-empty and bounded, credential/private-data paths are denied, and destructive commands require explicit human handling. `AutonomyModelCommandGate` then applies `RUN_READONLY_COMMAND` or `RUN_MUTATING_COMMAND` through the shared policy. The command still runs in the real Termux/PRoot environment; this is a policy boundary, not a security sandbox.
+
+### Expandable Live Worker Console
+
+The existing persisted `WorkerActivityBus` now carries bounded tool input and output alongside timestamped planning, task, tool, terminal, installation, file, verification, recovery, and failure events. The console is available from Chat and from a visible Live Activity card in Autonomy, shows the active objective, phase, active task, and status, and opens a full-height virtualized timeline. Each event can expand to readable input/output detail. Pause, Resume, and Cancel call the existing objective service controls. Copy and share use a bounded, redacted plain-text export; no hidden reasoning or credentials are added, and event history remains in the existing on-device JSONL store across navigation and process recreation.
+
+### Workspace reuse and guarded cleanup
+
+The saved workspace is re-probed on startup and reused when it matches the verified canonical path; NYX no longer silently needs a new numbered folder. Workspace selection, the persisted managed-workspace registry, routine policy grants, and the objective execution snapshot are synchronized, and terminal-enabled objectives refuse to start without a verified workspace. A Manage Workspaces panel in Terminal lists verified direct children of the managed root, allows selecting one, and provides Delete and Delete all test workspaces with an exact path-list confirmation. Deletion is refused for active objectives, the managed root, nested or traversal paths, symlinks, non-canonical paths, and paths outside the managed root. The parent root, Ollama models, Debian installation, and unrelated files are never targeted.
+
+### Honest limits
+
+No physical Android device was available for this build. Termux `RUN_COMMAND`, Android foreground-service behavior, guest APT installation, real working-directory commands, live console rendering, workspace deletion, and actual model execution remain device checks. Approval-blocked or failed dependency plans stop with a visible `needs_attention` diagnostic rather than retrying an uncertain install loop. No AAB or Google Play publication was performed; the APK remains a debug-signed development build.
+
 ## 0.7.9 — Project Persistence (published)
 
 Package metadata: versionCode 12 / versionName 0.7.9, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the existing certificate. This is a focused runtime fix, not a feature expansion.
