@@ -11,6 +11,8 @@ import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentTools
 import com.nyx.ai.autonomy.ExecutionMonitor
 import com.nyx.ai.autonomy.ExecutionRecovery
+import com.nyx.ai.autonomy.WorkerActivityBus
+import com.nyx.ai.autonomy.WorkerActivityKind
 import com.nyx.ai.autonomy.Preflight
 import com.nyx.ai.autonomy.PreflightInput
 import com.nyx.ai.autonomy.PreflightResult
@@ -59,6 +61,15 @@ import com.nyx.ai.settings.CredentialTransportPolicy
 import com.nyx.ai.settings.CredentialVault
 import com.nyx.ai.settings.EnvironmentProfileStore
 import com.nyx.ai.settings.InferenceClientFactory
+import com.nyx.ai.skills.ArsenalRepository
+import com.nyx.ai.skills.ArsenalSkill
+import com.nyx.ai.skills.ArsenalIssue
+import com.nyx.ai.gateway.GatewayHealth
+import com.nyx.ai.gateway.GatewayRepository
+import com.nyx.ai.gateway.GatewayServerConfig
+import com.nyx.ai.gateway.GatewayTool
+import com.nyx.ai.ollama.OllamaServerManager
+import com.nyx.ai.ollama.OllamaServerState
 import com.nyx.ai.network.InferenceProvider
 import com.nyx.ai.nativeinference.*
 import kotlinx.coroutines.CancellationException
@@ -77,6 +88,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 private const val DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
 
@@ -137,6 +149,14 @@ data class NyxState(
     val pendingInstallApproval: List<PackageCandidate> = emptyList(),
     val workspaceProvisioning: Boolean = false,
     val policyMessage: String = "",
+    val arsenalSkills: List<ArsenalSkill> = emptyList(),
+    val arsenalMessage: String = "",
+    val gatewayServers: List<GatewayServerConfig> = emptyList(),
+    val gatewayHealth: Map<String, GatewayHealth> = emptyMap(),
+    val gatewayTools: Map<String, List<GatewayTool>> = emptyMap(),
+    val gatewayMessage: String = "",
+    val gatewayOutput: String = "",
+    val ollamaServer: OllamaServerState = OllamaServerState(),
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
@@ -151,6 +171,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private val providerFactory = InferenceClientFactory(db, credentialVault, application)
     private val prefs = application.getSharedPreferences("nyx_settings", 0)
     private val environmentProfiles = EnvironmentProfileStore(application)
+    private val arsenalRepository = ArsenalRepository(application)
+    private val gatewayRepository = GatewayRepository(
+        root = File(application.filesDir, "gateways"),
+        tokenProvider = { reference -> runCatching { credentialVault.read(reference) }.getOrNull() },
+    )
+    private val ollamaManager = OllamaServerManager(
+        context = application,
+        bridge = com.nyx.ai.terminal.TerminalBridge(application),
+    )
     private val _state = MutableStateFlow(
         NyxState(
             endpoint = prefs.getString("endpoint", DEFAULT_ENDPOINT) ?: DEFAULT_ENDPOINT,
@@ -185,6 +214,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         AutonomyRuntime.initialize(app)
+        com.nyx.ai.autonomy.WorkerActivityBus.initialize(app)
+        viewModelScope.launch {
+            ollamaManager.state.collect { server -> _state.update { it.copy(ollamaServer = server) } }
+        }
         _state.update {
             it.copy(autonomyMode = AutonomyRuntime.mode(), autonomyStopped = AutonomyRuntime.policy().stopped)
         }
@@ -212,6 +245,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { NativeRuntime.status.collect { status -> _state.update { it.copy(nativeStatus = status) } } }
         refreshNativeModels()
         refreshModels()
+        refreshArsenal()
+        refreshGateways()
     }
 
     private suspend fun ensureStarterRecords() {
@@ -888,6 +923,234 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(terminalToolsEnabled = enabled) }
     }
 
+    // ---------------------------------------------------------------- Arsenal
+
+    fun refreshArsenal() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val skills = runCatching { arsenalRepository.list() }.getOrElse { error ->
+                _state.update { it.copy(arsenalMessage = error.message?.take(240) ?: "Arsenal could not be loaded.") }
+                return@launch
+            }
+            _state.update { it.copy(arsenalSkills = skills, arsenalMessage = "") }
+        }
+    }
+
+    fun setArsenalEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val changed = arsenalRepository.setEnabled(id, enabled)
+            refreshArsenal()
+            if (!changed) _state.update { it.copy(arsenalMessage = "Skill not found.") }
+        }
+    }
+
+    fun importArsenal(json: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = arsenalRepository.importSkill(json)
+            _state.update {
+                it.copy(arsenalMessage = if (result.ok) "Imported ${result.skill?.id} v${result.skill?.version}." else result.issues.joinToString("; ") { issue -> issue.message }.take(400))
+            }
+            refreshArsenal()
+        }
+    }
+
+    fun removeArsenal(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            arsenalRepository.remove(id)
+            refreshArsenal()
+            _state.update { it.copy(arsenalMessage = "Skill removed: $id") }
+        }
+    }
+
+    fun configureArsenal(id: String, key: String, value: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val issue: ArsenalIssue? = arsenalRepository.configure(id, key, value)
+            _state.update { it.copy(arsenalMessage = issue?.message ?: "Configuration saved.") }
+            refreshArsenal()
+        }
+    }
+
+    // ---------------------------------------------------------------- Gateways
+
+    fun refreshGateways() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val servers = runCatching { gatewayRepository.list() }.getOrElse { error ->
+                _state.update { it.copy(gatewayMessage = error.message?.take(240) ?: "Gateways could not be loaded.") }
+                return@launch
+            }
+            _state.update { it.copy(gatewayServers = servers) }
+        }
+    }
+
+    // ------------------------------------------------------------ Managed Ollama
+
+    fun refreshOllamaServer() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { ollamaManager.refresh() }
+                .onFailure { error -> _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama refresh failed.")) } }
+        }
+    }
+
+    fun detectOllamaServer() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { ollamaManager.detect() }
+                .onFailure { error -> _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama detection failed.")) } }
+        }
+    }
+
+    fun startOllamaServer() {
+        if (AutonomyRuntime.policy().stopped) {
+            _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Emergency stop is active; server start is blocked.")) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { ollamaManager.start() }.getOrElse { error ->
+                _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama could not start.")) }
+                return@launch
+            }
+            WorkerActivityBus.record(
+                WorkerActivityKind.INFO,
+                "Local Ollama ${if (result.isRunning) "ready" else result.status.name.lowercase()}",
+                result.message.take(240),
+                toolName = "ollama",
+            )
+            if (result.isRunning) refreshModels()
+        }
+    }
+
+    fun stopOllamaServer() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { ollamaManager.stop() }
+                .onFailure { error -> _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama could not stop.")) } }
+        }
+    }
+
+    fun restartOllamaServer() {
+        if (AutonomyRuntime.policy().stopped) {
+            _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Emergency stop is active; server restart is blocked.")) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { ollamaManager.restart() }.getOrElse { error ->
+                _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama could not restart.")) }
+                return@launch
+            }
+            if (result.isRunning) refreshModels()
+        }
+    }
+
+    fun saveGateway(
+        existingId: String?,
+        name: String,
+        kind: com.nyx.ai.gateway.GatewayKind,
+        endpoint: String,
+        token: String,
+        allowedToolsCsv: String,
+        enabled: Boolean,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val id = existingId ?: "gateway-${UUID.randomUUID().toString().take(8)}"
+                val existing = existingId?.let { gatewayRepository.get(it) }
+                val reference = if (token.isNotBlank()) "gateway:$id" else existing?.credentialRef
+                if (token.isNotBlank()) credentialVault.save("gateway:$id", token)
+                val defaults = if (kind == com.nyx.ai.gateway.GatewayKind.GITHUB) {
+                    setOf("github_repository", "github_branches", "github_commits", "github_contents", "github_tree", "github_issues", "github_pull_requests", "github_diff")
+                } else emptySet()
+                val allow = allowedToolsCsv.split(',').map { it.trim() }.filter { it.isNotBlank() }.toSet().ifEmpty { defaults }
+                val config = GatewayServerConfig(
+                    id = id,
+                    name = name.trim(),
+                    kind = kind,
+                    endpoint = endpoint.trim().ifBlank { if (kind == com.nyx.ai.gateway.GatewayKind.GITHUB) "https://api.github.com" else "" },
+                    credentialRef = reference,
+                    enabled = enabled,
+                    allowedTools = allow,
+                )
+                gatewayRepository.upsert(config)
+            }.onSuccess {
+                _state.update { it.copy(gatewayMessage = "Gateway saved.") }
+                refreshGateways()
+            }.onFailure { error ->
+                _state.update { it.copy(gatewayMessage = error.message?.take(300) ?: "Gateway could not be saved.") }
+            }
+        }
+    }
+
+    fun setGatewayEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { gatewayRepository.setEnabled(id, enabled) }
+                .onSuccess { refreshGateways() }
+                .onFailure { error -> _state.update { it.copy(gatewayMessage = error.message?.take(240) ?: "Gateway update failed.") } }
+        }
+    }
+
+    fun deleteGateway(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { gatewayRepository.delete(id) }
+            runCatching { credentialVault.delete("gateway:$id") }
+            refreshGateways()
+        }
+    }
+
+    fun checkGateway(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val health = runCatching { gatewayRepository.health(id) }
+                .getOrElse { GatewayHealth(com.nyx.ai.gateway.GatewayHealthState.UNREACHABLE, it.message?.take(240) ?: "Health check failed.") }
+            val tools = runCatching { gatewayRepository.listTools(id) }.getOrDefault(emptyList())
+            _state.update {
+                it.copy(
+                    gatewayHealth = it.gatewayHealth + (id to health),
+                    gatewayTools = it.gatewayTools + (id to tools),
+                    gatewayMessage = "${health.state}: ${health.detail} · ${tools.size} tool(s)",
+                )
+            }
+            WorkerActivityBus.record(WorkerActivityKind.GATEWAY, "Gateway checked: $id", "${health.state} · ${tools.size} tools", toolName = id)
+        }
+    }
+
+    fun callGateway(id: String, tool: String, argumentsJson: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (AutonomyRuntime.policy().stopped) {
+                _state.update { it.copy(gatewayMessage = "Emergency stop is active; gateway calls are blocked.") }
+                return@launch
+            }
+            val parsed = runCatching { JSONObject(argumentsJson.ifBlank { "{}" }) }
+                .getOrElse {
+                    _state.update { it.copy(gatewayMessage = "Arguments must be a JSON object.") }
+                    return@launch
+                }
+            val workspace = _state.value.terminalWorkspace.trimEnd('/')
+            val target = if (workspace.startsWith("/") && workspace.length > 1) "$workspace/.nyx/gateway/$id/$tool" else "/nyx/gateway/$id/$tool"
+            val writeTool = tool.contains("create") || tool.contains("comment") || tool.contains("publish")
+            val decision = AutonomyRuntime.authorize(
+                app,
+                ActionRequest(
+                    kind = if (writeTool) ActionKind.GIT_COMMIT else ActionKind.NETWORK_READ,
+                    target = target,
+                    environmentId = policyEnvironmentId(),
+                    insideAuthorizedWorkspace = true,
+                ),
+            )
+            if (!decision.allowed && !decision.requiresApproval) {
+                _state.update { it.copy(gatewayMessage = "Gateway call denied: ${decision.reason}") }
+                return@launch
+            }
+            val result = gatewayRepository.callTool(id, tool, parsed.toString(), runId = "ui-${System.currentTimeMillis()}")
+            _state.update {
+                it.copy(
+                    gatewayOutput = result.content.take(12_000),
+                    gatewayMessage = if (result.success) "Tool completed in ${result.latencyMs}ms." else "Tool failed: ${result.content.take(240)}",
+                )
+            }
+            WorkerActivityBus.record(
+                WorkerActivityKind.GATEWAY,
+                "Gateway tool: $tool",
+                if (result.success) "Completed in ${result.latencyMs}ms" else result.content,
+                toolName = tool,
+            )
+        }
+    }
+
     fun setTerminalWorkspace(path: String) {
         val raw = path.trim().trimEnd('/')
         val clean = if (raw == "~" || raw.startsWith("~/")) _state.value.terminalProfile?.home?.let { it + raw.removePrefix("~") } ?: raw else raw
@@ -901,6 +1164,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (check is WorkspaceCheck.Valid) {
                 prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, check.normalizedPath).apply()
+                if (AutonomyRuntime.mode() != AutonomyMode.MANUAL) {
+                    AutonomyRuntime.grantRoutineScope(app, policyEnvironmentId(), check.normalizedPath)
+                }
                 _state.update {
                     it.copy(
                         terminalWorkspace = check.normalizedPath,
@@ -919,13 +1185,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     /** Switches the one shared policy mode and creates the routine grants implied by that choice. */
     fun setAutonomyMode(mode: AutonomyMode) {
         AutonomyRuntime.setMode(app, mode)
-        if (mode != AutonomyMode.MANUAL) {
-            AutonomyRuntime.grantRoutineScope(
-                app,
-                policyEnvironmentId(),
-                _state.value.terminalWorkspace.takeIf { it.startsWith('/') },
-            )
-        }
+        AutonomyRuntime.grantRoutineScope(
+            app,
+            policyEnvironmentId(),
+            _state.value.terminalWorkspace.takeIf { it.startsWith('/') && mode != AutonomyMode.MANUAL },
+        )
         _state.update {
             it.copy(
                 autonomyMode = mode,
@@ -1028,11 +1292,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                     environment = _state.value.terminalEnvironment,
                     guestAlias = _state.value.guestAlias,
                     authorize = { candidate: PackageCandidate ->
+                        val workspace = _state.value.terminalWorkspace.trimEnd('/')
+                        val scopedTarget = if (workspace.startsWith("/") && workspace.length > 1) {
+                            "$workspace/.nyx/package/${candidate.packageName}"
+                        } else candidate.packageName
                         val decision = AutonomyRuntime.authorize(
                             app,
                             ActionRequest(
                                 kind = ActionKind.INSTALL_PACKAGE,
-                                target = candidate.packageName,
+                                target = scopedTarget,
                                 environmentId = policyEnvironmentId(),
                                 trustedSource = candidate.trusted,
                             ),
@@ -1098,6 +1366,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             when (result) {
                 is WorkspaceProvisionResult.Created -> {
                     prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, result.path).apply()
+                    if (AutonomyRuntime.mode() != AutonomyMode.MANUAL) {
+                        AutonomyRuntime.grantRoutineScope(app, policyEnvironmentId(), result.path)
+                    }
                     _state.update {
                         it.copy(
                             workspaceProvisioning = false,
@@ -1221,4 +1492,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         .put("maxSteps", maxSteps)
         .put("tools", JSONArray(tools.sorted()))
         .toString()
+    override fun onCleared() {
+        runCatching { ollamaManager.close() }
+        runCatching { gatewayRepository.close() }
+        super.onCleared()
+    }
 }

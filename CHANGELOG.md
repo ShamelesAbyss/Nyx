@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.5 — Project Continuum (published)
+
+Package metadata: versionCode 9 / versionName 0.7.5, min API 26, compile/target API 37, ARM64 JNI. Debug-signed and published as v0.7.5.
+
+### Managed Ollama lifecycle
+
+The Models screen now owns a Termux-hosted Ollama server without asking the user to run commands. Installation discovery, start, readiness polling, stop, restart, PID/start-token ownership verification, adopted-server protection, bounded logs, RSS/uptime telemetry, and auto-refresh are implemented in `OllamaServerManager` and `OllamaProcess`. NYX never signals an adopted or recycled PID, never uses `pkill`, and refuses lifecycle work while Emergency Stop is active. The existing endpoint remains user-configurable; NYX does not silently redirect prompts.
+
+### Arsenal — operational skills
+
+Nine versioned built-in procedures cover coding, Git operations, project inspection, research, documentation, testing, debugging, dependency management, and artifact generation. Only the three most relevant procedures enter a task prompt; their declared tools are added to that task's allowlist. Imported JSON manifests are treated as untrusted, size-bounded, rejected for unknown/escalating tools, duplicate or reserved IDs, unsafe constraints, and incompatible schemas. Skills can be inspected, enabled/disabled, configured, removed, and audited with evidence-linked execution logs from the new Arsenal screen.
+
+### Gateways — MCP and GitHub
+
+Remote streamable-HTTP MCP servers and the GitHub API are available through a real gateway repository with per-server allowlists, per-run call budgets, response/timeout caps, redacted audit logs, health checks, and tool listing. Tokens are encrypted only in the Android Keystore-backed credential vault; gateway JSON stores an opaque reference, never the token. Objective execution snapshots the allowed gateway tools before a run, so a model cannot enable a new server or widen its own allowlist. The Gateways screen supports add/edit, enable/disable, health checks, tool inspection, and explicit JSON invocation; GitHub writes remain distinct tools and are still policy-gated.
+
+### Durable project memory and symbol index
+
+Project memory records verified outcomes, build instructions, lessons, and outcomes with content hashes and evidence references, suppresses stale/unverified claims, deduplicates near-identical entries, and builds a bounded relevant-memory prompt block. Objective tasks now receive relevant memory and persist evidence-linked verified outcomes. The source symbol index incrementally parses Kotlin/Java declarations and references with SHA-256 change detection and deterministic relevance ranking.
+
+### Live Worker Console and workspace safety
+
+The chat screen shows a compact live objective preview; the full console streams persisted plan, delegation, tool, skill, gateway, verification, recovery, metric, and error events. Workspace provisioning now uses atomic, collision-safe creation and never reuses an existing directory; terminal history maps cancellation to `uncertain` rather than inventing success. Routine autonomy grants are workspace-only, removed when returning to Manual, and synchronized against concurrent stop/revocation. Package authorization is scoped under the selected workspace.
+
+### Verification and limits
+
+598 JVM tests pass with zero failures/errors/skips. The debug APK and instrumentation-test APK compile. No physical Android device was available: Termux IPC, real Ollama process control, Keystore key use, MCP/GitHub network calls, notifications, and foreground-service execution are unit-tested/compiled but not device-executed. The symbol index is not yet automatically fed into every task prompt. Gateway tool names are namespaced per server and snapshotted; dynamic MCP tool changes require a new objective.
+
 ## 0.7.0 — Project Ascension (published)
 
 Package metadata: versionCode 8 / versionName 0.7.0, min API 26, compile/target API 37, ARM64 JNI. Debug-signed and published as v0.7.0.

@@ -15,9 +15,10 @@ sealed interface WorkspaceProvisionResult {
 }
 
 /**
- * Creates project directories without asking the user to run `mkdir`. Planning is pure and
- * collision-safe; [provision] performs one bounded shell command and then re-probes the directory,
- * so a claimed creation is only reported after the filesystem confirms it.
+ * Creates project directories without asking the user to run `mkdir`. The leaf directory is created
+ * with an atomic `mkdir` (never `mkdir -p` on the leaf), so an existing directory can never be
+ * silently adopted. A collision is reported by the shell and retried with `-2`, `-3`, ...; only
+ * after the filesystem confirms our own new directory is it registered with the app.
  */
 object WorkspaceProvisioner {
     const val DEFAULT_DEBIAN_BASE = "/root/nyx-workspaces"
@@ -43,9 +44,16 @@ object WorkspaceProvisioner {
         return if (SAFE_NAME.matches(safe)) safe else "project"
     }
 
+    /** The exact path tried for a one-based [attempt]. Attempt 1 has no numeric suffix. */
+    fun candidatePath(baseDirectory: String, projectName: String, attempt: Int): String {
+        val base = baseDirectory.trimEnd('/')
+        val name = sanitizeName(projectName)
+        return if (attempt <= 1) "$base/$name" else "$base/$name-$attempt"
+    }
+
     /**
-     * Builds an absolute path under [baseDirectory], adding `-2`, `-3`, ... when [existing] already
-     * contains the candidate. No path is ever reused, so an existing project is never overwritten.
+     * Legacy planning helper retained for callers that already know which paths exist. Provisioning
+     * does not trust this list: it uses an atomic filesystem check for every candidate.
      */
     fun planPath(baseDirectory: String, projectName: String, existing: Set<String> = emptySet()): String {
         val base = baseDirectory.trimEnd('/')
@@ -59,13 +67,34 @@ object WorkspaceProvisioner {
         return "$base/$name-${System.currentTimeMillis().toString().takeLast(6)}"
     }
 
-    /** One bounded command that creates the directory, verifies writability, and prints its real path. */
+    /**
+     * One bounded command that creates the leaf atomically, verifies it is our new directory, and
+     * prints its real path. `NYX_WS_EXISTS=1` is the only retry signal; every other failure stops.
+     */
     fun createScript(path: String): String = """
-        # NYX workspace creation. Creates only the requested directory tree.
+        # NYX workspace creation. The parent may be created, but the leaf is atomic.
         export LC_ALL=C
         umask 077
         ws=${shellQuote(path)}
-        if ! mkdir -p -- "${'$'}ws" 2>/dev/null; then
+        parent=${'$'}(dirname -- "${'$'}ws") || {
+          printf 'NYX_WS_CREATED=0\n'
+          printf 'NYX_WS_ERROR=%s\n' 'invalid parent path'
+          exit 1
+        }
+        if ! mkdir -p -- "${'$'}parent" 2>/dev/null; then
+          printf 'NYX_WS_CREATED=0\n'
+          printf 'NYX_WS_ERROR=%s\n' 'parent directory could not be created'
+          exit 1
+        fi
+        if [ -e "${'$'}ws" ] || [ -L "${'$'}ws" ]; then
+          printf 'NYX_WS_EXISTS=1\n'
+          exit 3
+        fi
+        if ! mkdir -- "${'$'}ws" 2>/dev/null; then
+          if [ -e "${'$'}ws" ] || [ -L "${'$'}ws" ]; then
+            printf 'NYX_WS_EXISTS=1\n'
+            exit 3
+          fi
           printf 'NYX_WS_CREATED=0\n'
           printf 'NYX_WS_ERROR=%s\n' 'mkdir failed'
           exit 1
@@ -96,38 +125,55 @@ object WorkspaceProvisioner {
         if (baseCheck is WorkspaceCheck.Invalid) {
             return WorkspaceProvisionResult.Failed(baseCheck.code, baseCheck.message)
         }
-        val path = planPath(request.baseDirectory, request.projectName)
-        val syntax = WorkspaceValidator.validateSyntax(
-            WorkspaceRequest(request.environment, path, authorized = true)
+        for (attempt in 1..MAX_COLLISION_SUFFIX) {
+            val path = candidatePath(request.baseDirectory, request.projectName, attempt)
+            val syntax = WorkspaceValidator.validateSyntax(
+                WorkspaceRequest(request.environment, path, authorized = true)
+            )
+            if (syntax is WorkspaceCheck.Invalid) {
+                return WorkspaceProvisionResult.Failed(syntax.code, syntax.message)
+            }
+            val result = repository.execute(
+                command = createScript(path),
+                environment = request.environment,
+                workingDirectory = null,
+                timeoutSeconds = 30,
+                approvedByUser = true,
+                objectiveId = objectiveId,
+                useTimeoutBinary = false,
+                guestAlias = request.guestAlias,
+            )
+            val exists = result.stdout.lineSequence()
+                .firstOrNull { it.startsWith("NYX_WS_EXISTS=") }
+                ?.substringAfter('=')
+                ?.trim()
+            if (exists == "1") {
+                // The filesystem already owned this name. Try the next suffix; never adopt it.
+                continue
+            }
+            val created = result.stdout.lineSequence()
+                .firstOrNull { it.startsWith("NYX_WS_CREATED=") }
+                ?.substringAfter('=')
+                ?.trim()
+            if (created != "1") {
+                val detail = result.stderr.lineSequence().firstOrNull { it.isNotBlank() }
+                    ?: result.message
+                    ?: "the environment did not confirm the directory"
+                return WorkspaceProvisionResult.Failed("create_failed", detail.take(300))
+            }
+            val verified = repository.validateWorkspace(request.environment, path, request.guestAlias)
+            return when (verified) {
+                is WorkspaceCheck.Valid -> WorkspaceProvisionResult.Created(
+                    verified.normalizedPath,
+                    "Created as a new directory and write-verified.",
+                )
+                is WorkspaceCheck.Invalid -> WorkspaceProvisionResult.Failed(verified.code, verified.message)
+            }
+        }
+        return WorkspaceProvisionResult.Failed(
+            "collision_limit",
+            "No unused workspace name was available after $MAX_COLLISION_SUFFIX attempts. Nothing was reused.",
         )
-        if (syntax is WorkspaceCheck.Invalid) {
-            return WorkspaceProvisionResult.Failed(syntax.code, syntax.message)
-        }
-        val result = repository.execute(
-            command = createScript(path),
-            environment = request.environment,
-            workingDirectory = null,
-            timeoutSeconds = 30,
-            approvedByUser = true,
-            objectiveId = objectiveId,
-            useTimeoutBinary = false,
-            guestAlias = request.guestAlias,
-        )
-        val created = result.stdout.lineSequence()
-            .firstOrNull { it.startsWith("NYX_WS_CREATED=") }
-            ?.substringAfter('=')
-            ?.trim()
-        if (created != "1") {
-            val detail = result.stderr.lineSequence().firstOrNull { it.isNotBlank() }
-                ?: result.message
-                ?: "the environment did not confirm the directory"
-            return WorkspaceProvisionResult.Failed("create_failed", detail.take(300))
-        }
-        val verified = repository.validateWorkspace(request.environment, path, request.guestAlias)
-        return when (verified) {
-            is WorkspaceCheck.Valid -> WorkspaceProvisionResult.Created(verified.normalizedPath, "Created and write-verified.")
-            is WorkspaceCheck.Invalid -> WorkspaceProvisionResult.Failed(verified.code, verified.message)
-        }
     }
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"

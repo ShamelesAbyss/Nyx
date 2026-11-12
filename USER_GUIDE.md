@@ -1,5 +1,17 @@
-# NYX User Guide — 0.7.0
-> 0.7.0 is the latest published release. It is a debug-signed development build; physical-device execution of the new autonomy flows is still pending.
+# NYX User Guide — 0.7.5
+> 0.7.5 “Project Continuum” is the latest published release. It is a debug-signed development build; physical-device execution of Termux, Ollama, Keystore, and gateway flows is still pending.
+
+## What changed in 0.7.5 — Project Continuum
+
+**Managed local Ollama.** Open **Models**. The managed-server card detects Ollama on the Termux host and offers Start, Stop, Restart, Detect, and Refresh. Starting uses an isolated Termux-host command, not your interactive shell profile, so a shell that automatically enters Debian cannot break the launch. NYX records the PID **and** the kernel start token; it refuses to signal a reused PID or a server it did not start. If the server was already running when NYX found it, NYX adopts it read-only and leaves stopping it to you. Install Ollama in Termux first (`pkg install ollama`); NYX never installs it silently and never uses root.
+
+**Arsenal skills.** Open **Arsenal** to inspect the nine trusted procedures or import a JSON manifest. Only the three most relevant enabled procedures enter a task prompt, and only their declared tools join that task's allowlist. Imports are untrusted data: writes, terminal authority, unknown tools, duplicate/reserved IDs, and unsafe constraints are rejected. Use the procedure preview and execution log to see what was actually used.
+
+**MCP and GitHub gateways.** Open **Gateways** to add a streamable-HTTP MCP server or a GitHub token gateway. Tokens are encrypted in Android Keystore-backed storage; the gateway record stores only an opaque reference. Each server has an allowlist and a per-run call budget. Check health and list tools before invoking one manually; GitHub writes are separate tools and remain policy-gated. Objective execution snapshots the allowed tools before a run, so a model cannot enable a server or widen its allowlist mid-task.
+
+**Live worker console.** While an objective runs, Chat shows a compact live preview. Tap it for the full console timeline: plans, delegated roles, tool calls, skill scopes, gateway calls, verification, recovery decisions, metrics, and errors. The timeline is persisted locally and is evidence-backed, not simulated.
+
+**Project memory.** Verified task outcomes, build instructions, and lessons are stored per workspace with evidence hashes. Relevant memory is injected into later prompts; stale or unverified claims are suppressed. Use the workspace diagnostics if you need to confirm what was recorded.
 
 ## What changed in 0.7.0 — Project Ascension
 

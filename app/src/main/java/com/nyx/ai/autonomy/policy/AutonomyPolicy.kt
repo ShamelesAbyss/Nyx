@@ -294,8 +294,8 @@ class AuthorizationJournal(private val capacity: Int = 200) {
  *   publishing, an APK install, or destructive work outside the workspace.
  *   Critical work is refused.
  *
- * Instances are not thread-safe; confine mode changes and authorization calls to
- * one dispatcher, or serialize them externally.
+ * Public operations are synchronized. Emergency Stop and revocation are visible
+ * to the next authorization, even when callers use different coroutines.
  */
 class AutonomyPolicyEngine(
     initialMode: AutonomyMode = AutonomyMode.MANUAL,
@@ -304,27 +304,33 @@ class AutonomyPolicyEngine(
 ) {
     private val classifier = RiskClassifier()
     private val journal = AuthorizationJournal()
+    @Volatile
     private var activeGrants: List<CapabilityGrant> = grants.toList()
 
     /** Current autonomy ceiling. */
+    @Volatile
     var mode: AutonomyMode = initialMode
         private set
 
     /** True after [emergencyStop] until [resetStop]. */
+    @Volatile
     var stopped: Boolean = false
         private set
 
     /** Replaces the mode ceiling. */
+    @Synchronized
     fun updateMode(mode: AutonomyMode) {
         this.mode = mode
     }
 
     /** Replaces every grant, for example after loading persisted state. */
+    @Synchronized
     fun replaceGrants(grants: List<CapabilityGrant>) {
         activeGrants = grants.toList()
     }
 
     /** Adds [grant], replacing any grant that shares its id. */
+    @Synchronized
     fun grant(grant: CapabilityGrant) {
         val existing = activeGrants.indexOfLast { it.id == grant.id }
         activeGrants = if (existing >= 0) {
@@ -335,6 +341,7 @@ class AutonomyPolicyEngine(
     }
 
     /** Marks the grant [grantId] revoked; returns false when no active grant matched. */
+    @Synchronized
     fun revoke(grantId: String): Boolean {
         val index = activeGrants.indexOfLast { it.id == grantId && !it.revoked }
         if (index < 0) return false
@@ -343,11 +350,13 @@ class AutonomyPolicyEngine(
     }
 
     /** Stops all autonomous work until [resetStop]. */
+    @Synchronized
     fun emergencyStop() {
         stopped = true
     }
 
     /** Clears the emergency stop. */
+    @Synchronized
     fun resetStop() {
         stopped = false
     }
@@ -360,6 +369,7 @@ class AutonomyPolicyEngine(
      * and risk ceiling are checked before the ordinary mode policy runs. Every
      * call appends an [AuthorizationEntry] to [journalEntries].
      */
+    @Synchronized
     fun authorize(
         request: ActionRequest,
         delegated: DelegatedPermissionScope? = null,
@@ -386,9 +396,11 @@ class AutonomyPolicyEngine(
     }
 
     /** Immutable view of the current policy state. */
+    @Synchronized
     fun snapshot(): PolicySnapshot = PolicySnapshot(mode, stopped, activeGrants.toList())
 
     /** Audit trail of decisions made by this engine, oldest first. */
+    @Synchronized
     fun journalEntries(): List<AuthorizationEntry> = journal.entries()
 
     private fun decide(request: ActionRequest, risk: ActionRisk): AuthorizationDecision = when (mode) {

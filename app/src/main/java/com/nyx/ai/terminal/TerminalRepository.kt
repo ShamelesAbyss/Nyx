@@ -128,15 +128,7 @@ class TerminalRepository(
 
         database.terminalCommandDao().upsert(
             row.copy(
-                status = when (result.kind) {
-                    TerminalResultKind.SUCCEEDED -> "succeeded"
-                    TerminalResultKind.PROCESS_EXIT -> "process_exit"
-                    TerminalResultKind.TIMEOUT -> "timeout"
-                    TerminalResultKind.CANCELLED -> "cancelled"
-                    TerminalResultKind.CONFIRMATION_REQUIRED -> "confirmation_required"
-                    TerminalResultKind.POLICY_BLOCKED, TerminalResultKind.DENIED -> "denied"
-                    else -> "failed"
-                },
+                status = TerminalResultPolicy.persistedStatus(result.kind),
                 exitCode = result.exitCode,
                 stdout = result.stdout.take(64_000),
                 stderr = result.stderr.take(16_000),

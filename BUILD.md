@@ -1,4 +1,6 @@
-# Building NYX 0.7.0
+# Building NYX 0.7.5
+
+Package identity: `com.nyx.ai`, versionCode **9**, versionName **0.7.5**. The verified command is `./gradlew --no-daemon testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin`; it produces 598 passing JVM tests, a debug APK, and a compiled instrumentation-test APK. No physical device is required for that command, but real Termux/Ollama/Keystore/gateway behavior still requires one.
 
 ## Requirements
 

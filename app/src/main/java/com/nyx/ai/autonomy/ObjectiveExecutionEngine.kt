@@ -44,6 +44,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.security.MessageDigest
 
 /**
  * Durable objective engine owned by [com.nyx.ai.service.ObjectiveExecutionService].
@@ -59,6 +60,8 @@ class ObjectiveExecutionEngine(
     private val sessions: InferenceSessionFactory,
     private val terminalTools: AgentToolProvider?,
     private val extraTools: AgentToolProvider? = null,
+    private val arsenal: com.nyx.ai.skills.ArsenalRepository? = null,
+    private val projectMemory: com.nyx.ai.context.ProjectMemory? = null,
     private val fileProbe: FileProbe?,
     private val contextStore: ContextStore,
     private val onToken: (String) -> Unit = {},
@@ -318,9 +321,15 @@ class ObjectiveExecutionEngine(
                 requireNotNull(checked.skill) { "Builtin skill validation failed: ${checked.issues.joinToString { it.message }}" }
             }
         } else emptyList()
+        val objectiveGoal = dao.getObjective(objectiveId)?.goal.orEmpty()
+        val arsenalSkills = runCatching {
+            arsenal?.selectForGoal("$objectiveGoal ${task.title} ${task.instructions}", 3).orEmpty()
+        }.getOrDefault(emptyList())
         val allowed = configured + approvedSkills.flatMap { it.allowedTools } +
-            if (objectiveTools?.names?.contains(NetworkAgentTools.TOOL_FETCH) == true) setOf(NetworkAgentTools.TOOL_FETCH) else emptySet()
+            arsenalSkills.flatMap { it.manifest.tools } +
+            extraTools?.names.orEmpty()
         if (approvedSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", approvedSkills.joinToString { "${it.manifest.id}@${it.manifest.version}" })
+        if (arsenalSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", arsenalSkills.joinToString { "${it.id}@${it.version}" })
         val role = WorkerRoles.forTask(task.workerKind, task.title)
         event(objectiveId, task.id, "delegation_role", "${role.label} worker assigned to \"${task.title.take(80)}\".")
         val spec = AgentSpec(
@@ -328,7 +337,11 @@ class ObjectiveExecutionEngine(
             name = agent.name,
             model = session.modelId,
             systemPrompt = WorkerRoles.prompt(role) + "\n\n" + agent.instructions +
-                approvedSkills.joinToString("\n", prefix = "\nValidated offline procedures:\n") { it.manifest.instructions.joinToString("\n") },
+                approvedSkills.joinToString("\n", prefix = "\nValidated offline procedures:\n") { it.manifest.instructions.joinToString("\n") } +
+                runCatching { arsenal?.promptBlock("$objectiveGoal ${task.title}", 3).orEmpty() }.getOrDefault("") +
+                runCatching { projectMemory?.buildPromptBlock("$objectiveGoal ${task.title}", 3_500).orEmpty() }
+                    .getOrDefault("")
+                    .let { if (it.isNotBlank()) "\n\n$it" else "" },
             maxSteps = config.optInt("maxSteps", 8),
             allowedTools = allowed,
         )
@@ -438,6 +451,32 @@ class ObjectiveExecutionEngine(
                 )
             )
             event(objectiveId, task.id, "task_completed", "${task.title} completed with verified local evidence.")
+            arsenalSkills.forEach { skill ->
+                runCatching {
+                    arsenal?.recordExecution(
+                        skillId = skill.id,
+                        objectiveId = objectiveId,
+                        success = true,
+                        detail = "Verified task: ${task.title.take(160)}",
+                        evidence = report.results.filter { it.passed }.map { it.spec.kind.name.lowercase() },
+                    )
+                }
+            }
+            runCatching {
+                projectMemory?.recordOutcome(
+                    title = task.title.take(160),
+                    summary = "Verified objective task completed. ${outcome.result.take(600)}",
+                    success = true,
+                    objectiveId = objectiveId,
+                    evidenceRefs = listOf(
+                        com.nyx.ai.context.MemoryEvidenceRef(
+                            path = "objective/$objectiveId/task/${task.id}",
+                            sha256 = sha256Hex(report.evidenceJson),
+                        ),
+                    ),
+                    tags = listOf(task.workerKind, "verified"),
+                )
+            }
             return@coroutineScope
         }
 
@@ -452,6 +491,25 @@ class ObjectiveExecutionEngine(
             risk = if (mutating) "mutating" else "read-only",
         )
         event(objectiveId, task.id, "recovery_${decision.action.name.lowercase()}", decision.reason)
+        arsenalSkills.forEach { skill ->
+            runCatching {
+                arsenal?.recordExecution(
+                    skillId = skill.id,
+                    objectiveId = objectiveId,
+                    success = false,
+                    detail = "Task did not pass verification: ${(report.reason ?: "unknown failure").take(160)}",
+                )
+            }
+        }
+        runCatching {
+            projectMemory?.recordOutcome(
+                title = task.title.take(160),
+                summary = "Task did not pass verification: ${(report.reason ?: "unknown failure").take(500)}",
+                success = false,
+                objectiveId = objectiveId,
+                tags = listOf(task.workerKind, "failure"),
+            )
+        }
         when (decision.action) {
             RecoveryAction.RETRY -> {
                 delay(decision.delayMillis)
@@ -584,7 +642,32 @@ class ObjectiveExecutionEngine(
                 toolOutput = toolOutput?.take(4_000),
             )
         )
+        WorkerActivityBus.record(
+            kind = activityKind(kind),
+            title = kind.replace('_', ' '),
+            detail = detail,
+            objectiveId = objectiveId,
+            taskId = taskId,
+            toolName = toolName,
+        )
     }
+
+    private fun activityKind(kind: String): WorkerActivityKind = when {
+        kind.startsWith("tool") -> WorkerActivityKind.TOOL
+        kind.startsWith("skill") -> WorkerActivityKind.SKILL
+        kind.startsWith("delegation") -> WorkerActivityKind.DELEGATION
+        kind.startsWith("verification") -> WorkerActivityKind.VERIFICATION
+        kind.startsWith("recovery") || kind == "retry_approved" || kind == "blocked" -> WorkerActivityKind.RECOVERY
+        kind.startsWith("task") || kind.startsWith("development") -> WorkerActivityKind.TASK
+        kind.startsWith("plan") -> WorkerActivityKind.PLAN
+        kind.startsWith("supervisor") -> WorkerActivityKind.SUPERVISOR
+        kind.contains("error") || kind == "failed" -> WorkerActivityKind.ERROR
+        else -> WorkerActivityKind.INFO
+    }
+
+    private fun sha256Hex(value: String): String =
+        MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     private fun encodeSpecs(specs: List<EvidenceSpec>): String? {
         if (specs.isEmpty()) return null

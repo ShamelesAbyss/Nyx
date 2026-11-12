@@ -1,42 +1,59 @@
-# NYX 0.7.0 Test Results
+# NYX 0.7.5 Test Results
 
 ## Final automated build
 
-Executed on 2026-11-12 UTC from the frozen application source in `/home/ubuntu/nyx`:
+Executed on 2026-11-12 UTC from `/home/ubuntu/nyx`:
 
 ```bash
-ANDROID_HOME="$HOME/Android/Sdk" JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
-  ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" \
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+./gradlew --no-daemon testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin
 ```
 
-Result: **BUILD SUCCESSFUL**. The run executed **450 JVM tests in 43 classes with 0 failures, 0 errors, and 0 skipped tests**, assembled the debug application APK, and compiled the Android instrumentation-test APK. The count includes the new policy, executable-origin, dependency-planning, network-policy, network-tool, supervisor, worker-role, and workspace-provisioning suites. A separate clean JVM run after parser and redirect corrections also reported zero failures.
+Result: **BUILD SUCCESSFUL**.
 
-## Artifact verification
+- **598 JVM tests** executed: **0 failures, 0 errors, 0 skipped**.
+- New suites include `ArsenalRepositoryTest`, `GatewayRepositoryTest`, `McpClientTest`, `GitHubGatewayTest`, `ProjectMemoryTest`, `SymbolIndexTest`, `OllamaProcessTest`, `OllamaLifecyclePolicyTest`, `CommandPolicyTest`, `TerminalResultPolicyTest`, `RoutineGrantPolicyTest`, and the workspace/verification/worker tests.
+- Debug APK assembled: `app/build/outputs/apk/debug/app-debug.apk`.
+- Android instrumentation-test APK compiled: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`.
+- SDK policy check passed: compileSdk/targetSdk 37, minSdk 26.
+- The suite found and drove a real fix: NUL-separated `/proc/<pid>/cmdline` is now normalized before ownership classification.
+
+## APK identity
 
 | Property | Verified value |
 | :--- | :--- |
 | Package | `com.nyx.ai` |
-| Version | `versionName 0.7.0`, `versionCode 8` |
+| Version | `versionName 0.7.5`, `versionCode 9` |
 | Compile / target SDK | 37 / 37 |
 | Minimum SDK | 26 |
 | Native ABI | `arm64-v8a` only |
+| Debug APK | 33 MB, SHA-256 `91f8e718455224930ed08ebb2bb16e659bd76899b561b33e2ea08c2a2c9601f1` |
 | APK signing | Android debug certificate, SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` |
-| Upgrade compatibility | Same certificate as the delivered v0.6.1 APK; in-place update is possible when that build is installed |
-| Debug APK | 33 MB, SHA-256 `ebbdb32b5fb772f632939bd7a803e50eae9d64fe48f964fdd120da4822e2aa00` |
 | Instrumentation APK | 581 KB, compiled only |
+
+The signing certificate matches the previously delivered debug APK, so an in-place update is possible over that build. This is not a Play Store release key.
 
 ## What the automated tests establish
 
-The policy tests exercise Manual, Smart, and Full decisions, grant scope and expiry, revocation, delegated-scope narrowing, emergency stop, risk escalation, and journal recording. Environment tests establish that an inherited Termux binary is never accepted as a guest-native tool, that guest plans never contain `pkg`, that host plans never contain `apt`, that Android SDK work is blocked inside an ARM64 guest, and that a satisfied toolchain produces no install candidates. Workspace tests cover name sanitization, traversal rejection, collision suffixes, environment-specific bases, path quoting, and writability checks. Network tests cover HTTPS enforcement, private/loopback handling, credential-bearing URLs, redirect refusal, text truncation, binary rejection, download hashing, and deletion of partial downloads. Supervisor and role tests cover bounded retry, repeated-failure pauses, budget exhaustion, deterministic role assignment, and the prohibition on concurrent coder/environment self-duplication.
+- Kotlin compilation of the complete app, including Arsenal, Gateways, managed Ollama, project memory, symbol index, worker console, and navigation.
+- Arsenal: nine built-ins validate as trusted; untrusted imports are size-bounded and reject unknown/escalating tools, reserved/duplicate IDs, unsafe constraints, and incompatible schemas; enable/configure/remove/log behavior is covered.
+- Gateways: configuration validation, allowlists, per-run budgets, timeouts, credential references (never secrets) in config, MCP parsing, GitHub request construction, health degradation, and redacted logs.
+- Project memory: evidence requirements, stale/unverified suppression, deduplication, bounded prompt rendering, and deterministic relevance.
+- Symbol index: Kotlin/Java declaration and reference extraction, incremental hashing, persistence, and deterministic ranking.
+- Ollama: installation/start/stop/restart parsing, PID plus start-token ownership, recycled-PID refusal, adopted-server protection, and bounded log normalization.
+- Existing regressions: autonomy policy, workspace atomic creation, scoped routine grants, terminal result mapping, verification, recovery, Room entities, native inference configuration, and credential transport.
 
-These tests do **not** prove Termux dispatch, PRoot execution, package installation, Android Keystore behavior, foreground-service lifecycle, notification actions, or restart recovery on a real phone. Those paths require a physical device.
+These tests do **not** prove Termux dispatch, PRoot execution, real Ollama process control, Android Keystore behavior, MCP/GitHub network calls, foreground-service lifecycle, notification actions, or restart recovery on a real phone.
 
-## Not executed
+## Not executed (no physical Android device)
 
-No physical Android device or emulator was attached during this cycle. The following remain device-only checks: installing and launching the APK; granting `com.termux.permission.RUN_COMMAND`; Termux `RUN_COMMAND` callbacks; Debian guest verification; origin labels from a real guest; `apt`/`pkg` package installs; Android SDK blocker behavior; workspace creation through ROOT/PRoot; Emergency Stop through a service restart; objective pause/cancel and process-death recovery; Room 3 migration preservation; Keystore credential round-trip and tamper detection; native GGUF load/stream/cancel/unload; notification permission and actions; fold/unfold layout; and network access from the device.
+- Installing/launching the APK on a phone or foldable.
+- Real Termux `RUN_COMMAND` dispatch and PRoot guest verification.
+- Real Ollama installation/start/stop/restart against a Termux process; PID-reuse defense is unit-tested only.
+- Real MCP server or GitHub API calls, credential resolution, and token storage on hardware.
+- Keystore encryption/decryption and Room migration instrumentation tests on device.
+- Foreground-service notification, process-death recovery, thermal pause, and notification permission behavior.
+- Any performance, battery, or memory measurement of a real inference run.
 
-The instrumentation APK was compiled but not executed. A debug-signed APK is a development artifact, not a production or Play Store release.
-
-## Scope notes
-
-Package installation is implemented as an approved, planner-generated sequence, not as a general package resolver; distribution-specific package splits can still leave a tool unverified, which the installer reports instead of hiding. Role delegation is prompt-level specialization over the existing bounded workers, not separate model processes. The objective network tool exposes text fetch only; the download implementation exists in the network layer but is not offered as a model tool.
+These are **validation gaps**, not claims of failure. No physical device was available in this environment.

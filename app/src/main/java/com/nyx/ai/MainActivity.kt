@@ -44,6 +44,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -53,6 +54,8 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
@@ -117,8 +120,14 @@ import com.nyx.ai.terminal.ProjectKind
 import com.nyx.ai.autonomy.PreflightResult
 import com.nyx.ai.autonomy.policy.AutonomyMode
 import com.nyx.ai.nativeinference.NativePhase
+import com.nyx.ai.ollama.OllamaServerStatus
 import com.nyx.ai.network.InferenceFabric
 import com.nyx.ai.settings.MemoryTelemetry
+import com.nyx.ai.autonomy.WorkerActivityBus
+import com.nyx.ai.ui.WorkerActivityPreview
+import com.nyx.ai.ui.WorkerConsoleDialog
+import com.nyx.ai.ui.ArsenalScreen
+import com.nyx.ai.ui.GatewaysScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
@@ -159,6 +168,7 @@ private fun NyxTheme(content: @Composable () -> Unit) {
 private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     var tab by rememberSaveable { mutableStateOf(0) }
+    var showMore by rememberSaveable { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.registerGguf(uri, context.displayName(uri))
@@ -166,8 +176,12 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val textDocumentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importTextDocument(uri)
     }
-    val destinations = listOf("Chat", "Models", "Agents", "Autonomy", "Workflows", "Settings")
-    val icons = listOf(Icons.Rounded.ChatBubbleOutline, Icons.Rounded.Memory, Icons.Rounded.SmartToy, Icons.Rounded.PlayArrow, Icons.Rounded.AccountTree, Icons.Rounded.Settings)
+    val destinations = listOf("Chat", "Models", "Agents", "Autonomy", "Arsenal", "Gateways", "Workflows", "Settings")
+    val icons = listOf(
+        Icons.Rounded.ChatBubbleOutline, Icons.Rounded.Memory, Icons.Rounded.SmartToy,
+        Icons.Rounded.PlayArrow, Icons.Rounded.AutoAwesome, Icons.Rounded.Hub,
+        Icons.Rounded.AccountTree, Icons.Rounded.Settings,
+    )
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 840.dp
         Scaffold(
@@ -175,15 +189,22 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
             contentWindowInsets = WindowInsets.safeDrawing,
             bottomBar = {
                 if (!expanded) NavigationBar(containerColor = Surface1, contentColor = TextMain) {
-                    destinations.forEachIndexed { index, label ->
+                    listOf(0, 1, 3, 4, 5).forEach { index ->
                         NavigationBarItem(
                             selected = tab == index,
                             onClick = { tab = index },
-                            icon = { Icon(icons[index], contentDescription = label) },
-                            label = { Text(label, fontSize = 10.sp) },
+                            icon = { Icon(icons[index], contentDescription = destinations[index]) },
+                            label = { Text(destinations[index], fontSize = 9.sp) },
                             alwaysShowLabel = false
                         )
                     }
+                    NavigationBarItem(
+                        selected = tab in setOf(2, 6, 7),
+                        onClick = { showMore = true },
+                        icon = { Icon(Icons.Rounded.MoreHoriz, contentDescription = "More destinations") },
+                        label = { Text("More", fontSize = 9.sp) },
+                        alwaysShowLabel = false,
+                    )
                 }
             }
         ) { padding ->
@@ -205,13 +226,32 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                         1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
                         2 -> AgentsScreen(state, vm) { textDocumentPicker.launch(arrayOf("text/*", "application/json")) }
                         3 -> AutonomyScreen(state, vm)
-                        4 -> WorkflowScreen(state, vm)
+                        4 -> ArsenalScreen(state, vm)
+                        5 -> GatewaysScreen(state, vm)
+                        6 -> WorkflowScreen(state, vm)
                         else -> SettingsScreen(state, vm)
                     }
                 }
             }
         }
     }
+    if (showMore) AlertDialog(
+        onDismissRequest = { showMore = false },
+        containerColor = Surface1,
+        title = { Text("More destinations", color = TextMain) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(2, 6, 7).forEach { index ->
+                    OutlinedButton(onClick = { tab = index; showMore = false }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(icons[index], null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(destinations[index], modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showMore = false }) { Text("Close") } },
+    )
 }
 
 @Composable
@@ -664,6 +704,8 @@ private fun ErrorBanner(text: String, dismiss: () -> Unit) {
 private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
     var draft by rememberSaveable { mutableStateOf("") }
     var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showConsole by rememberSaveable { mutableStateOf(false) }
+    val activities by WorkerActivityBus.events.collectAsState()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 780.dp
         Row(Modifier.fillMaxSize()) {
@@ -682,6 +724,7 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
                     items(state.messages, key = { it.id }) { message -> MessageBubble(message) }
                     if (state.streamingText.isNotEmpty()) item(key = "streaming") { StreamingBubble(state.streamingText) }
                 }
+                WorkerActivityPreview(activities, state.objectiveRunning, onOpen = { showConsole = true })
                 Composer(draft, onDraft = { draft = it }, generating = state.isGenerating, enabled = state.connected && state.selectedModel.isNotBlank(), onSend = { vm.sendMessage(draft); draft = "" }, onStop = vm::stopGeneration)
             }
         }
@@ -693,6 +736,7 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
         text = { HistoryPanel(state.conversations, state.activeConversationId, vm, Modifier.heightIn(max = 440.dp).fillMaxWidth(), onSelected = { showHistory = false }) },
         confirmButton = { TextButton(onClick = { showHistory = false }) { Text("Close") } }
     )
+    if (showConsole) WorkerConsoleDialog(activities, state.objectiveRunning, onDismiss = { showConsole = false })
 }
 
 @Composable
@@ -799,6 +843,7 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
     var deleting by remember { mutableStateOf<com.nyx.ai.nativeinference.NativeModel?>(null) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionIntro("Inference providers", "Native GGUF runs offline on this phone’s CPU. Ollama and OpenAI-compatible servers remain optional. No weights are bundled.") }
+        item { OllamaServerCard(state, vm) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = vm::useNativeProvider, enabled = !busy) { Text(if (state.nativeMode) "Native · selected" else "Use native GGUF") }
@@ -845,6 +890,40 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
         } else item { Text("To use Ollama or a /v1 API instead, save its HTTP(S) URL in Settings. No automatic fallback sends native prompts to another provider.", color = TextMuted, fontSize = 11.sp) }
     }
     deleting?.let { model -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Remove ${model.name}?") }, text = { Text("Deletes only NYX’s imported private copy and metadata; your original document is not changed.") }, confirmButton = { TextButton(onClick = { vm.deleteNativeModel(model); deleting = null }) { Text("Delete copy") } }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
+    val server = state.ollamaServer
+    val accent = when (server.status) {
+        OllamaServerStatus.RUNNING -> Green
+        OllamaServerStatus.ERROR -> Red
+        OllamaServerStatus.STARTING, OllamaServerStatus.STOPPING -> Color(0xFFF2C879)
+        else -> TextMuted
+    }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("MANAGED OLLAMA · TERMUX HOST", color = VioletSoft, fontSize = 9.sp, letterSpacing = 1.sp)
+                    Text(server.status.name.replace('_', ' '), color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+                if (server.status == OllamaServerStatus.RUNNING) Text("${server.models.size} models", color = TextMuted, fontSize = 10.sp)
+            }
+            Text(server.endpoint, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            if (server.message.isNotBlank()) Text(server.message, color = TextMuted, fontSize = 11.sp, lineHeight = 15.sp)
+            if (server.pid != null) Text("PID ${server.pid} · ${if (server.startedByNyx) "started by NYX (verified ownership)" else "adopted external process"} · RSS ${server.rssKb?.div(1024) ?: "?"} MB", color = TextMuted, fontSize = 10.sp)
+            if (server.logTail.isNotBlank()) Text(server.logTail.takeLast(500), color = TextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, maxLines = 5)
+            Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = vm::detectOllamaServer) { Text("Detect", fontSize = 11.sp) }
+                OutlinedButton(onClick = vm::refreshOllamaServer) { Text("Refresh", fontSize = 11.sp) }
+                if (server.status == OllamaServerStatus.RUNNING && server.canStop) OutlinedButton(onClick = vm::stopOllamaServer) { Text("Stop", fontSize = 11.sp) }
+                if (!server.isRunning && !server.isBusy) Button(onClick = vm::startOllamaServer) { Text("Start", fontSize = 11.sp) }
+                if (server.isRunning && server.startedByNyx) OutlinedButton(onClick = vm::restartOllamaServer) { Text("Restart", fontSize = 11.sp) }
+            }
+            if (server.status == OllamaServerStatus.NOT_INSTALLED) Text("Install Ollama inside Termux first: pkg install ollama. NYX never runs root and never kills an adopted server.", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+        }
+    }
 }
 
 @Composable
@@ -1144,6 +1223,12 @@ private fun AutonomyPolicyCard(state: NyxState, vm: NyxViewModel) {
                 state.policyMessage.ifBlank { "Manual approval is the default: consequential actions ask first." },
                 color = if (state.autonomyStopped) Color(0xFFF28B82) else TextMuted,
                 fontSize = 11.sp
+            )
+            Text(
+                "Single policy source · environment ${state.terminalEnvironment.name.lowercase().replace('_', ' ')} · " +
+                    (state.terminalWorkspace.takeIf { it.isNotBlank() } ?: "no workspace selected") +
+                    ". Routine grants are workspace-only and are removed when you return to Manual.",
+                color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (state.autonomyStopped) {

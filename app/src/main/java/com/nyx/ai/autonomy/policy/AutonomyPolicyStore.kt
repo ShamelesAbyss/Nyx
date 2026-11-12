@@ -22,6 +22,7 @@ class AutonomyPolicyStore(context: Context) {
     private val journalFile = File(appContext.filesDir, JOURNAL_FILE_NAME)
 
     /** Loads the persisted snapshot, falling back to safe defaults. */
+    @Synchronized
     fun load(): PolicySnapshot {
         val mode = AutonomyPolicyCodec.decodeMode(readString(KEY_MODE))
         val stopped = runCatching { prefs.getBoolean(KEY_STOPPED, false) }.getOrDefault(false)
@@ -30,6 +31,7 @@ class AutonomyPolicyStore(context: Context) {
     }
 
     /** Persists [snapshot], replacing any previous policy state. */
+    @Synchronized
     fun save(snapshot: PolicySnapshot) {
         prefs.edit()
             .putString(KEY_MODE, snapshot.mode.name)
@@ -39,11 +41,13 @@ class AutonomyPolicyStore(context: Context) {
     }
 
     /** Reads the journal, skipping unreadable records; oldest entry first. */
+    @Synchronized
     fun journal(): List<AuthorizationEntry> = readJournalLines().mapNotNull { line ->
         AutonomyPolicyCodec.decodeEntry(line)
     }
 
     /** Appends [entry], keeping only the most recent [MAX_JOURNAL_LINES] records. */
+    @Synchronized
     fun appendJournal(entry: AuthorizationEntry) {
         val lines = readJournalLines().takeLast(MAX_JOURNAL_LINES - 1) +
             AutonomyPolicyCodec.encodeEntry(entry)
@@ -51,6 +55,7 @@ class AutonomyPolicyStore(context: Context) {
     }
 
     /** Removes every journal record. */
+    @Synchronized
     fun clearJournal() {
         runCatching { journalFile.delete() }
             .onFailure { Log.w(TAG, "Unable to clear authorization journal", it) }

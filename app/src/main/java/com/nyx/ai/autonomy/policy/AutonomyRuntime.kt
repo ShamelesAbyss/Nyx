@@ -6,6 +6,10 @@ import java.util.UUID
 /**
  * Process-wide access to the single autonomy policy. Every backend calls this object instead of
  * keeping its own mode or grant list, so Manual, Smart, and Full cannot diverge between features.
+ *
+ * All mutating and authorization calls are serialized on [lock]. The engine itself is synchronized
+ * as well, but keeping the snapshot/persist pair under one lock prevents an older snapshot from
+ * overwriting a newer Emergency Stop or revocation.
  */
 object AutonomyRuntime {
     private val lock = Any()
@@ -17,15 +21,7 @@ object AutonomyRuntime {
     private var store: AutonomyPolicyStore? = null
 
     fun initialize(context: Context) {
-        if (store != null) return
-        synchronized(lock) {
-            if (store != null) return
-            val created = AutonomyPolicyStore(context.applicationContext)
-            val snapshot = runCatching { created.load() }.getOrDefault(PolicySnapshot(AutonomyMode.MANUAL, false, emptyList()))
-            engine = AutonomyPolicyEngine(snapshot.mode, snapshot.grants)
-            if (snapshot.stopped) engine.emergencyStop()
-            store = created
-        }
+        synchronized(lock) { initializeLocked(context) }
     }
 
     fun policy(): AutonomyPolicyEngine = engine
@@ -33,76 +29,79 @@ object AutonomyRuntime {
     fun mode(): AutonomyMode = engine.mode
 
     fun setMode(context: Context, mode: AutonomyMode) {
-        initialize(context)
-        engine.updateMode(mode)
-        persist()
+        synchronized(lock) {
+            initializeLocked(context)
+            engine.updateMode(mode)
+            persistLocked()
+        }
     }
 
     fun emergencyStop(context: Context) {
-        initialize(context)
-        engine.emergencyStop()
-        persist()
+        synchronized(lock) {
+            initializeLocked(context)
+            engine.emergencyStop()
+            persistLocked()
+        }
     }
 
     fun resetStop(context: Context) {
-        initialize(context)
-        engine.resetStop()
-        persist()
+        synchronized(lock) {
+            initializeLocked(context)
+            engine.resetStop()
+            persistLocked()
+        }
     }
 
     fun grant(context: Context, grant: CapabilityGrant) {
-        initialize(context)
-        engine.grant(grant)
-        persist()
+        synchronized(lock) {
+            initializeLocked(context)
+            engine.grant(grant)
+            persistLocked()
+        }
     }
 
-    fun revoke(context: Context, grantId: String): Boolean {
-        initialize(context)
+    fun revoke(context: Context, grantId: String): Boolean = synchronized(lock) {
+        initializeLocked(context)
         val removed = engine.revoke(grantId)
-        if (removed) persist()
-        return removed
+        if (removed) persistLocked()
+        removed
     }
 
     /** Removes every grant and returns the device to Manual approval. */
     fun clearGrants(context: Context) {
-        initialize(context)
-        engine.replaceGrants(emptyList())
-        engine.updateMode(AutonomyMode.MANUAL)
-        persist()
+        synchronized(lock) {
+            initializeLocked(context)
+            engine.replaceGrants(emptyList())
+            engine.updateMode(AutonomyMode.MANUAL)
+            persistLocked()
+        }
     }
 
     /**
-     * Creates the routine grants implied by an explicit mode selection. Publishing, Git pushes, APK
-     * installation, system configuration, and credential use are deliberately never granted here.
+     * Creates the routine grants implied by an explicit mode selection.
+     *
+     * A workspace is mandatory for every workspace-derived capability. When no workspace has been
+     * selected, wildcard routine grants are removed and nothing new is issued; NYX must not acquire
+     * command or file authority for a project that does not exist yet. No `"*"` scope is issued.
      */
     fun grantRoutineScope(context: Context, environmentId: String, workspacePath: String?) {
-        initialize(context)
-        val now = System.currentTimeMillis()
-        val scope = workspacePath?.takeIf { it.startsWith('/') } ?: "*"
-        val capabilities = listOf(
-            "workspace.read" to scope,
-            "workspace.write" to scope,
-            "workspace.delete" to scope,
-            "command.readonly" to scope,
-            "command.mutating" to scope,
-            "packages.install" to "*",
-            "network.read" to "*",
-            "network.download" to "*",
-            "git.commit" to scope,
-            "delegate" to "*",
-        )
-        for ((capability, grantScope) in capabilities) {
-            engine.grant(
-                CapabilityGrant(
-                    id = UUID.randomUUID().toString(),
-                    capability = capability,
-                    environmentId = environmentId,
-                    scope = grantScope,
-                    createdAt = now,
-                )
-            )
+        synchronized(lock) {
+            initializeLocked(context)
+            val routineCapabilities = RoutineGrantPolicy.CAPABILITIES
+            val retained = engine.snapshot().grants.filterNot { grant ->
+                grant.capability in routineCapabilities || grant.scope.trim() == "*"
+            }
+            val workspace = RoutineGrantPolicy.normalizeWorkspace(workspacePath)
+            if (workspace == null) {
+                engine.replaceGrants(retained)
+                persistLocked()
+                return@synchronized
+            }
+            val now = System.currentTimeMillis()
+            val grants = RoutineGrantPolicy.build(environmentId, workspace, now) { UUID.randomUUID().toString() }
+            engine.replaceGrants(retained + grants)
+            persistLocked()
         }
-        persist()
     }
 
     /** Authorizes and records one request through the shared policy. */
@@ -111,14 +110,31 @@ object AutonomyRuntime {
         request: ActionRequest,
         delegated: DelegatedPermissionScope? = null,
     ): AuthorizationDecision {
-        initialize(context)
-        val decision = engine.authorize(request, delegated)
-        val entry = engine.journalEntries().lastOrNull()
-        if (entry != null) runCatching { store?.appendJournal(entry) }
-        return decision
+        val result = synchronized(lock) {
+            initializeLocked(context)
+            val decision = engine.authorize(request, delegated)
+            decision to engine.journalEntries().lastOrNull()
+        }
+        // Journal file I/O is intentionally outside the state lock. A Stop can be observed while a
+        // previous decision is being appended, and the append itself is synchronized by the store.
+        result.second?.let { entry -> runCatching { store?.appendJournal(entry) } }
+        return result.first
     }
 
-    private fun persist() {
+    private fun initializeLocked(context: Context) {
+        if (store != null) return
+        val created = AutonomyPolicyStore(context.applicationContext)
+        val loaded = runCatching { created.load() }
+            .getOrDefault(PolicySnapshot(AutonomyMode.MANUAL, false, emptyList()))
+        // v0.7.0 could persist `"*"` routine grants. They are intentionally discarded on load;
+        // the user must select a concrete workspace before any command or file authority exists.
+        val safeGrants = loaded.grants.filterNot { it.scope.trim() == "*" }
+        engine = AutonomyPolicyEngine(loaded.mode, safeGrants)
+        if (loaded.stopped) engine.emergencyStop()
+        store = created
+    }
+
+    private fun persistLocked() {
         runCatching { store?.save(engine.snapshot()) }
     }
 }

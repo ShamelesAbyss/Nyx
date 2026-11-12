@@ -118,10 +118,7 @@ class DependencyInstaller(private val repository: TerminalRepository) {
             guestAlias = guestAlias,
         )
         val output = (result.stdout + "\n" + result.stderr).trim().take(4_000)
-        val succeeded = result.exitCode == 0 &&
-            result.kind != TerminalResultKind.TIMEOUT &&
-            result.kind != TerminalResultKind.POLICY_BLOCKED &&
-            result.kind != TerminalResultKind.CONFIRMATION_REQUIRED
+        val succeeded = TerminalResultPolicy.isSuccessfulInstall(result.exitCode, result.kind)
         return InstallStep(
             packageName = candidate.packageName,
             manager = candidate.manager,

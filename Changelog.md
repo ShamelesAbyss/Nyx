@@ -1,6 +1,6 @@
 # Changelog
 
-> Historical v0.1.0 notes retained from the initial project publication. The current, canonical release history through v0.7.0 is in [CHANGELOG.md](CHANGELOG.md).
+> Historical v0.1.0 notes retained from the initial project publication. The current, canonical release history through v0.7.5 is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 0.1.0 — Initial implementation
 

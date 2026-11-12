@@ -1,5 +1,33 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.7.5 — Project Continuum (published)
+
+NYX 0.7.5 is versionCode 9 / versionName 0.7.5, debug-signed, published as v0.7.5, and intended for device testing. It keeps the v0.7.0 autonomy foundation and closes the largest operational gaps in the v0.7 directive.
+
+| Directive area | Status | What exists |
+| :--- | :--- | :--- |
+| Managed Ollama lifecycle | Implemented, host-untested | `OllamaServerManager` + `OllamaProcess`: install discovery, isolated Termux-host scripts, start/readiness/stop/restart, PID **and** kernel start-token ownership, adopted-server protection, bounded log tail, RSS/uptime, auto-refresh. Models screen exposes Detect/Refresh/Start/Stop/Restart and explains that Emergency Stop blocks new lifecycle work. No `pkill`; a reused or adopted PID is never signalled. |
+| Arsenal operational skills | Implemented | Nine versioned built-ins with real declared tools and offline procedures. Bounded selector injects only the three most relevant procedures per task and adds their tools to that task's allowlist. Strict untrusted import, enable/disable/configure/remove, evidence-linked JSONL execution logs, and a dedicated UI. |
+| MCP + GitHub gateways | Implemented, network-untested | Durable `GatewayRepository`, streamable-HTTP MCP client, GitHub REST tools, per-server allowlists, per-run call budgets, timeouts, response caps, health checks, redacted logs, and a Gateways UI. Tokens live only in the Keystore vault; configs store opaque refs. Objective runs snapshot allowed tools; models cannot add a server or widen an allowlist mid-run. |
+| Durable project memory | Implemented and integrated | Evidence-hashed memories, near-duplicate merge, stale/unverified suppression, type-aware relevance, bounded prompt block, and outcome recording. The objective engine now injects relevant memory and records verified/failed task outcomes. |
+| Source symbol index | Implemented, not yet prompt-integrated | Incremental Kotlin/Java declaration/reference parser with SHA-256 change detection, bounded persistence, exact lookup, and deterministic relevance ranking. Tests cover parsing, hashing, persistence, and ranking. It is deliberately not claimed as an automatic prompt feature in this build. |
+| Live Worker Console | Implemented | Persisted `WorkerActivityBus`, compact chat preview, full console dialog, and engine/terminal/gateway/Ollama events. No fabricated progress: entries correspond to persisted engine events or explicit user actions. |
+| Workspace and policy hardening | Implemented | Atomic collision-safe workspace creation (never reuses an existing directory), terminal cancellation mapped to `uncertain`, workspace-scoped routine grants, grants removed when returning to Manual, synchronized stop/revocation, package authorization scoped under the workspace, and one Settings panel documenting the shared policy source and scope. |
+| Release engineering | Implemented | VersionCode 9 / versionName 0.7.5; 598 JVM tests pass; debug and instrumentation APKs compile; APK metadata/signature verified; published with the annotated v0.7.5 tag and all four assets. |
+
+### Honest limits
+
+- No physical Android device: Termux IPC, real Ollama process control, Keystore use, MCP/GitHub calls, notifications, foreground-service restart, and thermal behavior are compiled/unit-tested only.
+- Gateway dynamic tools are snapshotted per objective. A server whose tool list changes after the snapshot requires a new objective.
+- The symbol index is a durable library and test-covered API, not yet automatically wired into every task prompt.
+- The "managed server" is a Termux-host process supervised through `RUN_COMMAND`; NYX does not bundle Ollama, does not install it silently, and does not control an adopted server.
+- Arsenal imports are data/procedures only. They cannot add executable code or claim tools outside the validator's fixed table.
+- The APK remains debug-signed and is not a Play Store production artifact.
+
+### Verification
+
+`testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin` completed with **598 tests, 0 failures, 0 errors, 0 skipped**; APK `com.nyx.ai` versionCode 9/versionName 0.7.5; debug signature SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. Exact artifact digest is in `TEST_RESULTS.md`.
+
 ## v0.7.0 — Project Ascension (published)
 
 NYX 0.7.0 turns the previous execution foundations into a governed autonomy layer. It is versionCode 8 / versionName 0.7.0, debug-signed, and published as v0.7.0.

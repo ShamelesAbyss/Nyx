@@ -77,6 +77,7 @@ class ObjectiveExecutionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        com.nyx.ai.autonomy.WorkerActivityBus.initialize(this)
         database = NyxDatabase.getInstance(this)
         contextStore = ContextStore(java.io.File(filesDir, "context"))
         bridge = TerminalBridge(this)
@@ -253,6 +254,24 @@ class ObjectiveExecutionService : Service() {
                     guestAlias = guestAlias,
                 )
             }
+            val gatewayExtra = runCatching {
+                val vault = com.nyx.ai.settings.CredentialVault(this)
+                val repository = com.nyx.ai.gateway.GatewayRepository(
+                    root = java.io.File(filesDir, "gateways"),
+                    tokenProvider = { reference -> runCatching { vault.read(reference) }.getOrNull() },
+                )
+                val servers = repository.list().filter { it.enabled }.mapNotNull { server ->
+                    val tools = repository.listTools(server.id)
+                    if (tools.isEmpty()) null else server to tools
+                }
+                com.nyx.ai.agent.GatewayAgentTools(
+                    context = this,
+                    repository = repository,
+                    servers = servers,
+                    environmentId = snapshot.optString("environment", "termux_host").lowercase(),
+                    workspace = snapshot.optString("workspace"),
+                ).takeIf { it.names.isNotEmpty() }
+            }.getOrNull()
             val resources = DeviceResourceReader.read(this)
             val profile = ResourcePolicy.profile(resources, objective.parallelism)
             ExecutionMonitor.update { it.copy(phase = "executing", message = profile.reason) }
@@ -261,7 +280,16 @@ class ObjectiveExecutionService : Service() {
                 database = database,
                 sessions = sessions,
                 terminalTools = terminalTools,
-                extraTools = NetworkAgentTools(this),
+                extraTools = if (gatewayExtra != null) {
+                    com.nyx.ai.agent.CompositeToolProvider(listOf(NetworkAgentTools(this), gatewayExtra))
+                } else NetworkAgentTools(this),
+                arsenal = com.nyx.ai.skills.ArsenalRepository(this),
+                projectMemory = snapshot.optString("workspace").takeIf { it.startsWith("/") }?.let { workspace ->
+                    com.nyx.ai.context.ProjectMemory(
+                        root = java.io.File(workspace),
+                        storeDirectory = java.io.File(filesDir, "project-memory"),
+                    )
+                },
                 fileProbe = terminalTools,
                 contextStore = contextStore,
             )
