@@ -1,41 +1,52 @@
-# NYX 0.4.0 Development Handoff
+# NYX 0.5.0 Development Handoff
 
 ## Release identity
 
-The target release is versionName `0.4.0`, versionCode `4`, application ID `com.nyx.ai`. Existing v0.3.0 features, app identity, user records, dark-violet brand, Fold-adaptive layout, Ollama/OpenAI-compatible inference, agents, sequential workflows, and Keystore credential protection were preserved. No remote GitHub repository was accessed or changed.
+versionName `0.5.0`, versionCode `5`, application ID `com.nyx.ai`, min API 26, target/compile API 35. Existing chat, Ollama/OpenAI-compatible inference, encrypted credentials, agents, workflows, dark-violet branding, and Fold-adaptive layouts are preserved. The remote GitHub repository was not modified in this pass.
 
-## Implemented in this continuation
+## What actually changed
 
-**Durable objective foundation.** Room schema v2 adds objective, task, event, and artifact records, with an additive v1→v2 migration and no destructive fallback. Instrumentation source seeds the prior schema, checks that legacy conversations/messages, endpoint references, agents, workflows, and execution logs survive, and exercises the new DAO.
+**Execution ownership moved to a service.** `ObjectiveExecutionService` is a `dataSync` foreground service with a visible notification and Pause/Cancel actions. It acquires a durable lease, renews it with a heartbeat, constructs the inference session from Room plus the Keystore vault, and runs `ObjectiveExecutionEngine`. `NyxViewModel` now only starts/pauses/cancels and observes Room plus `ExecutionMonitor`. This closes the v0.4 gap where closing the Activity's ViewModel could abandon work.
 
-**Bounded planner and scheduler.** The model-produced plan is parsed as strict bounded JSON, capped at 12 tasks and checked for valid fields, duplicate keys/dependencies, missing/self dependencies, and cycles. Stable task UUIDs are derived locally from objective ID and task key. Agent identity is supplied by the caller; unknown model-provided agent/tool/action/model fields are ignored. A deterministic scheduler selects one dependency-ready task at a time.
+**Concurrent, dependency-aware scheduling.** `ConcurrentTaskScheduler` selects ready tasks by priority and per-worker-kind capacity; `ResourcePolicy` derives those capacities from real RAM, thermal status, battery, and storage. Blocking propagates transitively, so a task behind a failed prerequisite is reported as blocked instead of appearing stalled. Deadlock detection only fires on genuine pending dependency cycles.
 
-**Objective execution and review UI.** The new Autonomy screen displays persisted objective/task status, task trace, and text artifacts. The coordinator calls the existing selected agent and intersects configured tools with the app's safe default allowlist. It stores bounded tool invocation and observation details, checkpoints, outcomes, and modest verification status. Failed or interrupted tasks are not automatically repeated; a user must review and approve a retry. The verifier only checks for non-empty output and absence of reported tool error/denial; it does not establish semantic truth.
+**Verification replaced self-reporting.** `TaskVerifier` evaluates exit codes, required/forbidden output, file existence, file contents, and SHA-256 through a `FileProbe`. Any failed or denied tool call fails the task. When a plan declares no evidence, the result is explicitly labelled as weak proof rather than success. `RecoveryPolicy` retries only read-only verification work, fails permanently on a repeated identical failure signature, and sends anything state-changing to human review.
 
-**Termux protocol and release identity.** A standalone RUN_COMMAND adapter core implements request validation, explicit request authorization, host/Debian environment descriptors, bounded result classification, and readiness checks. It is not yet connected to the Autonomy UI or agent tool set; it cannot guarantee termination of a dispatched Termux process. About uses installed Android package metadata, and a Python checker cross-validates Gradle, APK manifest, delivery filenames, and current release docs.
+**Terminal bridge is now real and bounded.** `TerminalBridge` wraps the existing `TermuxIpcAdapter` in a suspend, cancellable API; `EnvironmentDiscovery` probes the actual Termux host, `PREFIX`, `HOME`, tools, and installed PRoot distros; `CommandPolicy` classifies and blocks root/protected-Android/disk operations; `ShellCommandBuilder` builds argv-only requests with quoted working directories and optional coreutils `timeout`; `TerminalRepository` persists every attempt with real stdout, stderr, exit code, and approval state. `TerminalAgentTools` exposes workspace-scoped file and build/test tools and implements `FileProbe`.
 
-## Milestone status
+**Provider-neutral inference.** `InferenceProvider`, `OllamaInferenceProvider`, `OpenAiCompatibleInferenceProvider`, `ProviderFactory`, and `ProviderCapabilityCache` unify transports. `AgentRunner` now accepts either the legacy client or a provider plus extra tools, so existing chat/agent call sites keep working.
 
-| Area | Status |
-|---|---|
-| Room persistence/migration | Implemented; instrumentation test compiles; physical runtime execution pending |
-| Objective/task DAG and stable IDs | Implemented, max 12 tasks |
-| Dependency scheduling | Implemented, one agent/model task at a time |
-| Persistent context | Partial: goal, tasks, outcome, checkpoint, events, and artifacts in Room; no filesystem-backed context store, retrieval, or history compression |
-| Recovery | Conservative interruption states and explicit reviewed retry; no autonomous diagnosis, repair, dynamic replanning, or continuation without app-process work |
-| Inference provider abstraction | Not implemented; current engine uses the existing OllamaClient integration |
-| Queue and parallelism | No 20-task management queue or parallel independent tools; current plans max 12 and execute serially |
-| Termux/Debian | Protocol/library only; not wired into app or agent tasks; real permission, callback, path setup, and PRoot behavior are unverified |
-| Background work | No WorkManager/foreground service; ViewModel survives Activity recreation but not process death. Restart recovery is database-based and conservative |
-| Autonomous software development | Not implemented; no project-edit/build/test/repair loop |
-| Control center | Initial Room-backed objective/task/event/artifact UI; no terminal panel, approval queue, or live resource scheduler |
-| Android UI automation | Not implemented |
-| Pixel Fold/GrapheneOS verification | Not performed in this environment |
+**Context and evidence persistence.** `ContextStore` writes confined, atomic, UTF-8 context records with metadata; `ContextEngine` assembles bounded, relevance-ranked context including dependency outputs and failure history. Room schema v3 adds terminal history, task evidence, context records, leases, and task worker/priority/evidence/failure fields through an additive 2→3 migration.
 
-## Build/test evidence
+## Priority status
 
-The first integrated compile exposed a coroutine Channel import and a missing bounded title parser helper; both were corrected. The final clean v0.4.0 command `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest` passed. It ran 27 JVM tests with zero failures/errors/skips, assembled the debug APK, and compiled the instrumentation APK. The debug certificate matched the v0.3.0 APK checked in this workspace. Migration/Keystore instrumentation tests were compiled, not run. Final APK manifest and release checker results are recorded in `TEST_RESULTS.md`.
+| # | Directive | Status |
+|---|---|---|
+| 1 | Service-owned durable execution | Implemented; device kill/restart behavior unverified |
+| 2 | Dependency-aware parallelism + resource limits | Implemented and unit-tested |
+| 3 | Evidence-based verification | Implemented and unit-tested |
+| 4 | Persistent context store | Implemented and unit-tested |
+| 5 | Provider abstraction | Implemented and unit-tested |
+| 6 | Real Termux/Debian bridge | Implemented in UI and tools; device-unverified |
+| 7 | Development workflow (edit/build/test/repair) | Partial: tools exist (`project_detect`, `build_run`, `test_run`, file edit) and the planner can emit `development` tasks; no dedicated multi-iteration repair orchestrator |
+| 8 | Bounded recovery | Implemented: retry budgets, signature de-duplication, human review for side effects |
+| 9 | Terminal UI + audit history | Implemented |
+| 10 | Control center | Extended with Terminal panel, phase, worker kind, evidence-aware copy; no separate approval queue screen |
 
-## Exact next engineering step
+## Test evidence
 
-On the owner's Android 17/GrapheneOS Pixel Fold, run the Room migration and Keystore instrumentation suites, then test Termux RUN_COMMAND permission and callback behavior against the installed Termux version. Do not expose the bridge to model-directed tasks until environment setup, process ownership/cancellation, command authorization, audit persistence, and output limits are validated. Next, decouple execution ownership from ViewModel using an Android-appropriate worker/service with visible notification and process-death recovery; then add context storage/retrieval and carefully bounded scheduler parallelism.
+`./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest` passes. 98 JVM tests, 0 failures. Debug APK assembled; instrumentation APK compiled. Full counts and device-only gaps are in `TEST_RESULTS.md`.
+
+## Known limitations, stated plainly
+
+- Native GGUF/llama.cpp inference is still absent; NYX requires an external Ollama or OpenAI-compatible endpoint.
+- A killed process stops execution. On restart, interrupted tasks are marked `needs_review`; NYX does not resume mid-task.
+- Debian/PRoot execution is implemented but has not been validated on hardware.
+- `timeout` guarantees child termination only when coreutils `timeout` exists in the selected environment.
+- Cancelling a command without `timeout` stops NYX waiting; the Termux process may continue.
+- No autonomous publication, credential access, privilege escalation, or Android UI automation.
+- No production signing; the APK is debug-signed.
+
+## Next step
+
+On the owner's device: run `connectedDebugAndroidTest` for the Room 1→3 migration and Keystore suites, then exercise the Terminal panel against the installed Termux build (`allow-external-apps=true`, RUN_COMMAND granted), confirm real exit codes, and test a small objective with terminal tools enabled in a scratch workspace before pointing NYX at a real project.

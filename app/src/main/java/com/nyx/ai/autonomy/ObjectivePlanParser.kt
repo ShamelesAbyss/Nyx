@@ -16,7 +16,11 @@ data class PlannedObjectiveTask(
     val verification: String,
     /** Stable UUID strings of prerequisite tasks, not model-controlled keys. */
     val dependsOn: List<String>,
-    val agentId: String
+    val agentId: String,
+    /** One of inference, terminal, filesystem, verification, development. */
+    val workerKind: String = "inference",
+    /** Optional locally checkable completion evidence. */
+    val evidence: List<EvidenceSpec> = emptyList(),
 )
 
 class ObjectivePlanValidationException(message: String, cause: Throwable? = null) :
@@ -28,7 +32,7 @@ class ObjectivePlanValidationException(message: String, cause: Throwable? = null
  */
 object ObjectivePlanValidator {
     const val MAX_JSON_BYTES = 65_536
-    const val MAX_TASKS = 12
+    const val MAX_TASKS = 40
     const val MAX_KEY_LENGTH = 64
     const val MAX_TITLE_LENGTH = 160
     const val MAX_INSTRUCTION_LENGTH = 4_000
@@ -78,7 +82,9 @@ object ObjectivePlanValidator {
             val title: String,
             val instruction: String,
             val dependencyKeys: List<String>,
-            val verify: String
+            val verify: String,
+            val worker: String,
+            val evidence: List<EvidenceSpec>,
         )
 
         val parsed = ArrayList<ParsedTask>(taskArray.length())
@@ -99,6 +105,11 @@ object ObjectivePlanValidator {
             val title = requiredString(obj, "title", index, MAX_TITLE_LENGTH)
             val instruction = requiredAliasedString(obj, "instruction", "instructions", index, MAX_INSTRUCTION_LENGTH)
             val verify = requiredAliasedString(obj, "verify", "verification", index, MAX_VERIFY_LENGTH)
+            val worker = (obj.opt("worker") as? String)
+                ?.trim()?.lowercase()
+                ?.takeIf { it in ALLOWED_WORKERS }
+                ?: "inference"
+            val evidence = EvidenceSpecParser.parse(obj.opt("evidence") as? JSONArray)
             val depends = obj.opt("dependsOn") as? JSONArray
                 ?: invalid("Task '$key' must contain a 'dependsOn' array.")
             if (depends.length() > MAX_TASKS) {
@@ -120,7 +131,7 @@ object ObjectivePlanValidator {
                 }
                 dependencyKeys += dependency
             }
-            parsed += ParsedTask(key, title, instruction, dependencyKeys, verify)
+            parsed += ParsedTask(key, title, instruction, dependencyKeys, verify, worker, evidence)
         }
 
         for (task in parsed) {
@@ -170,10 +181,14 @@ object ObjectivePlanValidator {
                 instructions = task.instruction,
                 verification = task.verify,
                 dependsOn = task.dependencyKeys.map { idsByKey.getValue(it).toString() },
-                agentId = agentId
+                agentId = agentId,
+                workerKind = task.worker,
+                evidence = task.evidence,
             )
         }
     }
+
+    private val ALLOWED_WORKERS = setOf("inference", "terminal", "filesystem", "verification", "development")
 
     private fun stableTaskId(objectiveId: String, key: String): UUID {
         val name = "com.nyx.ai.autonomy.task:${objectiveId.length}:$objectiveId:${key.length}:$key"

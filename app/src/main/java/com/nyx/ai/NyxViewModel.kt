@@ -9,7 +9,16 @@ import com.nyx.ai.agent.AgentEvent
 import com.nyx.ai.agent.AgentRunner
 import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentTools
-import com.nyx.ai.autonomy.ObjectiveCoordinator
+import com.nyx.ai.autonomy.ExecutionMonitor
+import com.nyx.ai.autonomy.ExecutionRecovery
+import com.nyx.ai.service.ObjectiveExecutionService
+import com.nyx.ai.terminal.CommandPolicy
+import com.nyx.ai.terminal.EnvironmentProfile
+import com.nyx.ai.terminal.TerminalCommandResult
+import com.nyx.ai.terminal.TerminalEnvironment
+import com.nyx.ai.terminal.TerminalRepository
+import com.nyx.ai.terminal.TerminalResultKind
+import com.nyx.ai.data.TerminalCommandEntity
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
 import com.nyx.ai.data.ExecutionLogEntity
@@ -28,6 +37,7 @@ import com.nyx.ai.settings.CredentialTransportPolicy
 import com.nyx.ai.settings.CredentialVault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -74,6 +84,17 @@ data class NyxState(
     val objectiveArtifacts: List<com.nyx.ai.data.ObjectiveArtifactEntity> = emptyList(),
     val objectiveRunning: Boolean = false,
     val objectiveStreaming: String = "",
+    val objectivePhase: String = "idle",
+    val terminalHistory: List<TerminalCommandEntity> = emptyList(),
+    val terminalProfile: EnvironmentProfile? = null,
+    val terminalDiscovering: Boolean = false,
+    val terminalRunning: Boolean = false,
+    val terminalOutput: String = "",
+    val terminalMessage: String = "",
+    val terminalPendingCommand: String? = null,
+    val terminalEnvironment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST,
+    val terminalToolsEnabled: Boolean = false,
+    val terminalWorkspace: String = "",
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
@@ -92,10 +113,13 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             selectedModel = prefs.getString("selected_model", "") ?: "",
             temperature = prefs.getFloat("temperature", 0.7f),
             contextLength = prefs.getInt("context_length", 4096),
-            cpuThreads = prefs.getInt("cpu_threads", 4)
+            cpuThreads = prefs.getInt("cpu_threads", 4),
+            terminalToolsEnabled = prefs.getBoolean(ObjectiveExecutionService.KEY_TERMINAL_ENABLED, false),
+            terminalWorkspace = prefs.getString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, "") ?: "",
         )
     )
     val state: StateFlow<NyxState> = _state.asStateFlow()
+    private val terminalRepository = TerminalRepository(application, db)
     private var generationJob: Job? = null
     private var agentJob: Job? = null
     private var workflowJob: Job? = null
@@ -478,22 +502,18 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (s.selectedModel.isBlank() || !s.connected) { _state.update { it.copy(error = "Connect to an inference model before planning an objective.") }; return }
         if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required.") }; return }
         if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is running. Stop it before starting an objective.") }; return }
-        objectiveJob = viewModelScope.launch {
+        viewModelScope.launch {
             val row = ObjectiveEntity(title = clean.take(72), goal = clean, status = "planning", agentId = agent.id, modelId = s.selectedModel)
             db.objectiveDao().upsertObjective(row)
             selectObjective(row.id)
             _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
-            try {
-                ObjectiveCoordinator(app, db, inferenceClient(s.endpoint)).planAndExecute(row, agent, options()) { token ->
-                    _state.update { old -> old.copy(objectiveStreaming = (old.objectiveStreaming + token).takeLast(12_000)) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _state.update { it.copy(error = e.message ?: "Objective execution needs attention.") }
-            } finally { _state.update { it.copy(objectiveRunning = false, objectiveStreaming = "") } }
+            ObjectiveExecutionService.start(app, row.id)
+            delay(8_000)
+            if (!ExecutionMonitor.state.value.running) {
+                releaseInference()
+                _state.update { it.copy(objectiveRunning = false, error = "The execution service did not start. Check notification permission and try again.") }
+            }
         }
-        objectiveJob?.invokeOnCompletion { releaseInference() }
     }
 
     fun selectObjective(id: String) {
@@ -516,58 +536,173 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val agent = s.agents.firstOrNull { it.id == objective.agentId } ?: run { _state.update { it.copy(error = "The objective's agent is unavailable.") }; return }
         if (s.selectedModel.isBlank() || !s.connected || !endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "Connect to an allowed inference endpoint before resuming.") }; return }
         if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is running.") }; return }
-        objectiveJob = viewModelScope.launch {
-            _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
-            try {
-                val client = inferenceClient(s.endpoint)
-                val tasks = db.objectiveDao().getTasks(id)
-                if (tasks.isEmpty()) {
-                    if (!userApprovedRetry && objective.status == "needs_attention") throw IllegalStateException("Review the objective and explicitly approve restarting its plan.")
-                    ObjectiveCoordinator(app, db, client).planAndExecute(objective.copy(status = "planning", modelId = s.selectedModel), agent, options()) { token ->
-                        _state.update { old -> old.copy(objectiveStreaming = (old.objectiveStreaming + token).takeLast(12_000)) }
-                    }
-                } else {
-                    val uncertain = tasks.any { it.status == "needs_review" || it.status == "failed" }
-                    if (uncertain && !userApprovedRetry) throw IllegalStateException("This objective contains a failed or interrupted task. Review it and explicitly approve retry first.")
-                    ObjectiveCoordinator(app, db, client).resumeAfterExplicitReview(id, agent, options()) { token ->
-                        _state.update { old -> old.copy(objectiveStreaming = (old.objectiveStreaming + token).takeLast(12_000)) }
-                    }
+        viewModelScope.launch {
+            val tasks = db.objectiveDao().getTasks(id)
+            if (tasks.isEmpty()) {
+                if (!userApprovedRetry && objective.status == "needs_attention") {
+                    releaseInference()
+                    _state.update { it.copy(error = "Review the objective and explicitly approve restarting its plan.") }
+                    return@launch
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { _state.update { it.copy(error = e.message ?: "Objective could not be resumed.") } }
-            finally { _state.update { it.copy(objectiveRunning = false, objectiveStreaming = "") } }
+                db.objectiveDao().upsertObjective(objective.copy(status = "planning", modelId = s.selectedModel, updatedAt = System.currentTimeMillis()))
+            } else {
+                val uncertain = tasks.any { it.status == "needs_review" || it.status == "failed" }
+                if (uncertain && !userApprovedRetry) {
+                    releaseInference()
+                    _state.update { it.copy(error = "This objective contains a failed or interrupted task. Review it and explicitly approve retry first.") }
+                    return@launch
+                }
+            }
+            _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
+            ObjectiveExecutionService.start(app, id)
+            delay(8_000)
+            if (!ExecutionMonitor.state.value.running) {
+                releaseInference()
+                _state.update { it.copy(objectiveRunning = false, error = "The execution service did not start. Check notification permission and try again.") }
+            }
         }
-        objectiveJob?.invokeOnCompletion { releaseInference() }
     }
 
-    fun pauseObjective() { objectiveJob?.cancel(); objectiveJob = null }
+    fun pauseObjective() {
+        ObjectiveExecutionService.pause(app)
+        _state.update { it.copy(objectivePhase = "pausing") }
+    }
 
     fun cancelObjective(id: String) {
+        ObjectiveExecutionService.cancel(app)
         viewModelScope.launch {
-            val running = objectiveJob
-            running?.cancel()
-            running?.join()
-            objectiveJob = null
+            delay(1_500)
             val current = db.objectiveDao().getObjective(id) ?: return@launch
-            db.objectiveDao().upsertObjective(current.copy(status = "cancelled", updatedAt = System.currentTimeMillis(), error = "Cancelled by user."))
-            db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "cancelled", "Cancelled by user; any in-flight tool may require review.", System.currentTimeMillis()))
+            if (current.status == "planning" || current.status == "running") {
+                db.objectiveDao().upsertObjective(current.copy(status = "cancelled", updatedAt = System.currentTimeMillis(), error = "Cancelled by user."))
+                db.objectiveDao().appendEvent(
+                    ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "cancelled", "Cancelled by user; any in-flight tool may require review.", System.currentTimeMillis())
+                )
+            }
         }
     }
 
     private suspend fun recoverInterruptedObjectives() {
-        val dao = db.objectiveDao()
-        for (objective in dao.observeAll().first()) {
-            if (objective.status !in setOf("planning", "running")) continue
-            val tasks = dao.getTasks(objective.id)
-            var uncertain = false
-            tasks.filter { it.status == "running" || it.status == "verifying" }.forEach { task ->
-                uncertain = true
-                dao.upsertTask(task.copy(status = "needs_review", error = "The app process ended while a task was active. Review possible side effects before retrying.", updatedAt = System.currentTimeMillis()))
-                dao.appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), objective.id, task.id, "recovered_interruption", "Execution was not automatically replayed.", System.currentTimeMillis()))
+        runCatching { ExecutionRecovery.recover(db) }
+    }
+
+    init {
+        viewModelScope.launch {
+            ExecutionMonitor.state.collect { snapshot ->
+                _state.update { it.copy(objectiveRunning = snapshot.running, objectivePhase = snapshot.phase) }
+                if (!snapshot.running) releaseInference()
             }
-            val status = if (uncertain) "needs_attention" else "paused"
-            dao.upsertObjective(objective.copy(status = status, updatedAt = System.currentTimeMillis(), error = if (uncertain) "A task was interrupted; review it before resuming." else "Planning was interrupted before tools ran; select Resume to plan again."))
         }
+        viewModelScope.launch {
+            terminalRepository.observeHistory(60).collect { rows -> _state.update { it.copy(terminalHistory = rows) } }
+        }
+    }
+
+    // ---- Terminal -------------------------------------------------------------------------
+
+    fun refreshTerminalEnvironment() {
+        if (_state.value.terminalDiscovering) return
+        viewModelScope.launch {
+            _state.update { it.copy(terminalDiscovering = true, terminalMessage = "Probing Termux…") }
+            val profile = withContext(Dispatchers.IO) { terminalRepository.discover() }
+            _state.update {
+                it.copy(
+                    terminalDiscovering = false,
+                    terminalProfile = profile,
+                    terminalMessage = profile.detail ?: if (profile.hostAvailable) "Termux host is ready." else "Termux is unavailable.",
+                )
+            }
+        }
+    }
+
+    fun requestTerminalCommand(command: String) {
+        val clean = command.trim().take(CommandPolicy.MAX_COMMAND_CHARS)
+        if (clean.isBlank()) return
+        val assessment = CommandPolicy.assess(clean)
+        if (assessment.blocked) {
+            _state.update { it.copy(terminalMessage = assessment.summary) }
+            return
+        }
+        if (assessment.requiresConfirmation) {
+            _state.update { it.copy(terminalPendingCommand = clean, terminalMessage = assessment.summary) }
+            return
+        }
+        executeTerminal(clean, approved = false)
+    }
+
+    fun confirmTerminalCommand() {
+        val pending = _state.value.terminalPendingCommand ?: return
+        executeTerminal(pending, approved = true)
+    }
+
+    fun dismissTerminalCommand() {
+        _state.update { it.copy(terminalPendingCommand = null, terminalMessage = "") }
+    }
+
+    fun setTerminalEnvironment(environment: TerminalEnvironment) {
+        _state.update { it.copy(terminalEnvironment = environment) }
+    }
+
+    private fun executeTerminal(command: String, approved: Boolean) {
+        if (_state.value.terminalRunning) return
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    terminalRunning = true,
+                    terminalOutput = "",
+                    terminalPendingCommand = null,
+                    terminalMessage = "Running…",
+                )
+            }
+            val environment = _state.value.terminalEnvironment
+            val result = withContext(Dispatchers.IO) {
+                terminalRepository.execute(
+                    command = command,
+                    environment = environment,
+                    workingDirectory = null,
+                    timeoutSeconds = 120,
+                    approvedByUser = approved,
+                )
+            }
+            _state.update {
+                it.copy(
+                    terminalRunning = false,
+                    terminalOutput = formatTerminalResult(result),
+                    terminalMessage = result.message ?: if (result.isSuccess) "Command completed." else "Command did not succeed.",
+                )
+            }
+        }
+    }
+
+    fun clearTerminalHistory() {
+        viewModelScope.launch { terminalRepository.clearHistory() }
+    }
+
+    fun setTerminalToolsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(ObjectiveExecutionService.KEY_TERMINAL_ENABLED, enabled).apply()
+        _state.update { it.copy(terminalToolsEnabled = enabled) }
+    }
+
+    fun setTerminalWorkspace(path: String) {
+        val clean = path.trim().take(4_096)
+        prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, clean).apply()
+        _state.update { it.copy(terminalWorkspace = clean) }
+    }
+
+    private fun formatTerminalResult(result: TerminalCommandResult): String = buildString {
+        append(result.kind.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() })
+        result.exitCode?.let { append(" · exit ").append(it) }
+        append("\n\n")
+        if (result.stdout.isNotBlank()) {
+            append(result.stdout.take(24_000))
+            if (result.stdout.length > 24_000) append("\n[stdout truncated]")
+        } else {
+            append("(no stdout)")
+        }
+        if (result.stderr.isNotBlank()) {
+            append("\n\nstderr:\n").append(result.stderr.take(8_000))
+        }
+        result.message?.takeIf { it.isNotBlank() }?.let { append("\n\n").append(it.take(600)) }
     }
 
     fun runAgent() {

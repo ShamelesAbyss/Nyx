@@ -180,6 +180,33 @@ interface ObjectiveDao {
     @Query("SELECT * FROM objectives WHERE id = :id LIMIT 1")
     suspend fun getObjective(id: String): ObjectiveEntity?
 
+    @Query("SELECT * FROM objective_tasks WHERE id = :id LIMIT 1")
+    suspend fun getTask(id: String): ObjectiveTaskEntity?
+
+    @Query("SELECT * FROM objectives WHERE id = :id LIMIT 1")
+    fun observeObjective(id: String): Flow<ObjectiveEntity?>
+
+    @Query("SELECT * FROM objectives WHERE status = 'running' ORDER BY updatedAt DESC")
+    suspend fun getRunningObjectives(): List<ObjectiveEntity>
+
+    @Query(
+        "UPDATE objectives SET leaseOwner = :owner, leaseExpiresAt = :expiresAt " +
+            "WHERE id = :id AND (leaseOwner IS NULL OR leaseExpiresAt < :now OR leaseOwner = :owner)"
+    )
+    suspend fun tryAcquireLease(id: String, owner: String, now: Long, expiresAt: Long): Int
+
+    @Query(
+        "UPDATE objectives SET leaseOwner = NULL, leaseExpiresAt = NULL " +
+            "WHERE id = :id AND leaseOwner = :owner"
+    )
+    suspend fun releaseLease(id: String, owner: String): Int
+
+    @Query(
+        "UPDATE objectives SET leaseOwner = NULL, leaseExpiresAt = NULL " +
+            "WHERE leaseExpiresAt IS NOT NULL AND leaseExpiresAt < :now"
+    )
+    suspend fun clearExpiredLeases(now: Long): Int
+
     @Upsert
     suspend fun upsertTasks(tasks: List<ObjectiveTaskEntity>)
 
@@ -221,4 +248,85 @@ interface ObjectiveDao {
             "ORDER BY createdAt ASC, id ASC"
     )
     suspend fun getArtifacts(objectiveId: String): List<ObjectiveArtifactEntity>
+}
+
+@Dao
+interface TerminalCommandDao {
+    @Upsert
+    suspend fun upsert(command: TerminalCommandEntity)
+
+    @Query("SELECT * FROM terminal_commands ORDER BY startedAt DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<TerminalCommandEntity>>
+
+    @Query(
+        "SELECT * FROM terminal_commands WHERE objectiveId = :objectiveId " +
+            "ORDER BY startedAt DESC"
+    )
+    fun observeForObjective(objectiveId: String): Flow<List<TerminalCommandEntity>>
+
+    @Query("SELECT * FROM terminal_commands WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): TerminalCommandEntity?
+
+    @Query("DELETE FROM terminal_commands")
+    suspend fun deleteAll()
+
+    @Query("DELETE FROM terminal_commands WHERE startedAt < :cutoff")
+    suspend fun deleteOlderThan(cutoff: Long)
+}
+
+@Dao
+interface TaskEvidenceDao {
+    @Insert
+    suspend fun insert(evidence: TaskEvidenceEntity)
+
+    @Insert
+    suspend fun insertAll(evidence: List<TaskEvidenceEntity>)
+
+    @Query(
+        "SELECT * FROM task_evidence WHERE taskId = :taskId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    fun observeForTask(taskId: String): Flow<List<TaskEvidenceEntity>>
+
+    @Query(
+        "SELECT * FROM task_evidence WHERE taskId = :taskId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    suspend fun getForTask(taskId: String): List<TaskEvidenceEntity>
+}
+
+@Dao
+interface ContextRecordDao {
+    @Insert
+    suspend fun insert(record: ContextRecordEntity)
+
+    @Query(
+        "SELECT * FROM context_records WHERE objectiveId = :objectiveId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    suspend fun listForObjective(objectiveId: String): List<ContextRecordEntity>
+
+    @Query(
+        "SELECT * FROM context_records WHERE objectiveId = :objectiveId AND taskId = :taskId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    suspend fun listForTask(objectiveId: String, taskId: String): List<ContextRecordEntity>
+
+    @Query("DELETE FROM context_records WHERE objectiveId = :objectiveId")
+    suspend fun deleteForObjective(objectiveId: String)
+}
+
+@Dao
+interface ExecutionLeaseDao {
+    @Upsert
+    suspend fun upsert(lease: ExecutionLeaseEntity)
+
+    @Query("SELECT * FROM execution_leases WHERE objectiveId = :objectiveId LIMIT 1")
+    suspend fun get(objectiveId: String): ExecutionLeaseEntity?
+
+    @Query("DELETE FROM execution_leases WHERE objectiveId = :objectiveId")
+    suspend fun delete(objectiveId: String)
+
+    @Query("DELETE FROM execution_leases WHERE expiresAt < :now")
+    suspend fun deleteExpired(now: Long)
 }

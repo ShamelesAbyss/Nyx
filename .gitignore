@@ -12,3 +12,7 @@ local.properties
 *.jks
 *.keystore
 keystore.properties
+
+# Local Python bytecode
+__pycache__/
+*.pyc

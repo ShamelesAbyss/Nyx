@@ -3,6 +3,7 @@ package com.nyx.ai.data
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 import java.util.UUID
 
@@ -119,7 +120,10 @@ data class ObjectiveEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val completedAt: Long? = null,
-    val error: String? = null
+    val error: String? = null,
+    @ColumnInfo(defaultValue = "1") val parallelism: Int = 1,
+    val leaseOwner: String? = null,
+    val leaseExpiresAt: Long? = null
 )
 
 /** One planned DAG node; dependsOnJson stores the stable IDs of predecessor tasks. */
@@ -158,7 +162,14 @@ data class ObjectiveTaskEntity(
     /** Durable resumable state for a task interrupted between attempts. */
     val checkpointJson: String? = null,
     /** For example pending, passed, failed, or skipped. */
-    val verificationStatus: String = "pending"
+    val verificationStatus: String = "pending",
+    @ColumnInfo(defaultValue = "0") val priority: Int = 0,
+    @ColumnInfo(defaultValue = "'inference'") val workerKind: String = "inference",
+    val idempotencyKey: String? = null,
+    val failureSignature: String? = null,
+    val evidenceJson: String? = null,
+    val startedAt: Long? = null,
+    val finishedAt: Long? = null
 )
 
 /** Append-only lifecycle, tool invocation/observation, and verification records. */
@@ -227,4 +238,93 @@ data class ObjectiveArtifactEntity(
     val contentType: String = "text/plain",
     val content: String,
     val createdAt: Long = System.currentTimeMillis()
+)
+
+/** A user-approved or policy-authorized terminal invocation and its captured result. */
+@Entity(
+    tableName = "terminal_commands",
+    indices = [Index(value = ["startedAt"]), Index(value = ["objectiveId", "startedAt"])]
+)
+data class TerminalCommandEntity(
+    @PrimaryKey val id: String,
+    val objectiveId: String?,
+    val taskId: String?,
+    val environment: String,
+    val commandPath: String,
+    val argumentsJson: String,
+    val workingDirectory: String?,
+    val status: String,
+    val exitCode: Int?,
+    val stdout: String,
+    val stderr: String,
+    val timeoutMillis: Long,
+    val approvedByUser: Boolean,
+    val startedAt: Long,
+    val finishedAt: Long?,
+    val error: String?
+)
+
+/** Verification evidence attached to an objective task. */
+@Entity(
+    tableName = "task_evidence",
+    foreignKeys = [
+        ForeignKey(
+            entity = ObjectiveEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["objectiveId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = ObjectiveTaskEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["taskId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["taskId", "createdAt"]), Index(value = ["objectiveId", "createdAt"])]
+)
+data class TaskEvidenceEntity(
+    @PrimaryKey val id: String,
+    val objectiveId: String,
+    val taskId: String,
+    val kind: String,
+    val target: String?,
+    val expected: String?,
+    val actual: String?,
+    val passed: Boolean,
+    val createdAt: Long
+)
+
+/** A reusable contextual note or artifact location associated with an objective. */
+@Entity(
+    tableName = "context_records",
+    foreignKeys = [
+        ForeignKey(
+            entity = ObjectiveEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["objectiveId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["objectiveId", "createdAt"])]
+)
+data class ContextRecordEntity(
+    @PrimaryKey val id: String,
+    val objectiveId: String,
+    val taskId: String?,
+    val kind: String,
+    val title: String,
+    val filePath: String,
+    val summary: String,
+    val createdAt: Long
+)
+
+/** Ownership and heartbeat state for a distributed objective executor. */
+@Entity(tableName = "execution_leases")
+data class ExecutionLeaseEntity(
+    @PrimaryKey val objectiveId: String,
+    val ownerId: String,
+    val expiresAt: Long,
+    val updatedAt: Long,
+    val heartbeatAt: Long
 )

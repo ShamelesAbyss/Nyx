@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — Real execution engine
+
+- Moved objective execution out of the ViewModel into a `dataSync` foreground service with durable leases, heartbeats, notification controls, and startup reconciliation. Closing the UI no longer cancels a running objective; process death still stops it, and interrupted tasks are never replayed automatically.
+- Added dependency-aware concurrent scheduling (`ConcurrentTaskScheduler`, `ResourcePolicy`) bounded by device RAM, thermal status, battery, storage, and per-worker-kind limits. Blocking propagates transitively through stalled subgraphs.
+- Added locally checked completion evidence: exit codes, expected/forbidden output, file existence, file contents, and SHA-256. A model's prose alone never marks a task complete, and any failed or denied tool call fails verification.
+- Added conservative recovery: bounded retry only for read-only/verification work, permanent failure on a repeated identical failure signature, and mandatory human review for anything that may have changed external state.
+- Added a real Termux bridge: environment discovery (host, PREFIX, HOME, tools, installed PRoot distros), a command-risk policy that blocks root/protected-Android operations, per-command approval for mutating commands, hard `timeout` supervision when available, and persisted stdout/stderr/exit-code history.
+- Added workspace-scoped agent tools: `terminal_run`, `file_read`, `file_write`, `file_list`, `file_search`, `project_detect`, `build_run`, `test_run`, plus a `FileProbe` used by verification. Terminal access is off by default and requires an explicit toggle and workspace path.
+- Added provider-neutral inference (`InferenceProvider`, `ProviderFactory`, capability cache) shared by chat, agents, and the engine, with the existing Ollama and OpenAI-compatible transports and Keystore credential path unchanged.
+- Added a filesystem-backed context store with bounded, relevance-ranked context assembly and persisted context records, plus persisted task evidence rows.
+- Added Room schema v3 (additive 2→3 migration): task priority/worker kind/idempotency/failure signature/evidence, objective lease columns, terminal command history, task evidence, context records, and execution leases.
+- Added a Terminal panel in the Autonomy screen and 71 new JVM tests covering command policy, shell construction, evidence verification, recovery, environment parsing, scheduling, context assembly, and provider capabilities. Total JVM tests: 98, all passing.
+- Not implemented in this release: native GGUF/llama.cpp inference, mid-process resumption of a killed objective, real Debian/PRoot validation on a device, multi-device sync, and any autonomous publication, credential, or privilege action.
+
 ## 0.4.0 — Durable objectives and execution foundations
 
 - Added durable objectives, task DAGs, lifecycle statuses, attempt budgets, checkpoints, structured tool invocation/observation events, and text artifacts in Room schema v2.

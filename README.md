@@ -2,17 +2,20 @@
 
 **Your intelligence. Your device. Your rules.**
 
-NYX 0.4.0 is a native Android, local-first AI workstation that preserves the previous chat, Ollama/OpenAI-compatible inference, agent, workflow, credential-security, and adaptive UI features while adding a durable objective-execution foundation.
+NYX 0.5.0 is a native Android, local-first AI workstation with a real execution engine: a foreground service owns durable objectives, schedules dependency-ready tasks within device limits, runs allowlisted tools, and verifies completion against locally observed evidence instead of model claims.
 
 Download the [NYX v0.4.0 APK and complete source archive](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.4.0). The APK is debug-signed and is not a production/store-signed build. This project retains its Apache-2.0 license; see [LICENSE](LICENSE).
 
-## v0.4.0 highlights
+## v0.5.0 execution engine
 
-The Autonomy screen accepts an objective and asks the selected local model for a bounded task graph. A strict JSON validator limits the plan to 12 tasks, rejects malformed fields and dependency cycles, assigns stable task IDs locally, and ignores model-supplied agent/tool/action choices. One selected agent and its existing safe tool allowlist execute tasks sequentially. Objective, task, status, attempt, checkpoint, tool invocation/observation, and artifact data are persisted in Room. Failed or interrupted work is not automatically repeated; resumption of uncertain tasks requires user review. The local completion checks are modest and do not prove the model's claims are semantically correct.
+- **Durable ownership.** Objectives run in a `dataSync` foreground service with leases and heartbeats. The ViewModel only starts, pauses, cancels, and observes Room. Closing the UI no longer cancels work; process death stops it, and interrupted tasks are marked uncertain and never replayed automatically.
+- **Dependency-aware concurrency.** A validated DAG is scheduled with per-worker-kind limits (inference, terminal, filesystem, verification, development) derived from RAM, thermal status, battery, and storage.
+- **Evidence-based completion.** Exit codes, required or forbidden output, file existence, file contents, and SHA-256 are checked locally. A failed or denied tool call fails the task regardless of what the model says.
+- **Conservative recovery.** Automatic retry only for read-only verification work; a repeated identical failure fails permanently; anything that may have changed state requires human review.
+- **Real terminal, bounded.** Termux `RUN_COMMAND` executes real commands with real exit codes. Root, protected-Android, disk, and privilege operations are blocked. Mutating commands require explicit approval, and autonomous terminal tools are off by default with a user-set workspace.
+- **Provider-neutral inference.** Chat, agents, and objectives share one `InferenceProvider` abstraction over the existing Ollama and OpenAI-compatible `/v1` transports, including the Keystore-protected Bearer key path.
 
-Room schema v2 adds objective tables through an additive 1→2 migration. The Android test source includes a legacy-data preservation fixture. Settings → About reads the installed app's package metadata; a Python release checker cross-checks Gradle metadata, APK manifest, filenames, and versioned docs.
-
-The source also contains a standalone Termux RUN_COMMAND adapter core with request validation, host/PRoot environment descriptors, callback classification and bounded results. It is not yet wired into the UI or objective agent tools, and it does not supervise/terminate a Termux process. No autonomous shell access is enabled.
+Room schema v3 adds lease columns, task worker/priority/evidence/failure fields, terminal command history, task evidence, context records, and execution leases through an additive 2→3 migration. Settings → About reads the installed app's package metadata; a Python release checker cross-checks Gradle metadata, APK manifest, filenames, and versioned docs.
 
 ## Existing capabilities
 
@@ -20,7 +23,7 @@ NYX uses Kotlin, Jetpack Compose, Material 3, Room, coroutines, and OkHttp (`com
 
 ## Important limitations
 
-This is an execution foundation, not a Manus-class autonomous computer. Task DAGs are limited to 12 and model tasks execute serially. There is no dynamic replanning, 20-task management queue, parallel tool worker, filesystem-backed context/memory store, long-history compression, provider abstraction, resource-aware scheduler, or independent WorkManager/foreground-service execution. The ViewModel survives Activity recreation but not process death; on restart, Room records are recovered conservatively and uncertain tasks need review. Termux bridge setup and real execution are not yet integrated or device-verified. Debian PRoot, native GGUF/llama.cpp inference, Android UI automation, full software-development workflows, and production signing are not included. Thermal/RAM diagnostics remain snapshots, not scheduling controls.
+This is a real but bounded execution engine, not a Manus-class autonomous computer. Plans are capped at 40 tasks. There is no dynamic replanning during a run, no mid-process resumption of a killed objective, no multi-device sync, and no autonomous publication, credential, or privilege action. Terminal execution requires a correctly configured Termux installation and has not been verified on a physical device here; Debian/PRoot support is implemented but device-unverified. Native GGUF/llama.cpp inference, Android UI automation, and production signing are not included.
 
 ## Build and verify
 

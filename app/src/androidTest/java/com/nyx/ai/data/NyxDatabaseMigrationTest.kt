@@ -24,7 +24,7 @@ class NyxDatabaseMigrationTest {
         createVersionOneDatabase(databaseFile)
 
         val roomDatabase = Room.databaseBuilder(context, NyxDatabase::class.java, databaseName)
-            .addMigrations(NyxDatabase.MIGRATION_1_2)
+            .addMigrations(NyxDatabase.MIGRATION_1_2, NyxDatabase.MIGRATION_2_3)
             .allowMainThreadQueries()
             .build()
         try {
@@ -107,6 +107,9 @@ class NyxDatabaseMigrationTest {
 
             assertEquals(objective, objectiveDao.getObjective(objective.id))
             assertEquals(task, objectiveDao.getTasks(objective.id).single())
+            assertEquals(task, objectiveDao.getTask(task.id))
+            assertEquals(0, objectiveDao.getTask(task.id)?.priority)
+            assertEquals("inference", objectiveDao.getTask(task.id)?.workerKind)
             assertEquals("task-v2", objectiveDao.observeTasks(objective.id).first().single().id)
             val observedEvent = objectiveDao.observeEvents(objective.id).first().single()
             assertEquals("test-tool", observedEvent.toolName)
@@ -115,6 +118,75 @@ class NyxDatabaseMigrationTest {
             assertEquals("Persisted artifact", objectiveDao.getArtifacts(objective.id).single().content)
             assertEquals("artifact-v2", objectiveDao.observeArtifacts(objective.id).first().single().id)
             assertEquals(objective, objectiveDao.observeAll().first().single())
+            assertEquals(1, objectiveDao.getObjective(objective.id)?.parallelism)
+            assertEquals(objective, objectiveDao.observeObjective(objective.id).first())
+            assertEquals(listOf(objective), objectiveDao.getRunningObjectives())
+
+            val terminalCommand = TerminalCommandEntity(
+                id = "terminal-v3",
+                objectiveId = objective.id,
+                taskId = task.id,
+                environment = "test",
+                commandPath = "/bin/echo",
+                argumentsJson = "[\"hello\"]",
+                workingDirectory = null,
+                status = "completed",
+                exitCode = 0,
+                stdout = "hello",
+                stderr = "",
+                timeoutMillis = 1_000L,
+                approvedByUser = true,
+                startedAt = 1_500L,
+                finishedAt = 1_510L,
+                error = null
+            )
+            val terminalCommands = roomDatabase.terminalCommandDao()
+            terminalCommands.upsert(terminalCommand)
+            assertEquals(terminalCommand, terminalCommands.getById(terminalCommand.id))
+            assertEquals(terminalCommand, terminalCommands.observeRecent(10).first().single())
+            assertEquals(terminalCommand, terminalCommands.observeForObjective(objective.id).first().single())
+
+            val evidence = TaskEvidenceEntity(
+                id = "evidence-v3",
+                objectiveId = objective.id,
+                taskId = task.id,
+                kind = "assertion",
+                target = "output",
+                expected = "hello",
+                actual = "hello",
+                passed = true,
+                createdAt = 1_600L
+            )
+            val evidenceDao = roomDatabase.taskEvidenceDao()
+            evidenceDao.insert(evidence)
+            assertEquals(listOf(evidence), evidenceDao.getForTask(task.id))
+            assertEquals(listOf(evidence), evidenceDao.observeForTask(task.id).first())
+
+            val contextRecord = ContextRecordEntity(
+                id = "context-v3",
+                objectiveId = objective.id,
+                taskId = task.id,
+                kind = "file",
+                title = "Output",
+                filePath = "/tmp/output.txt",
+                summary = "Command output",
+                createdAt = 1_700L
+            )
+            val contextRecords = roomDatabase.contextRecordDao()
+            contextRecords.insert(contextRecord)
+            assertEquals(listOf(contextRecord), contextRecords.listForObjective(objective.id))
+            assertEquals(listOf(contextRecord), contextRecords.listForTask(objective.id, task.id))
+
+            val lease = ExecutionLeaseEntity(
+                objectiveId = objective.id,
+                ownerId = "worker-v3",
+                expiresAt = 2_000L,
+                updatedAt = 1_800L,
+                heartbeatAt = 1_850L
+            )
+            val leases = roomDatabase.executionLeaseDao()
+            leases.upsert(lease)
+            assertEquals(lease, leases.get(objective.id))
         } finally {
             roomDatabase.close()
             context.deleteDatabase(databaseName)

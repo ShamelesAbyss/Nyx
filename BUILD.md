@@ -1,4 +1,4 @@
-# Building NYX 0.4.0
+# Building NYX 0.5.0
 
 ## Requirements
 
@@ -16,12 +16,12 @@ From the project root:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package identity: `com.nyx.ai`; versionCode 4/versionName 0.4.0; min API 26; target API 35. Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, and settings; preserve the prior key and back up user data first.
+Package identity: `com.nyx.ai`; versionCode 5/versionName 0.5.0; min API 26; target API 35. Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, and settings; preserve the prior key and back up user data first.
 
 ## Automated checks
 
-- `testDebugUnitTest`: plan JSON/DAG validation, scheduler rules, local request/transport policies, credentials, Termux request/result protocol, and related JVM tests.
-- `assembleDebugAndroidTest`: compiles Android instrumentation tests, including v1→v2 Room migration/legacy-record preservation and Keystore tests. Compilation is not execution; run `./gradlew --no-daemon connectedDebugAndroidTest` with a connected Android runtime to execute.
+- `testDebugUnitTest`: 98 JVM tests covering plan JSON/DAG validation, concurrent scheduling and resource policy, command-risk policy and shell construction, evidence verification and recovery decisions, context storage/ranking, provider capabilities, credential transport, and authenticated request routing.
+- `assembleDebugAndroidTest`: compiles Android instrumentation tests, including the v1→v3 Room migration/legacy-record preservation fixture and Keystore tests. Compilation is not execution; run `./gradlew --no-daemon connectedDebugAndroidTest` with a connected Android runtime to execute.
 - No physical Pixel/GrapheneOS/Termux/Ollama device is available in the build environment. See `TEST_RESULTS.md` for exact counts and unverified behavior.
 
 ## Release integrity
