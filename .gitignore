@@ -13,6 +13,12 @@ local.properties
 *.keystore
 keystore.properties
 
-# Local Python bytecode
+# Native build products and private model data
+.cxx/
+.externalNativeBuild/
+*.gguf
+*.safetensors
+*.apk
+*.aab
 __pycache__/
 *.pyc

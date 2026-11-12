@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -109,6 +110,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nyx.ai.terminal.TerminalEnvironment
+import com.nyx.ai.nativeinference.NativePhase
+import com.nyx.ai.network.InferenceFabric
+import com.nyx.ai.settings.MemoryTelemetry
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
@@ -131,11 +135,7 @@ private val Red = Color(0xFFFF8E9B)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4101)
-        }
+        enableEdgeToEdge()
         setContent { NyxTheme { NyxApp() } }
     }
 }
@@ -236,16 +236,18 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
     var command by rememberSaveable { mutableStateOf("") }
     var workspace by rememberSaveable { mutableStateOf(state.terminalWorkspace) }
     val profile = state.terminalProfile
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.refreshTerminalEnvironment() }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SectionIntro(
             "Terminal bridge",
-            "Run real commands through Termux. Nothing is simulated: stdout, stderr, and exit codes come from the Termux RUN_COMMAND callback. Destructive and privileged commands are blocked; mutating commands require approval."
+            "Run real commands through Termux. Nothing is simulated: stdout, stderr, and exit codes come from the Termux RUN_COMMAND callback. Destructive and privileged commands are blocked; every manually entered command requires exact approval. A risk classifier is not a shell sandbox."
         )
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { permission.launch("com.termux.permission.RUN_COMMAND") }) { Text("Grant Termux command permission") }
                 Text("TERMUX STATUS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
                 val readiness = profile
                 Text(
@@ -316,7 +318,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("AUTONOMOUS WORKSPACE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                Text("Agents can use terminal and file tools only when this is enabled and a workspace is set. Destructive commands stay blocked.", color = TextMuted, fontSize = 11.sp)
+                Text("Enabling authorizes bounded source edits and execution of existing build/test scripts for objectives in this workspace. Only approve projects you trust: scripts can access other Termux files or the network. No raw model shell, installs, commits or publishing.", color = TextMuted, fontSize = 11.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = state.terminalToolsEnabled, onCheckedChange = vm::setTerminalToolsEnabled)
                     Text("Allow terminal tools for objectives", color = TextMain, fontSize = 12.sp)
@@ -363,6 +365,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
 private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
     var goal by rememberSaveable { mutableStateOf("") }
     var confirmResume by rememberSaveable { mutableStateOf(false) }
+    var development by rememberSaveable { mutableStateOf(false) }
     val selected = state.objectives.firstOrNull { it.id == state.selectedObjectiveId }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionIntro("Autonomy control center", "Create a goal, let NYX build a bounded dependency graph, and review each real agent/tool result. Execution runs in a foreground service; terminal tools are optional and off by default.")
@@ -371,7 +374,12 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
                 Text("NEW OBJECTIVE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
                 OutlinedTextField(value = goal, onValueChange = { goal = it.take(8_000) }, modifier = Modifier.fillMaxWidth(), label = { Text("What should NYX accomplish?") }, minLines = 3, maxLines = 6, shape = RoundedCornerShape(14.dp))
                 Text("Uses the selected agent, current model, and its allowlisted tools. Plans are validated, limited to ${com.nyx.ai.autonomy.ObjectivePlanValidator.MAX_TASKS} tasks, and scheduled by dependency and device resources.", color = TextMuted, fontSize = 11.sp)
-                Button(onClick = { vm.createObjective(goal); goal = "" }, enabled = goal.isNotBlank() && !state.objectiveRunning, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = development, onCheckedChange = { development = it }, enabled = state.terminalToolsEnabled)
+                    Text("Use verified project repair loop", color = TextMain, fontSize = 12.sp)
+                }
+                if (development) Text("Uses the saved trusted workspace/environment, detected existing build/test commands and configured repair limits. Baseline passing does not implement a new feature. No model shell, installs or publishing.", color = TextMuted, fontSize = 11.sp)
+                Button(onClick = { vm.createObjective(goal, development); goal = "" }, enabled = goal.isNotBlank() && !state.objectiveRunning, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) {
                     Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(7.dp)); Text(if (state.objectiveRunning) "Objective running" else "Plan and execute")
                 }
             }
@@ -432,7 +440,7 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
                     }
                 }
             }
-            Text("Completion requires locally checked evidence: exit codes, expected output, file existence/content, or checksums. A model's claim alone never marks a task complete. Failed or interrupted actions require explicit review before retry.", color = TextMuted, fontSize = 10.sp)
+            Text("Completion requires locally checked evidence: exit codes, expected output, file existence/content, or checksums. Inference-only tasks establish output existence, not semantic correctness; prose never proves tool completion. Failed or interrupted actions require explicit review before retry.", color = TextMuted, fontSize = 10.sp)
         }
     }
     if (confirmResume && selected != null) AlertDialog(
@@ -447,7 +455,7 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
 @Composable
 private fun AppHeader(tab: String, connected: Boolean, model: String, endpoint: String) {
     val host = Uri.parse(endpoint).host?.lowercase().orEmpty()
-    val onDevice = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
+    val onDevice = endpoint == "native://local" || host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -613,61 +621,56 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, generating: Boole
 
 @Composable
 private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit) {
+    val busy = state.isGenerating || state.agentRunning || state.workflowRunning || state.objectiveRunning || state.nativeStatus.phase == NativePhase.LOADING
+    var deleting by remember { mutableStateOf<com.nyx.ai.nativeinference.NativeModel?>(null) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { SectionIntro("Local models", "Discover Ollama or an OpenAI-compatible /v1 server, or register a GGUF file selected through Android's document picker.") }
+        item { SectionIntro("Inference providers", "Native GGUF runs offline on this phone’s CPU. Ollama and OpenAI-compatible servers remain optional. No weights are bundled.") }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = vm::useNativeProvider, enabled = !busy) { Text(if (state.nativeMode) "Native · selected" else "Use native GGUF") }
+                OutlinedButton(onClick = vm::refreshNativeModels) { Icon(Icons.Rounded.Refresh, "Refresh native models") }
+            }
+        }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(if (state.connected) "Inference server reachable" else "Inference server not detected", color = if (state.connected) Green else TextMain, fontWeight = FontWeight.SemiBold)
-                            Text(state.endpoint, color = TextMuted, fontSize = 12.sp)
-                        }
-                        IconButton(onClick = vm::refreshModels) { Icon(Icons.Rounded.Refresh, "Refresh") }
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("NATIVE CPU RUNTIME", color = VioletSoft, fontSize = 11.sp)
+                    Text(state.nativeStatus.phase.name.lowercase().replaceFirstChar { it.uppercase() }, color = if (state.nativeStatus.loaded) Green else TextMain)
+                    state.nativeStatus.detail?.let { Text(it, color = TextMuted, fontSize = 11.sp) }
+                    Text("Load ${state.nativeStatus.lastLoadMillis ?: "—"}ms · last generation ${state.nativeStatus.generatedTokens ?: "unknown"} true tokens / ${state.nativeStatus.lastGenerateMillis ?: "—"}ms", color = TextMuted, fontSize = 11.sp)
+                    Text("${state.nativeStatus.modelName ?: "No model loaded"} · context ${state.nativeStatus.contextLength ?: state.contextLength}", color = TextMuted, fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onImport, enabled = !state.nativeImporting) { Icon(Icons.Rounded.FolderOpen, null); Text(if (state.nativeImporting) "Importing…" else "Import GGUF") }
+                        if (state.nativeStatus.loaded || state.nativeStatus.phase == NativePhase.LOADING) OutlinedButton(onClick = vm::unloadNativeModel) { Text("Stop / unload") }
                     }
-                    if (!state.connected) {
-                        Spacer(Modifier.height(9.dp)); Divider(color = Surface2); Spacer(Modifier.height(9.dp))
-                        if (state.endpoint.substringBefore('?').endsWith("/v1")) {
-                            Text("Start your OpenAI-compatible server and confirm it exposes /models and /chat/completions.", color = TextMuted, fontSize = 12.sp)
-                        } else {
-                            Text("In Termux, start Ollama with:", color = TextMuted, fontSize = 12.sp)
-                            val clipboard = LocalClipboardManager.current
-                            TextButton(onClick = { clipboard.setText(AnnotatedString("ollama serve")) }) { Text("ollama serve", fontFamily = FontFamily.Monospace, color = VioletSoft); Spacer(Modifier.width(5.dp)); Icon(Icons.Rounded.ContentCopy, "Copy command", modifier = Modifier.size(15.dp)) }
-                            Text("Ollama must already be installed and running. NYX does not install it.", color = TextMuted, fontSize = 11.sp)
-                        }
+                    Text("Choose a compatible instruct/chat GGUF with a default template. Import copies it into private storage. ARM64 CPU only; no GPU/NPU claims. Settings controls context and threads.", color = TextMuted, fontSize = 11.sp)
+                }
+            }
+        }
+        if (state.nativeModels.isEmpty()) item { EmptyCard("No native models imported. Legacy URI registrations must be re-imported; they were not executable models.") }
+        items(state.nativeModels, key = { it.id }) { model ->
+            val estimate = model.estimate(state.contextLength)
+            Card(colors = CardDefaults.cardColors(containerColor = if (state.nativeMode && state.selectedModel == model.path) Color(0xFF20192D) else Surface1), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(model.name, color = TextMain, fontWeight = FontWeight.SemiBold)
+                    Text("${model.architecture} · ${model.sizeBytes / 1048576} MB on disk · training context ${model.trainingContext}", color = TextMuted, fontSize = 11.sp)
+                    Text("Estimated FP16 KV: ${estimate.kvCacheBytes?.div(1048576) ?: "unknown"} MB at context ${state.contextLength}; graph reserve ${estimate.computeReserveBytes / 1048576} MB. Weight mapping/residency varies; this is not measured native RAM.", color = TextMuted, fontSize = 11.sp)
+                    Text("Tokenizer ${model.metadata.tokenizer} · ${model.metadata.vocabularySize} entries · chat template ${if (model.metadata.chatTemplate.isNullOrBlank()) "missing (not loadable)" else "present"}", color = TextMuted, fontSize = 11.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.loadNativeModel(model) }, enabled = !busy) { Text("Select & load") }
+                        IconButton(onClick = { deleting = model }, enabled = !busy) { Icon(Icons.Rounded.DeleteOutline, "Delete private model copy", tint = TextMuted) }
                     }
                 }
             }
         }
-        item { Text("AVAILABLE SERVER MODELS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp) }
-        if (state.models.isEmpty()) item { EmptyCard("No models listed yet. Pull or install a model in your Ollama environment.") }
-        items(state.models, key = { it.name }) { model -> ModelCard(model, model.name == state.selectedModel, if (state.endpoint.substringBefore('?').endsWith("/v1")) "OpenAI-compatible" else "Ollama") { vm.selectModel(model.name) } }
-        item { ModelMemoryAdvisory(state) }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("GGUF model files", color = TextMain, fontWeight = FontWeight.SemiBold)
-                            Text("Register a user-selected file. Direct llama.cpp inference is not bundled in this build.", color = TextMuted, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onImport) { Icon(Icons.Rounded.FolderOpen, null); Spacer(Modifier.width(5.dp)); Text("Choose") }
-                    }
-                    state.registeredGguf.forEach { gguf ->
-                        Divider(color = Surface2, modifier = Modifier.padding(vertical = 8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Description, null, tint = VioletSoft)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(gguf.displayName, color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("Registered only · inference unavailable", color = TextMuted, fontSize = 11.sp)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        if (!state.nativeMode) {
+            item { Text("SERVER PROVIDER · ${state.endpoint}", color = TextMuted, fontSize = 11.sp) }
+            item { OutlinedButton(onClick = vm::refreshModels) { Text("Refresh server models") } }
+            items(state.models, key = { it.name }) { model -> ModelCard(model, model.name == state.selectedModel, if (state.endpoint.endsWith("/v1")) "OpenAI-compatible" else "Ollama") { vm.selectModel(model.name) } }
+            item { ModelMemoryAdvisory(state) }
+        } else item { Text("To use Ollama or a /v1 API instead, save its HTTP(S) URL in Settings. No automatic fallback sends native prompts to another provider.", color = TextMuted, fontSize = 11.sp) }
     }
+    deleting?.let { model -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Remove ${model.name}?") }, text = { Text("Deletes only NYX’s imported private copy and metadata; your original document is not changed.") }, confirmButton = { TextButton(onClick = { vm.deleteNativeModel(model); deleting = null }) { Text("Delete copy") } }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }) }
 }
 
 @Composable
@@ -721,7 +724,7 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                     }
                     Text("Choose an agent, then work in the adjacent task pane.", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp))
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions }) { vm.selectAgent(agent.id) } }
+                        items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions; showCreate = true }) { vm.selectAgent(agent.id) } }
                     }
                 }
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Surface2))
@@ -736,7 +739,7 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                         IconButton(onClick = { editingAgent = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
                     }
                 }
-                items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions }) { vm.selectAgent(agent.id) } }
+                items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions; showCreate = true }) { vm.selectAgent(agent.id) } }
                 item { AgentWorkspaceContent(state, vm, Modifier.fillMaxWidth()) }
             }
         }
@@ -868,7 +871,7 @@ private fun WorkflowRunContent(state: NyxState, vm: NyxViewModel) {
 
 @Composable
 private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
-    var endpoint by remember(state.endpoint) { mutableStateOf(state.endpoint) }
+    var endpoint by remember(state.endpoint) { mutableStateOf(if (state.nativeMode) "http://127.0.0.1:11434" else state.endpoint) }
     var apiKeyDraft by remember(state.endpoint) { mutableStateOf("") }
     var externalConsent by remember(state.externalConsent) { mutableStateOf(state.externalConsent) }
     val openAiEndpoint = endpoint.trimEnd('/').substringBefore('?').endsWith("/v1", ignoreCase = true)
@@ -917,10 +920,12 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                     Slider(value = state.contextLength.toFloat(), onValueChange = { vm.setContextLength((it / 512).toInt() * 512) }, valueRange = 512f..32768f, steps = 62)
                     Text("CPU threads · ${state.cpuThreads}", color = TextMain, fontSize = 13.sp)
                     Slider(value = state.cpuThreads.toFloat(), onValueChange = { vm.setCpuThreads(it.toInt().coerceAtLeast(1)) }, valueRange = 1f..16f, steps = 14)
-                    Text("Context and thread parameters are sent to Ollama; a server may cap or ignore them.", color = TextMuted, fontSize = 11.sp)
+                    Text("Native CPU honors context/thread settings; Ollama servers may cap them. /v1 services control their own context and thread configuration.", color = TextMuted, fontSize = 11.sp)
                 }
             }
         }
+        item { ExecutionPermissions() }
+        item { RepairBudgetCard() }
         item { DiagnosticsCard(state) }
         item {
             val context = LocalContext.current
@@ -930,7 +935,7 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                     Text("About this build", color = TextMain, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(5.dp))
                     Text(installedVersion, color = TextMuted, fontSize = 12.sp)
-                    Text("Android 8+ · Ollama and OpenAI-compatible APIs, Keystore-protected credentials, bounded agents, durable objective records, and user-approved text import. Native GGUF inference is not included.", color = TextMuted, fontSize = 12.sp)
+                    Text("Android 8+ · Ollama and OpenAI-compatible APIs, Keystore-protected credentials, bounded agents, durable objective records, and user-approved text import. Native GGUF CPU runtime is bundled; compatible user-imported weights are required. Hardware verification remains separate.", color = TextMuted, fontSize = 12.sp)
                 }
             }
         }
@@ -940,34 +945,51 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
 @Composable
 private fun DiagnosticsCard(state: NyxState) {
     val context = LocalContext.current
-    val diagnostics = remember(context) {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
-        val thermal = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-            when (power.currentThermalStatus) {
-                PowerManager.THERMAL_STATUS_NONE -> "Nominal"
-                PowerManager.THERMAL_STATUS_LIGHT -> "Light"
-                PowerManager.THERMAL_STATUS_MODERATE -> "Moderate"
-                PowerManager.THERMAL_STATUS_SEVERE -> "Severe"
-                PowerManager.THERMAL_STATUS_CRITICAL -> "Critical"
-                PowerManager.THERMAL_STATUS_EMERGENCY -> "Emergency"
-                PowerManager.THERMAL_STATUS_SHUTDOWN -> "Shutdown threshold"
-                else -> "Unavailable"
-            }
-        } else "Not exposed by Android version"
-        Triple(activityManager.memoryClass, memory, thermal)
-    }
-    val (heapClassMb, memory, thermal) = diagnostics
+    var snapshot by remember { mutableStateOf(MemoryTelemetry.snapshot(context)) }
+    val metrics by InferenceFabric.metrics.collectAsState()
     Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("DEVICE & CONNECTION", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-            Text("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})", color = TextMain, fontSize = 12.sp)
-            Text("CPU ABI · ${Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"} · App heap class · ${heapClassMb} MB", color = TextMuted, fontSize = 11.sp)
-            Text("Available system RAM · ${memory.availMem / (1024 * 1024)} MB of ${memory.totalMem / (1024 * 1024)} MB", color = TextMuted, fontSize = 11.sp)
-            Text("Thermal status · $thermal", color = if (thermal in setOf("Severe", "Critical", "Emergency", "Shutdown threshold")) Color(0xFFF2C879) else TextMuted, fontSize = 11.sp)
-            Text("Endpoint · ${if (state.connected) "Connected" else "Offline"} · ${Uri.parse(state.endpoint).host.orEmpty()} · ${state.selectedModel.ifBlank { "No model selected" }}", color = TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("Thermal and memory figures are advisory snapshots. NYX does not use Tensor TPU, Gemini Nano, or proprietary accelerator APIs.", color = TextMuted, fontSize = 10.sp)
+            Text("DEVICE & INFERENCE METRICS", color = VioletSoft, fontSize = 11.sp)
+            Text("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} API ${Build.VERSION.SDK_INT} · ${Build.SUPPORTED_ABIS.joinToString()}", color = TextMain, fontSize = 12.sp)
+            Text(MemoryTelemetry.describe(snapshot), color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text("Inference active ${metrics.active} · queued ${metrics.queued} · requests ${metrics.calls} · completed ${metrics.completed} · failed ${metrics.failed} · cancelled ${metrics.cancelled}\nLast latency ${metrics.lastLatencyMillis}ms · generated characters ${metrics.generatedCharacters} · streamed chunks ${metrics.streamedChunks} (NOT tokens)", color = TextMuted, fontSize = 11.sp)
+            OutlinedButton(onClick = { snapshot = MemoryTelemetry.snapshot(context) }) { Text("Refresh snapshot") }
+        }
+    }
+}
+
+@Composable
+private fun ExecutionPermissions() {
+    val context = LocalContext.current
+    var result by remember { mutableStateOf("") }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> result = if (granted) "Permission granted." else "Permission denied; optional feature remains unavailable." }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (Build.VERSION.SDK_INT >= 33) OutlinedButton(onClick = { permission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }) { Text("Allow execution notifications") }
+        if (Build.VERSION.SDK_INT >= 37) OutlinedButton(onClick = { permission.launch("android.permission.ACCESS_LOCAL_NETWORK") }) { Text("Allow LAN inference (Android 17)") }
+        Text("LAN permission is optional and not needed for native GGUF or same-profile loopback. A denied permission never triggers another-provider fallback. $result", color = TextMuted, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun RepairBudgetCard() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("nyx_settings", 0) }
+    var iterations by remember { mutableStateOf(prefs.getInt("repair_iterations", 3).toFloat()) }
+    var calls by remember { mutableStateOf(prefs.getInt("repair_calls", 4).toFloat()) }
+    var files by remember { mutableStateOf(prefs.getInt("repair_files", 8).toFloat()) }
+    var duration by remember { mutableStateOf(prefs.getLong("repair_millis", 300000).toFloat() / 60000f) }
+    var margin by remember { mutableStateOf(prefs.getInt("native_memory_margin_mb", 512).toFloat()) }
+    Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("BOUNDED DEVELOPMENT & MEMORY", color = VioletSoft, fontSize = 11.sp)
+            Text("Repair iterations ${iterations.toInt()} · inference calls ${calls.toInt()} · edited files ${files.toInt()} · deadline ${duration.toInt()} minutes", color = TextMuted, fontSize = 11.sp)
+            Slider(iterations, { iterations = it; prefs.edit().putInt("repair_iterations", it.toInt()).apply() }, valueRange = 1f..5f, steps = 3)
+            Slider(calls, { calls = it; prefs.edit().putInt("repair_calls", it.toInt()).apply() }, valueRange = 1f..6f, steps = 4)
+            Slider(files, { files = it; prefs.edit().putInt("repair_files", it.toInt()).apply() }, valueRange = 1f..12f, steps = 10)
+            Slider(duration, { duration = it; prefs.edit().putLong("repair_millis", it.toInt() * 60000L).apply() }, valueRange = 1f..10f, steps = 8)
+            Text("Native minimum memory margin: ${margin.toInt()} MB; Android threshold and available-RAM margin may require more.", color = TextMuted, fontSize = 11.sp)
+            Slider(margin, { margin = it; prefs.edit().putInt("native_memory_margin_mb", it.toInt()).apply() }, valueRange = 256f..2048f, steps = 6)
+            Text("An enabled workspace permits source edits and execution of its existing build scripts. Only approve projects you trust; Termux/PRoot is not a security sandbox for hostile code. Publication, secrets, raw model shell commands and privilege escalation are not authorized.", color = TextMuted, fontSize = 11.sp)
         }
     }
 }

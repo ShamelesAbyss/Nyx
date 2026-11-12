@@ -35,6 +35,11 @@ import com.nyx.ai.network.LocalModel
 import com.nyx.ai.network.OllamaClient
 import com.nyx.ai.settings.CredentialTransportPolicy
 import com.nyx.ai.settings.CredentialVault
+import com.nyx.ai.settings.InferenceClientFactory
+import com.nyx.ai.network.InferenceProvider
+import com.nyx.ai.nativeinference.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -76,6 +81,9 @@ data class NyxState(
     val workflowTask: String = "",
     val workflowOutput: String = "",
     val workflowRunning: Boolean = false,
+    val nativeModels: List<NativeModel> = emptyList(),
+    val nativeStatus: NativeRuntimeStatus = NativeRuntimeStatus(),
+    val nativeImporting: Boolean = false,
     val registeredGguf: List<ModelEndpointEntity> = emptyList(),
     val objectives: List<ObjectiveEntity> = emptyList(),
     val selectedObjectiveId: String? = null,
@@ -99,12 +107,14 @@ data class NyxState(
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
     val error: String = ""
-)
+) { val nativeMode: Boolean get() = endpoint == "native://local" }
 
 class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application
     private val db = NyxDatabase.getInstance(application)
     private val credentialVault = CredentialVault(application)
+    private val nativeRepository = NativeModelRepository(application)
+    private val providerFactory = InferenceClientFactory(db, credentialVault, application)
     private val prefs = application.getSharedPreferences("nyx_settings", 0)
     private val _state = MutableStateFlow(
         NyxState(
@@ -115,6 +125,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             contextLength = prefs.getInt("context_length", 4096),
             cpuThreads = prefs.getInt("cpu_threads", 4),
             terminalToolsEnabled = prefs.getBoolean(ObjectiveExecutionService.KEY_TERMINAL_ENABLED, false),
+            terminalEnvironment = runCatching { TerminalEnvironment.valueOf(prefs.getString("terminal_environment", "TERMUX_HOST") ?: "TERMUX_HOST") }.getOrDefault(TerminalEnvironment.TERMUX_HOST),
             terminalWorkspace = prefs.getString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, "") ?: "",
         )
     )
@@ -128,9 +139,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private var messageObservation: Job? = null
     private val inferenceReservationLock = Any()
     private var inferenceReserved = false
+    @Volatile private var objectiveReservation = false
 
     private fun reserveInference(): Boolean = synchronized(inferenceReservationLock) {
-        if (inferenceReserved) false else { inferenceReserved = true; true }
+        if (inferenceReserved || ExecutionMonitor.state.value.running) false else { inferenceReserved = true; true }
     }
 
     private fun releaseInference() = synchronized(inferenceReservationLock) { inferenceReserved = false }
@@ -157,6 +169,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { recoverInterruptedObjectives() }
         viewModelScope.launch { db.modelEndpointDao().observeAll().collect { rows -> _state.update { it.copy(registeredGguf = rows.filter { it.provider == "GGUF" }) } } }
+        viewModelScope.launch { NativeRuntime.status.collect { status -> _state.update { it.copy(nativeStatus = status) } } }
+        refreshNativeModels()
         refreshModels()
     }
 
@@ -196,7 +210,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
             _state.update { it.copy(error = "") }
             try {
-                val models = inferenceClient(endpoint).listModels()
+                val models = inferenceProvider(endpoint).listModels()
                 _state.update { old ->
                     val selected = old.selectedModel.takeIf { name -> models.any { it.name == name } } ?: models.firstOrNull()?.name.orEmpty()
                     prefs.edit().putString("selected_model", selected).apply()
@@ -212,10 +226,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun clearError() { _state.update { it.copy(error = "") } }
 
     fun saveEndpoint(endpoint: String, consentExternal: Boolean) {
+        if (ExecutionMonitor.state.value.running || _state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning) { _state.update { it.copy(error = "Stop active inference before changing providers.") }; return }
         val normalized = endpoint.trim().trimEnd('/')
         val valid = runCatching {
             val uri = Uri.parse(normalized)
-            uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null
+            CredentialTransportPolicy.validEndpoint(normalized)
         }.getOrDefault(false)
         if (!valid) { _state.update { it.copy(error = "Enter a valid http:// or https:// endpoint URL.") }; return }
         prefs.edit().putString("endpoint", normalized).putBoolean("external_consent", consentExternal).apply()
@@ -279,6 +294,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun endpointAllowed(endpoint: String): Boolean {
+        if (endpoint == "native://local") return true
         val uri = Uri.parse(endpoint)
         val host = uri.host?.lowercase().orEmpty()
         val local = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
@@ -293,17 +309,13 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun credentialTransportAllowed(endpoint: String) = CredentialTransportPolicy.allows(endpoint)
 
-    private suspend fun inferenceClient(endpoint: String): OllamaClient {
-        if (!isOpenAiEndpoint(endpoint)) return OllamaClient(endpoint)
-        val reference = db.modelEndpointDao().getById(endpointRecordId(endpoint))?.credentialReference
-        if (reference == null) return OllamaClient(endpoint)
-        if (!credentialTransportAllowed(endpoint)) throw IllegalStateException("Saved credentials are blocked on remote HTTP. Switch to HTTPS before connecting.")
-        val secret = withContext(Dispatchers.IO) { credentialVault.read(reference) }
-            ?: throw IllegalStateException("Saved API key is unavailable. Enter it again in Settings.")
-        return OllamaClient(endpoint, secret)
+    private suspend fun inferenceProvider(endpoint: String): InferenceProvider {
+        persistEndpointNow(_state.value.copy(endpoint = endpoint))
+        return providerFactory.providerFor(endpointRecordId(endpoint)).provider
     }
 
     fun selectModel(model: String) {
+        if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) { _state.update { it.copy(error = "Stop active work before changing the model.") }; return }
         prefs.edit().putString("selected_model", model).apply()
         _state.update { it.copy(selectedModel = model) }
         persistOllamaEndpoint()
@@ -315,17 +327,56 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private fun options() = InferenceOptions(_state.value.temperature.toDouble(), _state.value.contextLength, _state.value.cpuThreads)
 
     private fun persistOllamaEndpoint() {
-        val s = _state.value
-        val openAi = isOpenAiEndpoint(s.endpoint)
+        val snapshot = _state.value
+        viewModelScope.launch { persistEndpointNow(snapshot) }
+    }
+    private suspend fun persistEndpointNow(s: NyxState) {
+        val id = endpointRecordId(s.endpoint)
+        val previous = db.modelEndpointDao().getById(id)
+        val provider = if (s.nativeMode) "native-gguf" else if (isOpenAiEndpoint(s.endpoint)) "OpenAI-compatible" else "Ollama"
+        db.modelEndpointDao().upsert(ModelEndpointEntity(id = id, displayName = if (s.nativeMode) "Native GGUF on this device" else "$provider on ${Uri.parse(s.endpoint).host}",
+            provider = provider, baseUrl = s.endpoint, modelId = s.selectedModel, credentialReference = if (s.nativeMode) null else previous?.credentialReference,
+            configurationJson = JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads).toString(),
+            createdAt = previous?.createdAt ?: System.currentTimeMillis()))
+    }
+    private suspend fun snapshotObjective(id: String, s: NyxState) {
+        persistEndpointNow(s)
+        val snapshot = JSONObject().put("endpointId", endpointRecordId(s.endpoint)).put("modelId", s.selectedModel)
+            .put("options", JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads))
+            .put("terminalEnabled", s.terminalToolsEnabled).put("workspace", s.terminalWorkspace).put("environment", s.terminalEnvironment.name)
+        db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "execution_config", snapshot.toString(), System.currentTimeMillis()))
+    }
+
+    fun refreshNativeModels() {
+        viewModelScope.launch(Dispatchers.IO) { _state.update { it.copy(nativeModels = nativeRepository.models()) } }
+    }
+    fun useNativeProvider() {
+        if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) return
+        prefs.edit().putString("endpoint", "native://local").putString("selected_model", "").apply()
+        _state.update { it.copy(endpoint = "native://local", selectedModel = "", credentialConfigured = false) }
+        refreshNativeModels(); refreshModels()
+    }
+    fun loadNativeModel(model: NativeModel) {
+        if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) return
         viewModelScope.launch {
-            val id = endpointRecordId(s.endpoint)
-            val previous = db.modelEndpointDao().getById(id)
-            db.modelEndpointDao().upsert(ModelEndpointEntity(
-                id = id, displayName = "${if (openAi) "OpenAI-compatible" else "Ollama"} on ${Uri.parse(s.endpoint).host ?: "local endpoint"}",
-                provider = if (openAi) "OpenAI-compatible" else "Ollama", baseUrl = s.endpoint, modelId = s.selectedModel,
-                credentialReference = previous?.credentialReference, isEnabled = true,
-                createdAt = previous?.createdAt ?: System.currentTimeMillis()
-            ))
+            try {
+                _state.update { it.copy(endpoint = "native://local", selectedModel = model.path) }
+                prefs.edit().putString("endpoint", "native://local").putString("selected_model", model.path).apply()
+                NativeRuntime.load(model.path, options())
+                refreshModels()
+            } catch (cancel: CancellationException) { throw cancel } catch (e: Exception) { _state.update { it.copy(error = e.message ?: "Native model initialization failed.") } }
+        }
+    }
+    fun unloadNativeModel() {
+        if (ExecutionMonitor.state.value.running) pauseObjective()
+        stopGeneration(); stopAgent(); stopWorkflow()
+        viewModelScope.launch { NativeRuntime.unload() }
+    }
+    fun deleteNativeModel(model: NativeModel) {
+        if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) return
+        viewModelScope.launch {
+            try { nativeRepository.delete(model.id); refreshNativeModels(); if (_state.value.nativeMode) refreshModels() }
+            catch (e: Exception) { _state.update { it.copy(error = e.message ?: "Could not remove model.") } }
         }
     }
 
@@ -369,7 +420,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         }
         generationJob = viewModelScope.launch {
             val s = _state.value
-            if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Connect to Ollama and select an installed model first.") }; return@launch }
+            if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Select an available inference provider and model first.") }; return@launch }
             if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required.") }; return@launch }
             val conversation = if (s.activeConversationId == null) ConversationEntity(title = prompt.take(48))
                 else db.conversationDao().getConversation(s.activeConversationId) ?: ConversationEntity(title = prompt.take(48))
@@ -383,7 +434,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             val streamed = StringBuilder()
             var lastPublishAt = 0L
             try {
-                val result = inferenceClient(s.endpoint).chat(s.selectedModel, past, options = options()) { token ->
+                val result = inferenceProvider(s.endpoint).chat(s.selectedModel, past, tools = null, options = options()) { token ->
                     streamed.append(token)
                     val now = System.nanoTime() / 1_000_000L
                     if (now - lastPublishAt >= 45L) {
@@ -397,7 +448,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(streamingText = "") }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 val partial = streamed.toString()
-                if (partial.isNotBlank()) dao.upsertMessage(MessageEntity(conversationId = conversation.id, role = "assistant", content = "$partial\n\n[Generation stopped]", modelId = s.selectedModel))
+                if (partial.isNotBlank()) withContext(NonCancellable) { dao.upsertMessage(MessageEntity(conversationId = conversation.id, role = "assistant", content = "$partial\n\n[Generation stopped]", modelId = s.selectedModel)) }
                 _state.update { it.copy(streamingText = "") }
                 throw e
             } catch (e: Exception) {
@@ -422,15 +473,16 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun registerGguf(uri: Uri, displayName: String) {
+        if (_state.value.nativeImporting) return
         viewModelScope.launch {
+            _state.update { it.copy(nativeImporting = true, error = "") }
             try {
-                app.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (_: Exception) { /* Some document providers do not offer persistable permissions. */ }
-            val size = runCatching { app.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L }.getOrDefault(-1L)
-            db.modelEndpointDao().upsert(ModelEndpointEntity(
-                id = "gguf:${uri}", displayName = displayName, provider = "GGUF", baseUrl = uri.toString(), modelId = displayName,
-                configurationJson = JSONObject().put("sizeBytes", size).put("status", "registered_only_native_backend_not_included").toString()
-            ))
+                nativeRepository.import(uri)
+                refreshNativeModels()
+                if (_state.value.nativeMode) refreshModels()
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (e: Exception) { _state.update { it.copy(error = e.message ?: "GGUF import failed.") } }
+            finally { _state.update { it.copy(nativeImporting = false) } }
         }
     }
 
@@ -493,9 +545,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleWorkflowAgent(id: String) { _state.update { old -> old.copy(workflowAgentIds = if (id in old.workflowAgentIds) old.workflowAgentIds - id else old.workflowAgentIds + id) } }
 
     /** Creates and executes a durable objective independently of a chat turn. */
-    fun createObjective(goal: String) {
+    fun createObjective(goal: String, development: Boolean = false) {
         val clean = goal.trim().take(8_000)
         if (clean.isBlank()) return
+        if (development && !_state.value.terminalToolsEnabled) { _state.update { it.copy(error = "Enable an approved development workspace first.") }; return }
         val s = _state.value
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId }
         if (agent == null) { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
@@ -505,11 +558,22 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val row = ObjectiveEntity(title = clean.take(72), goal = clean, status = "planning", agentId = agent.id, modelId = s.selectedModel)
             db.objectiveDao().upsertObjective(row)
+            snapshotObjective(row.id, s)
+            if (development) {
+                require(s.terminalToolsEnabled) { "Enable an approved development workspace first." }
+                db.objectiveDao().upsertTask(ObjectiveTaskEntity(objectiveId = row.id, ordinal = 0, title = "Inspect, establish baseline, repair and retest", instructions = clean, workerKind = "development", maxAttempts = 1, evidenceJson = "[]"))
+            }
+            objectiveReservation = true
             selectObjective(row.id)
             _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
-            ObjectiveExecutionService.start(app, row.id)
+            try { ObjectiveExecutionService.start(app, row.id) } catch (e: Exception) {
+                objectiveReservation = false; releaseInference()
+                db.objectiveDao().upsertObjective(row.copy(status = "needs_attention", error = "Service start rejected: ${e.javaClass.simpleName}"))
+                _state.update { it.copy(objectiveRunning = false, error = "Android rejected service start. Open the app, grant notifications and try again.") }
+                return@launch
+            }
             delay(8_000)
-            if (!ExecutionMonitor.state.value.running) {
+            if (!ExecutionMonitor.state.value.running && db.objectiveDao().getObjective(row.id)?.status == "planning") {
                 releaseInference()
                 _state.update { it.copy(objectiveRunning = false, error = "The execution service did not start. Check notification permission and try again.") }
             }
@@ -554,9 +618,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
-            ObjectiveExecutionService.start(app, id)
+            snapshotObjective(id, s)
+            objectiveReservation = true
+            try { ObjectiveExecutionService.start(app, id) } catch (e: Exception) {
+                objectiveReservation = false; releaseInference()
+                _state.update { it.copy(objectiveRunning = false, error = "Android rejected service start: ${e.javaClass.simpleName}") }
+                return@launch
+            }
             delay(8_000)
-            if (!ExecutionMonitor.state.value.running) {
+            if (!ExecutionMonitor.state.value.running && db.objectiveDao().getObjective(id)?.status in setOf("planning", "running")) {
                 releaseInference()
                 _state.update { it.copy(objectiveRunning = false, error = "The execution service did not start. Check notification permission and try again.") }
             }
@@ -569,17 +639,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancelObjective(id: String) {
-        ObjectiveExecutionService.cancel(app)
-        viewModelScope.launch {
-            delay(1_500)
-            val current = db.objectiveDao().getObjective(id) ?: return@launch
-            if (current.status == "planning" || current.status == "running") {
-                db.objectiveDao().upsertObjective(current.copy(status = "cancelled", updatedAt = System.currentTimeMillis(), error = "Cancelled by user."))
-                db.objectiveDao().appendEvent(
-                    ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "cancelled", "Cancelled by user; any in-flight tool may require review.", System.currentTimeMillis())
-                )
-            }
-        }
+        if (ExecutionMonitor.state.value.objectiveId == id && ExecutionMonitor.state.value.running) ObjectiveExecutionService.cancel(app)
+        else viewModelScope.launch { db.objectiveDao().getObjective(id)?.let { db.objectiveDao().upsertObjective(it.copy(status = "cancelled", updatedAt = System.currentTimeMillis())) } }
     }
 
     private suspend fun recoverInterruptedObjectives() {
@@ -590,7 +651,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             ExecutionMonitor.state.collect { snapshot ->
                 _state.update { it.copy(objectiveRunning = snapshot.running, objectivePhase = snapshot.phase) }
-                if (!snapshot.running) releaseInference()
+                if (!snapshot.running && objectiveReservation) { objectiveReservation = false; releaseInference() }
             }
         }
         viewModelScope.launch {
@@ -616,18 +677,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun requestTerminalCommand(command: String) {
-        val clean = command.trim().take(CommandPolicy.MAX_COMMAND_CHARS)
+        if (command.trim().length > CommandPolicy.MAX_COMMAND_CHARS) { _state.update { it.copy(terminalMessage = "Command too long; no partial command will be executed.") }; return }
+        val clean = command.trim()
         if (clean.isBlank()) return
         val assessment = CommandPolicy.assess(clean)
         if (assessment.blocked) {
             _state.update { it.copy(terminalMessage = assessment.summary) }
             return
         }
-        if (assessment.requiresConfirmation) {
-            _state.update { it.copy(terminalPendingCommand = clean, terminalMessage = assessment.summary) }
-            return
-        }
-        executeTerminal(clean, approved = false)
+        _state.update { it.copy(terminalPendingCommand = clean, terminalMessage = assessment.summary) }
     }
 
     fun confirmTerminalCommand() {
@@ -640,6 +698,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setTerminalEnvironment(environment: TerminalEnvironment) {
+        prefs.edit().putString("terminal_environment", environment.name).apply()
         _state.update { it.copy(terminalEnvironment = environment) }
     }
 
@@ -659,9 +718,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 terminalRepository.execute(
                     command = command,
                     environment = environment,
-                    workingDirectory = null,
+                    workingDirectory = _state.value.terminalWorkspace.takeIf { it.startsWith("/") },
                     timeoutSeconds = 120,
                     approvedByUser = approved,
+                    useTimeoutBinary = _state.value.terminalProfile?.timeoutAvailable == true,
                 )
             }
             _state.update {
@@ -684,7 +744,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setTerminalWorkspace(path: String) {
-        val clean = path.trim().take(4_096)
+        val raw = path.trim().trimEnd('/')
+        val clean = if (raw == "~" || raw.startsWith("~/")) _state.value.terminalProfile?.home?.let { it + raw.removePrefix("~") } ?: raw else raw
+        if (!com.nyx.ai.development.DevelopmentPaths.isAbsoluteNormalizedWorkspace(clean)) { _state.update { it.copy(error = "Use an absolute normalized workspace (run discovery first for ~/ paths).") }; return }
         prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, clean).apply()
         _state.update { it.copy(terminalWorkspace = clean) }
     }
@@ -709,7 +771,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         if (s.isGenerating || s.agentRunning || s.workflowRunning) { _state.update { it.copy(error = "Another inference task is already running. Stop it before starting an agent.") }; return }
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId } ?: run { _state.update { it.copy(error = "Select an agent first.") }; return }
-        if (s.selectedModel.isBlank() || !s.connected) { _state.update { it.copy(error = "Connect to an Ollama model before running agents.") }; return }
+        if (s.selectedModel.isBlank() || !s.connected) { _state.update { it.copy(error = "Connect to a model before running agents.") }; return }
         if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required before running agents.") }; return }
         if (s.agentTask.isBlank()) return
         if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is already running.") }; return }
@@ -722,7 +784,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             logDao.upsert(row)
             try {
                 val spec = toSpec(agent, s.selectedModel)
-                val outcome = AgentRunner(app, inferenceClient(s.endpoint)).run(spec, s.agentTask, options = options(), onEvent = ::appendAgentEvent) { token ->
+                val outcome = AgentRunner(app, inferenceProvider(s.endpoint)).run(spec, s.agentTask, options = options(), onEvent = ::appendAgentEvent) { token ->
                     _state.update { it.copy(agentOutput = it.agentOutput + token) }
                 }
                 _state.update { it.copy(agentOutput = outcome.result) }
@@ -746,7 +808,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (s.isGenerating || s.agentRunning || s.workflowRunning) { _state.update { it.copy(error = "Another inference task is already running. Stop it before starting a workflow.") }; return }
         val chosen = s.agents.filter { it.id in s.workflowAgentIds }
         if (chosen.isEmpty()) { _state.update { it.copy(error = "Choose at least one agent for the sequential workflow.") }; return }
-        if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Connect to an Ollama model before running workflows.") }; return }
+        if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Connect to a model before running workflows.") }; return }
         if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required before running workflows.") }; return }
         if (s.workflowTask.isBlank()) return
         if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is already running.") }; return }
@@ -759,7 +821,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             var context = s.workflowTask
             val outputs = mutableListOf<String>()
             try {
-                val runner = AgentRunner(app, inferenceClient(s.endpoint))
+                val runner = AgentRunner(app, inferenceProvider(s.endpoint))
                 chosen.forEachIndexed { index, agent ->
                     _state.update { it.copy(workflowOutput = "${it.workflowOutput}\n\n## ${agent.name}\n") }
                     val outcome = runner.run(toSpec(agent, s.selectedModel), s.workflowTask, context, options(), ::appendAgentEvent) { token ->

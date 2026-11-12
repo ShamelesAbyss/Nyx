@@ -1,0 +1,7 @@
+JUnit version 4.13.2
+.............................HOST_FIXTURE_EVIDENCE: commands=[('/usr/bin/make', 0), ('/usr/bin/make' test, 2), ('/usr/bin/make', 0), ('/usr/bin/make' test, 0)]; iterations=2; files=[answer.py]; reason=verification_passed
+..
+Time: 1.54
+
+OK (31 tests)
+

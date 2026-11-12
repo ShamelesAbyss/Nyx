@@ -2,14 +2,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <queries>
         <package android:name="com.termux" />
     </queries>
     <application
         android:allowBackup="false"
-        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:label="NYX"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -26,7 +27,10 @@
         <service
             android:name=".service.ObjectiveExecutionService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started on-device model inference and bounded authorized project analysis/repair with visible progress, pause and cancel. No indefinite execution; 30-minute application budget. Requires Play review before store distribution." />
+        </service>
         <receiver
             android:name=".terminal.TermuxResultReceiver"
             android:exported="false" />

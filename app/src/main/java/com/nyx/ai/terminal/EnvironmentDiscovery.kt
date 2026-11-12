@@ -94,7 +94,8 @@ class EnvironmentDiscovery(private val bridge: TerminalBridge) {
             return EnvironmentProfile(hostAvailable = false, detail = probe.message ?: "Termux probe did not return a result.")
         }
         val parsed = EnvironmentProbeParser.parseHost(probe.stdout)
-        val prootPath = parsed.tools["proot-distro"] ?: prootPathHint
+        val prootPath = parsed.tools["proot-distro"]
+        bridge.configureDiscoveredProot(prootPath)
         val distros = if (prootPath != null) {
             val listing = bridge.runShell("proot-distro list 2>&1 || true", timeoutSeconds = 45, useTimeoutBinary = parsed.tools.containsKey("timeout"), approved = true)
             EnvironmentProbeParser.parseInstalledDistros(listing.stdout + "\n" + listing.stderr)

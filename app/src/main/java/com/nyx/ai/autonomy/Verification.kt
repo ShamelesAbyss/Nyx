@@ -145,15 +145,13 @@ object TaskVerifier {
             EvidenceKind.OUTPUT_CONTAINS -> {
                 val needle = spec.expected.orEmpty()
                 val found = observation.stdout.contains(needle, ignoreCase = true) ||
-                    observation.stderr.contains(needle, ignoreCase = true) ||
-                    observation.agentOutput.contains(needle, ignoreCase = true)
+                    observation.stderr.contains(needle, ignoreCase = true)
                 EvidenceResult(spec, found, if (found) "found" else "not found", "expected output to contain '$needle'")
             }
             EvidenceKind.OUTPUT_NOT_CONTAINS -> {
                 val needle = spec.expected.orEmpty()
                 val found = observation.stdout.contains(needle, ignoreCase = true) ||
-                    observation.stderr.contains(needle, ignoreCase = true) ||
-                    observation.agentOutput.contains(needle, ignoreCase = true)
+                    observation.stderr.contains(needle, ignoreCase = true)
                 EvidenceResult(spec, !found, if (found) "found" else "absent", "expected output not to contain '$needle'")
             }
             EvidenceKind.FILE_EXISTS -> {
@@ -178,6 +176,8 @@ object TaskVerifier {
                 EvidenceResult(spec, nonEmpty, if (nonEmpty) "non-empty" else "empty")
             }
         }
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+        throw cancel
     } catch (e: Exception) {
         EvidenceResult(spec, false, "error", e.message?.take(200) ?: "verification failed")
     }

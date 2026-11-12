@@ -11,6 +11,8 @@ data class ContextRequest(
     val records: List<ContextRecord> = emptyList(),
     val budgetChars: Int = 12_000,
     val maxHistoryRecords: Int = 6,
+    val sourceValidator: ((ProjectSourceReference) -> Boolean)? = null,
+    val projectContext: ProjectRetrieval? = null,
 )
 
 data class BuiltContext(
@@ -18,6 +20,7 @@ data class BuiltContext(
     val includedRecordIds: List<String>,
     val truncated: Boolean,
     val usedChars: Int,
+    val invalidatedRecordIds: List<String> = emptyList(),
 )
 
 /** Deterministically selects and formats stored context without model calls. */
@@ -66,25 +69,37 @@ object ContextEngine {
             baseBlocked = !appendText("VERIFICATION\n${request.verification.take(2_000)}", allowCut = true)
         }
 
-        val allRecords = (store.list(request.objectiveId) + request.records)
+        val candidates = (store.list(request.objectiveId) + request.records)
             .filter { it.objectiveId == request.objectiveId }
             .associateBy { it.id }
             .values
             .sortedWith(compareBy<ContextRecord> { it.createdAt }.thenBy { it.id })
+        val invalidated = candidates.filterNot { store.isUsable(it, request.sourceValidator) }.map { it.id }.toMutableList()
+        if (invalidated.isNotEmpty()) truncated = true
+        val allRecords = candidates.filterNot { it.id in invalidated }
         val byNewest = allRecords.sortedWith(compareByDescending<ContextRecord> { it.createdAt }.thenBy { it.id })
         val includedSet = mutableSetOf<String>()
+        val representedEvidence = mutableSetOf<String>()
         var recordsBlocked = false
 
         fun appendRecordBatch(heading: String, records: List<ContextRecord>, contentLimit: Int) {
             if (baseBlocked || recordsBlocked || records.isEmpty()) return
             var first = true
             for (record in records) {
-                if (record.id in includedSet) continue
+                if (record.id in includedSet || record.id in representedEvidence) continue
                 val rawContent = store.read(record, contentLimit + 1)
                 if (rawContent.isEmpty()) continue
+                if (!store.isUsable(record, request.sourceValidator)) {
+                    truncated = true
+                    invalidated += record.id
+                    continue
+                }
                 if (rawContent.length > contentLimit) truncated = true
                 val content = rawContent.take(contentLimit)
-                val entry = if (first) "$heading\n${record.title}\n$content" else "${record.title}\n$content"
+                val evidenceNote = if (record.evidence.isEmpty()) "" else
+                    "\nEVIDENCE: " + record.evidence.take(8).joinToString(", ") { it.recordId } +
+                        if (record.evidence.size > 8) " (+${record.evidence.size - 8} retained references)" else ""
+                val entry = if (first) "$heading\n${record.title}\n$content$evidenceNote" else "${record.title}\n$content$evidenceNote"
                 if (!appendText(entry, allowCut = false)) {
                     recordsBlocked = true
                     break
@@ -92,6 +107,7 @@ object ContextEngine {
                 first = false
                 included += record.id
                 includedSet += record.id
+                representedEvidence += record.evidence.map { it.recordId }
             }
         }
 
@@ -99,14 +115,28 @@ object ContextEngine {
         val dependencyRecords = byNewest.filter { it.taskId != null && it.taskId in dependencyIds }
         appendRecordBatch("DEPENDENCY RESULTS", dependencyRecords, 1_500)
 
+        appendRecordBatch("CHECKPOINT", byNewest.filter { it.kind == "checkpoint" }.take(1), 1_500)
+
+        request.projectContext?.let { project ->
+            // Prebuilt retrieval must be validated again at assembly time; fail closed without a validator.
+            val fresh = try {
+                project.sources.isNotEmpty() && project.sources.all { request.sourceValidator?.invoke(it) == true }
+            } catch (_: Exception) { false }
+            if (!baseBlocked && fresh && project.text.isNotBlank()) {
+                appendText("PROJECT EVIDENCE\n${project.text}", allowCut = true)
+            } else if (!fresh) truncated = true
+            if (project.truncated) truncated = true
+        }
+
         if (!baseBlocked && request.maxHistoryRecords > 0) {
             val taskKeywords = keywords("${request.taskTitle} ${request.taskInstructions}")
             val rankedRelevant = allRecords.asSequence()
-                .filter { it.kind != "failure" && it.id !in includedSet }
+                .filter { it.kind != "failure" && it.id !in includedSet && it.id !in representedEvidence }
                 .map { record -> record to overlap(taskKeywords, keywords("${record.title} ${record.summary}")) }
                 .filter { it.second > 0 }
                 .sortedWith(
-                    compareByDescending<Pair<ContextRecord, Int>> { it.second }
+                    compareByDescending<Pair<ContextRecord, Int>> { it.first.kind == "summary" }
+                        .thenByDescending { it.second }
                         .thenByDescending { it.first.createdAt }
                         .thenBy { it.first.id },
                 )
@@ -136,11 +166,11 @@ object ContextEngine {
 
         val finalText = output.toString().take(budget)
         if (finalText.length != output.length) truncated = true
-        return BuiltContext(finalText, included, truncated, finalText.length)
+        return BuiltContext(finalText, included, truncated, finalText.length, invalidated.distinct())
     }
 
     private fun keywords(value: String): Set<String> = Regex("[\\p{L}\\p{N}]{2,}")
-        .findAll(value.lowercase())
+        .findAll(value.lowercase(java.util.Locale.ROOT))
         .map { it.value }
         .filterNot { it in ignoredKeywords }
         .toSet()

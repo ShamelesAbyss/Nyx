@@ -25,6 +25,10 @@ import com.nyx.ai.autonomy.ResourcePolicy
 import com.nyx.ai.context.ContextStore
 import com.nyx.ai.data.NyxDatabase
 import com.nyx.ai.settings.CredentialVault
+import com.nyx.ai.network.InferenceFabric
+import com.nyx.ai.nativeinference.NativeRuntime
+import com.nyx.ai.settings.MemoryTelemetry
+import com.nyx.ai.data.ObjectiveEventEntity
 import com.nyx.ai.settings.InferenceClientFactory
 import com.nyx.ai.terminal.TerminalAgentTools
 import com.nyx.ai.terminal.TerminalBridge
@@ -38,13 +42,18 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import com.nyx.ai.terminal.EnvironmentDiscovery
+import org.json.JSONObject
 import java.util.UUID
 
 /**
  * Foreground service that owns objective execution. The ViewModel only starts, pauses, cancels, and
  * observes Room; it never owns the running coroutine.
  *
- * Android restricts background work, so this uses a `dataSync` foreground service with a visible
+ * Android restricts background work, so this uses an honestly declared `specialUse` foreground service (requires Play review) with a visible
  * notification and no claim of unlimited background execution. If the process is killed, durable
  * checkpoints are recovered conservatively and uncertain tasks require review.
  */
@@ -69,20 +78,15 @@ class ObjectiveExecutionService : Service() {
         database = NyxDatabase.getInstance(this)
         contextStore = ContextStore(java.io.File(filesDir, "context"))
         bridge = TerminalBridge(this)
-        val factory = InferenceClientFactory(database, CredentialVault(this))
+        val factory = InferenceClientFactory(database, CredentialVault(this), this)
         sessions = InferenceSessionFactory { objective, agent ->
-            val handle = factory.providerFor(agent.endpointId)
-            InferenceSession(
-                provider = handle.provider,
-                modelId = objective.modelId?.takeIf { it.isNotBlank() } ?: handle.endpoint.modelId,
-                options = handle.options,
-            )
-        }
-        if (terminalEnabled()) {
-            val root = terminalWorkspace()
-            if (root.isNotBlank()) {
-                terminalTools = TerminalAgentTools(bridge, root, TerminalEnvironment.TERMUX_HOST)
-            }
+            val saved = database.objectiveDao().observeEvents(objective.id).first().lastOrNull { it.kind == "execution_config" }
+                ?: error("Legacy objective has no provider snapshot. Review it and select a provider before resuming.")
+            val config = JSONObject(saved.detail ?: "{}")
+            val endpoint = database.modelEndpointDao().getById(config.getString("endpointId"))
+                ?: error("The objective's snapshotted provider was removed.")
+            val handle = factory.providerForRecord(endpoint.copy(modelId = config.getString("modelId"), configurationJson = config.optJSONObject("options")?.toString()))
+            InferenceSession(handle.provider, config.getString("modelId"), handle.options)
         }
         createChannel()
     }
@@ -91,12 +95,18 @@ class ObjectiveExecutionService : Service() {
         val action = intent?.action ?: ACTION_START
         when (action) {
             ACTION_PAUSE -> {
+                if (runJob == null) { stopSelf(startId); return START_NOT_STICKY }
                 control?.requestPause()
+                runJob?.cancel(PauseRequested())
+                bridge.cancelAll()
                 updateNotification("Pausing after the current step…")
             }
             ACTION_CANCEL -> {
+                if (runJob == null) { stopSelf(startId); return START_NOT_STICKY }
                 cancelRequested = true
                 control?.requestCancel()
+                runJob?.cancel(CancellationException("Cancelled by user"))
+                bridge.cancelAll()
                 updateNotification("Cancelling…")
             }
             ACTION_START -> {
@@ -109,8 +119,16 @@ class ObjectiveExecutionService : Service() {
                     updateNotification("Another objective is already running.")
                     return START_NOT_STICKY
                 }
-                startForegroundSafely("Starting objective…")
-                launchObjective(objectiveId)
+                try {
+                    startForegroundSafely("Starting objective…")
+                    launchObjective(objectiveId)
+                } catch (failure: Exception) {
+                    ExecutionMonitor.finish("Foreground-service startup rejected: ${failure.javaClass.simpleName}")
+                    scope.launch {
+                        database.objectiveDao().getObjective(objectiveId)?.let { database.objectiveDao().upsertObjective(it.copy(status = "needs_attention", error = "Android refused foreground-service start: ${failure.javaClass.simpleName}")) }
+                        stopSelf(startId)
+                    }
+                }
             }
         }
         return START_NOT_STICKY
@@ -123,6 +141,21 @@ class ObjectiveExecutionService : Service() {
         currentObjectiveId = objectiveId
         ExecutionMonitor.begin(objectiveId)
         runJob = scope.launch {
+            val before = InferenceFabric.metrics.value
+            val began = System.currentTimeMillis()
+            var sampledPeakPssKb = 0
+            val sampler = scope.launch {
+                while (isActive) {
+                    sampledPeakPssKb = maxOf(sampledPeakPssKb, MemoryTelemetry.snapshot(this@ObjectiveExecutionService).processPssKb)
+                    delay(5_000)
+                }
+            }
+            val watchdog = scope.launch {
+                delay(MAX_RUN_MILLIS)
+                executionControl.requestPause()
+                runJob?.cancel(PauseRequested())
+                bridge.cancelAll()
+            }
             var finalStatus: String? = null
             try {
                 finalStatus = execute(objectiveId, executionControl)
@@ -138,6 +171,20 @@ class ObjectiveExecutionService : Service() {
                     )
                 }
             } finally {
+                watchdog.cancel(); sampler.cancel()
+                withContext(NonCancellable) {
+                    checkpointInterrupted(objectiveId, finalStatus ?: "paused")
+                    val after = InferenceFabric.metrics.value
+                    val tasks = database.objectiveDao().getTasks(objectiveId)
+                    val metrics = JSONObject().put("status", finalStatus).put("elapsedMillis", System.currentTimeMillis() - began)
+                        .put("inferenceCalls", after.calls - before.calls).put("generatedCharacters", after.generatedCharacters - before.generatedCharacters)
+                        .put("sampledPeakPssKb", sampledPeakPssKb).put("sampleIntervalMillis", 5000)
+                        .put("completedTasks", tasks.count { it.status == "completed" }).put("plannedTasks", tasks.size)
+                        .put("retryCount", tasks.sumOf { (it.attemptCount - 1).coerceAtLeast(0) })
+                        .put("verifiedTasks", tasks.count { it.verificationStatus == "passed" })
+                    database.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), objectiveId, null, "execution_metrics", metrics.toString(), System.currentTimeMillis()))
+                    if (finalStatus != "completed") NativeRuntime.unload()
+                }
                 ExecutionMonitor.finish(finalStatus)
                 updateNotification(finalStatus ?: "finished")
                 runJob = null
@@ -161,11 +208,33 @@ class ObjectiveExecutionService : Service() {
             while (isActive) {
                 delay(LEASE_MILLIS / 3)
                 val renewed = dao.tryAcquireLease(objectiveId, ownerId, System.currentTimeMillis(), System.currentTimeMillis() + LEASE_MILLIS)
-                if (renewed == 0) return@launch
+                if (renewed == 0) {
+                    executionControl.requestPause()
+                    runJob?.cancel(PauseRequested())
+                    return@launch
+                }
+                val pressure = DeviceResourceReader.read(this@ObjectiveExecutionService)
+                if (pressure.lowMemory || pressure.thermalStatus >= 4 || (pressure.batteryPercent < 8 && !pressure.charging)) {
+                    executionControl.requestPause()
+                    runJob?.cancel(PauseRequested())
+                    return@launch
+                }
                 updateNotification("Running")
             }
         }
         return try {
+            val snapshot = dao.observeEvents(objectiveId).first().lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
+                ?: error("No approved execution settings for this objective.")
+            terminalTools = null
+            if (terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
+                val profile = EnvironmentDiscovery(bridge).discover()
+                require(profile.hostAvailable) { profile.detail ?: "Termux setup is incomplete." }
+                val environment = runCatching { TerminalEnvironment.valueOf(snapshot.optString("environment", "TERMUX_HOST")) }.getOrDefault(TerminalEnvironment.TERMUX_HOST)
+                require(environment != TerminalEnvironment.DEBIAN_PROOT || profile.debianAvailable) { "Debian PRoot is not installed or not verified by discovery." }
+                val workspace = snapshot.optString("workspace")
+                require(workspace.startsWith("/") && workspace.length <= 4096) { "Select an absolute authorized workspace." }
+                terminalTools = TerminalAgentTools(bridge, workspace, environment, useTimeoutBinary = profile.timeoutAvailable, workspaceApproved = true)
+            }
             val resources = DeviceResourceReader.read(this)
             val profile = ResourcePolicy.profile(resources, objective.parallelism)
             ExecutionMonitor.update { it.copy(phase = "executing", message = profile.reason) }
@@ -186,14 +255,14 @@ class ObjectiveExecutionService : Service() {
             result.status
         } finally {
             heartbeat.cancel()
-            dao.releaseLease(objectiveId, ownerId)
+            withContext(NonCancellable) { dao.releaseLease(objectiveId, ownerId) }
         }
     }
 
     private fun startForegroundSafely(text: String) {
         val notification = buildNotification(text)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(NOTIFICATION_ID, notification, if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -251,7 +320,31 @@ class ObjectiveExecutionService : Service() {
     private fun terminalWorkspace(): String =
         getSharedPreferences("nyx_settings", Context.MODE_PRIVATE).getString(KEY_TERMINAL_WORKSPACE, "") ?: ""
 
+    private suspend fun checkpointInterrupted(id: String, status: String) {
+        val dao = database.objectiveDao()
+        val now = System.currentTimeMillis()
+        dao.getTasks(id).filter { it.status in setOf("running", "verifying") }.forEach {
+            dao.upsertTask(it.copy(status = "needs_review", updatedAt = now, finishedAt = now,
+                error = "Interrupted. An external process or file edit may already have occurred; no automatic replay."))
+        }
+        dao.getObjective(id)?.let { row ->
+            if (row.status in setOf("planning", "running", "paused")) dao.upsertObjective(row.copy(status = status, updatedAt = now, leaseOwner = null, leaseExpiresAt = null,
+                error = if (status == "completed") null else "Execution stopped ($status). Review uncertain tasks and provider settings before resuming."))
+        }
+    }
+
+    override fun onTimeout(startId: Int) { onTimeout(startId, 0) }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        control?.requestPause()
+        runJob?.cancel(PauseRequested())
+        bridge.cancelAll()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+    }
+
     override fun onDestroy() {
+        bridge.cancelAll()
         runJob?.cancel()
         scope.cancel()
         super.onDestroy()
@@ -268,6 +361,7 @@ class ObjectiveExecutionService : Service() {
         const val KEY_TERMINAL_WORKSPACE = "terminal_workspace"
         private const val CHANNEL_ID = "nyx_objective_execution"
         private const val NOTIFICATION_ID = 4101
+        private const val MAX_RUN_MILLIS = 30 * 60_000L
         private const val LEASE_MILLIS = 90_000L
 
         fun start(context: Context, objectiveId: String) {

@@ -18,8 +18,8 @@ class ProviderCapabilityTest {
         assertTrue(ProviderFactory.isLocalUrl("http://127.0.0.1:11434"))
         assertTrue(ProviderFactory.isLocalUrl("http://localhost:11434"))
         assertTrue(ProviderFactory.isLocalUrl("http://[::1]:11434"))
-        assertTrue(ProviderFactory.isLocalUrl("http://10.0.2.2:11434"))
-        assertTrue(ProviderFactory.isLocalUrl("http://inference-box.local:11434"))
+        assertFalse(ProviderFactory.isLocalUrl("http://10.0.2.2:11434"))
+        assertFalse(ProviderFactory.isLocalUrl("http://inference-box.local:11434"))
         assertFalse(ProviderFactory.isLocalUrl("https://api.example.com"))
         assertFalse(ProviderFactory.isLocalUrl("not a URL"))
     }

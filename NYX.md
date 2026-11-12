@@ -1,9 +1,7 @@
-# NYX v0.5.0
+# NYX Eclipse AI — v0.6.0
 
-This file is retained for compatibility with the repository's earlier overview filename. The current project overview is [README.md](README.md), and the current release downloads are available from the [NYX v0.5.0 GitHub Release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.5.0).
+This legacy filename is retained so existing links keep working. The canonical project homepage is [README.md](README.md).
 
-NYX v0.5.0 replaces the ViewModel-owned objective runner with a foreground service that holds durable leases, schedules dependency-ready tasks concurrently within device-derived limits, executes allowlisted tools, and verifies completion against locally observed evidence: exit codes, output, file existence, file contents, and SHA-256. The Termux bridge is now wired into the UI and into workspace-scoped agent tools, with root and protected-Android operations blocked and mutating commands requiring approval. Inference is provider-neutral over the existing Ollama and OpenAI-compatible `/v1` transports.
+NYX v0.6.0 adds genuine llama.cpp CPU inference, local GGUF model management, a bounded inspect–repair–retest development loop, and Android API 37 support on top of the existing durable objective engine, Termux bridge, and evidence-based verification. The complete overview, download links, capability status, and honest limitations are in [README.md](README.md); the implementation record is in [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md) and the verified test evidence is in [TEST_RESULTS.md](TEST_RESULTS.md).
 
-This remains a bounded execution engine, not a Manus-equivalent autonomous computer. Terminal and Debian/PRoot behavior, process-death recovery, and live inference still require verification on physical hardware. Native GGUF inference is not included, and the APK is debug-signed.
-
-See [BUILD.md](BUILD.md), [USER_GUIDE.md](USER_GUIDE.md), [CHANGELOG.md](CHANGELOG.md), [TEST_RESULTS.md](TEST_RESULTS.md), and [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md) for current details. The project retains its Apache-2.0 license in [LICENSE](LICENSE).
+Official downloads: [v0.6.0 release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.6.0). The APK is ARM64-only and debug-signed, not production-signed.

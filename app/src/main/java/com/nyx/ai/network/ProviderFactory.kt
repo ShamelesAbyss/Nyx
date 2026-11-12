@@ -26,9 +26,7 @@ object ProviderFactory {
             ?.lowercase(Locale.ROOT) ?: return false
         return host == "127.0.0.1" ||
             host == "localhost" ||
-            host == "::1" ||
-            host == "10.0.2.2" ||
-            host.endsWith(".local")
+            host == "::1"
     }
 
     fun isOpenAiCompatible(baseUrl: String): Boolean {

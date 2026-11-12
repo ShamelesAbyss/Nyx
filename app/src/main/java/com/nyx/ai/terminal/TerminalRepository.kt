@@ -4,6 +4,9 @@ import android.content.Context
 import com.nyx.ai.data.NyxDatabase
 import com.nyx.ai.data.TerminalCommandEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.util.UUID
 
@@ -60,12 +63,17 @@ class TerminalRepository(
         )
         database.terminalCommandDao().upsert(row)
 
-        val result = if (assessment.blocked) {
+        val result = try { if (assessment.blocked) {
             TerminalCommandResult(null, TerminalResultKind.POLICY_BLOCKED, message = assessment.reasons.joinToString("; "))
         } else if (assessment.requiresConfirmation && !approvedByUser) {
             TerminalCommandResult(null, TerminalResultKind.CONFIRMATION_REQUIRED, message = assessment.reasons.joinToString("; "))
         } else {
             bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser)
+        } } catch (cancel: CancellationException) {
+            withContext(NonCancellable) {
+                database.terminalCommandDao().upsert(row.copy(status = "needs_review", finishedAt = System.currentTimeMillis(), error = "Result wait cancelled. Termux process may still run until its timeout; do not replay automatically."))
+            }
+            throw cancel
         }
 
         database.terminalCommandDao().upsert(

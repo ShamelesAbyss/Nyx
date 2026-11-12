@@ -20,8 +20,13 @@ class TerminalBridge(
     private val prootProbe: ProotDistroProbe? = null,
 ) {
     private val app = context.applicationContext
-    private val adapter = TermuxIpcAdapter(app, prootProbe ?: NoProotProbeAccessor.probe)
+    @Volatile private var discoveredProotPath: String? = null
+    private val adapter = TermuxIpcAdapter(app, prootProbe ?: ProotDistroProbe { discoveredProotPath })
     private val active = ConcurrentHashMap<String, TerminalCommandHandle>()
+
+    internal fun configureDiscoveredProot(path: String?) {
+        discoveredProotPath = path?.takeIf { it.startsWith("/") && it.length <= 4096 && '\u0000' !in it }
+    }
 
     fun readiness(): TermuxReadiness = adapter.readiness()
 
@@ -48,7 +53,7 @@ class TerminalBridge(
                 }
                 return@suspendCancellableCoroutine
             }
-            active[handle.requestId] = handle
+            if (!completed.get()) active[handle.requestId] = handle
             continuation.invokeOnCancellation {
                 active.remove(handle.requestId)
                 handle.cancel()

@@ -1,279 +1,413 @@
 package com.nyx.ai.terminal
 
-import android.util.Base64
 import com.nyx.ai.agent.AgentToolProvider
 import com.nyx.ai.agent.FileProbe
 import com.nyx.ai.agent.ToolExecutionEvidence
+import com.nyx.ai.development.CheckpointFile
+import com.nyx.ai.development.DevelopmentCheckpoint
+import com.nyx.ai.development.DevelopmentCommand
+import com.nyx.ai.development.DevelopmentDiscovery
+import com.nyx.ai.development.DevelopmentPatch
+import com.nyx.ai.development.DevelopmentPaths
+import com.nyx.ai.development.PatchApplication
+import com.nyx.ai.development.PatchFile
+import com.nyx.ai.development.ProjectRunKind
+import com.nyx.ai.development.SourceSnapshot
+import com.nyx.ai.development.developmentDiff
+import com.nyx.ai.development.developmentSha256
 import com.nyx.ai.network.ToolCall
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.util.Base64
 import java.util.Collections
+import java.util.UUID
+
+/** Test seam: callers must never forward model strings directly to this executor. */
+fun interface TerminalToolExecutor {
+    suspend fun run(command: String, environment: TerminalEnvironment, workingDirectory: String,
+                    timeoutSeconds: Long, useTimeoutBinary: Boolean): TerminalCommandResult
+}
 
 /**
- * Terminal-backed agent tools. Every operation is confined to [workspaceRoot] on the Termux side and
- * passes through [CommandPolicy]; destructive and privileged commands remain blocked even when the
- * user has enabled autonomous terminal use.
+ * Capabilities, not shell filtering: models cannot supply commands. The constructor's normalized
+ * absolute workspace is approved by the host UI; [workspaceApproved] separately opts into executing
+ * trusted project code and writing files. These tools are NOT an OS sandbox for project scripts.
  */
 class TerminalAgentTools(
-    private val bridge: TerminalBridge,
-    private val workspaceRoot: String,
+    private val executor: TerminalToolExecutor,
+    val workspaceRoot: String,
     private val environment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST,
     private val timeoutSeconds: Long = 180,
     private val useTimeoutBinary: Boolean = true,
+    private val workspaceApproved: Boolean = false,
 ) : AgentToolProvider, FileProbe {
+    constructor(
+        bridge: TerminalBridge,
+        workspaceRoot: String,
+        environment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST,
+        timeoutSeconds: Long = 180,
+        useTimeoutBinary: Boolean = true,
+        workspaceApproved: Boolean = false,
+    ) : this(TerminalToolExecutor { command, env, directory, timeout, hardTimeout ->
+        bridge.runShell(command, env, directory, timeout, hardTimeout, approved = true)
+    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved)
 
-    override val names: Set<String> = setOf(
-        "terminal_run", "file_read", "file_write", "file_list", "file_search",
-        "project_detect", "build_run", "test_run",
-    )
+    init { require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspaceRoot)) { "Workspace must be absolute and normalized; resolve ~/ before constructing terminal tools" } }
 
+    override val names = setOf("terminal_run", "file_read", "file_write", "file_list", "file_search",
+        "project_detect", "project_inspect", "source_search", "repo_diff", "repo_status", "project_run", "build_run", "test_run")
     private val evidence = Collections.synchronizedList(mutableListOf<ToolExecutionEvidence>())
+    private val mutationLock = Mutex()
+    private var discovery: DevelopmentDiscovery? = null
+    private var buildCommand: String? = null
+    private var testCommand: String? = null
+    private val knownCheckpoints = mutableMapOf<String, DevelopmentCheckpoint>()
 
     override fun schemas(): JSONArray = JSONArray().apply {
-        put(schema("terminal_run", "Run a shell command in the authorized Termux workspace. Destructive and privileged commands are blocked.", obj("command" to "string", "timeout_seconds" to "number"), listOf("command")))
-        put(schema("file_read", "Read a UTF-8 text file inside the authorized workspace.", obj("path" to "string"), listOf("path")))
-        put(schema("file_write", "Create or replace a UTF-8 text file inside the authorized workspace.", obj("path" to "string", "content" to "string"), listOf("path", "content")))
-        put(schema("file_list", "List files under a directory in the authorized workspace.", obj("path" to "string"), listOf("path")))
-        put(schema("file_search", "Search file contents under the workspace with grep.", obj("query" to "string", "path" to "string"), listOf("query")))
-        put(schema("project_detect", "Detect the project type and build/test commands in a workspace directory.", obj("path" to "string"), emptyList()))
-        put(schema("build_run", "Run the detected or supplied build command and return its exit code and output.", obj("path" to "string", "command" to "string"), emptyList()))
-        put(schema("test_run", "Run the detected or supplied test command and return its exit code and output.", obj("path" to "string", "command" to "string"), emptyList()))
+        put(schema("terminal_run", "Disabled. Model-directed shell commands are always denied.", obj("command" to "string"), emptyList()))
+        put(schema("file_read", "Read a bounded UTF-8 source file in the authorized workspace.", obj("path" to "string"), listOf("path")))
+        put(schema("file_write", "Checkpoint and atomically replace one file after checking its exact SHA-256; trusted workspace opt-in required.", obj("path" to "string", "content" to "string", "expectedSha256" to "string"), listOf("path", "content", "expectedSha256")))
+        for (name in listOf("file_list", "project_detect", "project_inspect")) put(schema(name, "Read-only confined project inspection.", obj("path" to "string"), emptyList()))
+        for (name in listOf("source_search", "file_search")) put(schema(name, "Literal text search of a bounded confined source index.", obj("query" to "string"), listOf("query")))
+        put(schema("repo_status", "Fixed read-only Git status/history. No network, commands or options accepted.", obj(), emptyList()))
+        put(schema("repo_diff", "Observed before/after diff for NYX checkpoints only; never commits or publishes.", obj(), emptyList()))
+        put(schema("project_run", "Run only the discovered fixed build or test command in the trusted approved project.", obj("kind" to "string"), listOf("kind")))
+        for (name in listOf("build_run", "test_run")) put(schema(name, "Run only the discovered fixed project command. No command override accepted.", obj(), emptyList()))
     }
 
-    override fun drainEvidence(): List<ToolExecutionEvidence> {
-        synchronized(evidence) {
-            val copy = evidence.toList()
-            evidence.clear()
-            return copy
+    override suspend fun execute(call: ToolCall): String {
+        val args = call.arguments
+        if (call.name == "terminal_run") return denied("terminal_run", "Model-directed shell is disabled; use project_run build/test")
+        if (args.has("command") || args.has("timeout_seconds")) return denied(call.name, "Command and timeout overrides are denied")
+        val path = args.optString("path")
+        return when (call.name) {
+            "file_read" -> read(path, MAX_FILE_BYTES) ?: "Tool denied/error: file is not a bounded confined UTF-8 source"
+            "file_write" -> {
+                if (!args.has("expectedSha256") || !args.has("content")) return denied(call.name, "Expected hash and content are required")
+                val result = applyPatch(DevelopmentPatch(listOf(PatchFile(path, args.optString("expectedSha256"), args.optString("content")))))
+                JSONObject().put("applied", result.applied).put("reason", result.reason).put("checkpoint", result.checkpoint?.id)
+                    .put("humanReviewRequired", result.humanReviewRequired).toString()
+            }
+            "file_list" -> {
+                if (path.isNotBlank() && relative(path) == null && path != workspaceRoot) return denied(call.name, "Invalid directory")
+                val prefix = if (path == workspaceRoot) "" else path.trimEnd('/')
+                JSONArray(indexSources(128, 1).map { it.path }.filter { prefix.isBlank() || it.startsWith("$prefix/") || it == prefix }).toString()
+            }
+            "file_search", "source_search" -> sourceSearch(args.optString("query"))
+            "project_detect", "project_inspect" -> {
+                if (path.isNotBlank() && path != workspaceRoot) return denied(call.name, "Project operations use only the approved workspace root")
+                discoveryJson(inspectProject())
+            }
+            "repo_status" -> {
+                if (args.length() != 0) return denied(call.name, "Arguments denied")
+                val result = controlled("repo_status", rootGuard() + "git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --short && git -c core.fsmonitor=false -c core.hooksPath=/dev/null log -5 --oneline", 30)
+                JSONObject().put("exitCode", result.exitCode).put("stdout", result.stdout.take(6000)).put("stderr", result.stderr.take(1000)).toString()
+            }
+            "repo_diff" -> checkpointDiff(knownCheckpoints.values.toList(), 32_000)
+            "project_run", "build_run", "test_run" -> {
+                if (path.isNotBlank() && path != workspaceRoot) return denied(call.name, "Project operations use only the approved workspace root")
+                val kind = when (call.name) {
+                    "build_run" -> ProjectRunKind.BUILD
+                    "test_run" -> ProjectRunKind.TEST
+                    else -> when (args.optString("kind")) { "build" -> ProjectRunKind.BUILD; "test" -> ProjectRunKind.TEST; else -> return denied(call.name, "Only kind build or test is allowed") }
+                }
+                val result = runProject(kind)
+                JSONObject().put("command", result.command).put("exitCode", result.exitCode ?: JSONObject.NULL)
+                    .put("stdout", result.stdout).put("stderr", result.stderr).put("passed", result.passed).toString()
+            }
+            else -> denied(call.name, "Unknown terminal capability")
         }
     }
 
-    override suspend fun execute(call: ToolCall): String = when (call.name) {
-        "terminal_run" -> runCommand(call.arguments.optString("command"), call.arguments.optString("path"), call.arguments.optLong("timeout_seconds", timeoutSeconds))
-        "file_read" -> readFile(call.arguments.optString("path"))
-        "file_write" -> writeFile(call.arguments.optString("path"), call.arguments.optString("content"))
-        "file_list" -> listFiles(call.arguments.optString("path"))
-        "file_search" -> searchFiles(call.arguments.optString("query"), call.arguments.optString("path"))
-        "project_detect" -> detectProject(call.arguments.optString("path"))
-        "build_run" -> build(call.arguments.optString("path"), call.arguments.optString("command"))
-        "test_run" -> test(call.arguments.optString("path"), call.arguments.optString("command"))
-        else -> "Tool denied: '${call.name}' is not a terminal tool."
+    override fun drainEvidence(): List<ToolExecutionEvidence> = synchronized(evidence) {
+        evidence.toList().also { evidence.clear() }
     }
 
     override suspend fun exists(path: String): Boolean {
-        val target = resolve(path) ?: return false
-        val result = bridge.runShell("test -e ${quote(target)} && echo NYX_EXISTS", environment, workspaceRoot, 30, useTimeoutBinary, approved = true)
-        return result.stdout.contains("NYX_EXISTS")
-    }
-
-    override suspend fun read(path: String, maxChars: Int): String? {
-        val target = resolve(path) ?: return null
-        val result = bridge.runShell("cat -- ${quote(target)}", environment, workspaceRoot, 60, useTimeoutBinary, approved = true)
-        if (result.kind != TerminalResultKind.SUCCEEDED) return null
-        return result.stdout.take(maxChars)
+        val target = relative(path)?.let { "$workspaceRoot/$it" } ?: return false
+        val result = controlled("file_exists", fileGuard(target, allowMissing = true) + "test -f ${quote(target)}", files = listOf(path))
+        return result.isSuccess
     }
 
     override suspend fun sha256(path: String): String? {
-        val target = resolve(path) ?: return null
-        val result = bridge.runShell("sha256sum -- ${quote(target)}", environment, workspaceRoot, 60, useTimeoutBinary, approved = true)
-        return result.stdout.trim().substringBefore(' ').takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+        val target = relative(path)?.let { "$workspaceRoot/$it" } ?: return null
+        return hashTarget(target, path)
     }
 
-    private suspend fun runCommand(command: String, path: String?, timeout: Long): String {
-        if (command.isBlank()) return "Tool error: command is empty."
-        val working = resolveDirectory(path) ?: return "Tool error: path is outside the authorized workspace."
-        val assessment = CommandPolicy.assess(command)
-        if (assessment.blocked) {
-            record("terminal_run", null, "", assessment.reasons.joinToString("; "), mutating = true)
-            return "Tool denied by policy: ${assessment.reasons.joinToString("; ").ifBlank { "unsafe command" }}"
+    override suspend fun read(path: String, maxChars: Int): String? {
+        val snapshot = snapshot(path, MAX_FILE_BYTES) ?: return null
+        return snapshot.content.take(maxChars.coerceIn(0, MAX_FILE_BYTES))
+    }
+
+    /** Read-only discovery never attempts installs or loops on missing compilers. */
+    suspend fun inspectProject(): DevelopmentDiscovery {
+        buildCommand = null; testCommand = null
+        val result = controlled("project_inspect", rootGuard() + "for f in settings.gradle.kts settings.gradle build.gradle.kts build.gradle gradlew package.json pyproject.toml setup.py Cargo.toml go.mod Makefile CMakeLists.txt; do if [ -f \"\$f\" ] && [ ! -L \"\$f\" ]; then printf 'MARKER:%s\\n' \"\$f\"; fi; done; " +
+            "for t in realpath sha256sum head wc base64 mktemp mv cp mkdir cut chmod find timeout dd java javac gradle node npm python3 cargo rustc go make cc cmake; do p=\$(command -v \"\$t\" 2>/dev/null); if [ -n \"\$p\" ]; then printf 'TOOL:%s=%s\\n' \"\$t\" \"\$p\"; fi; done")
+        if (!result.isSuccess) return DevelopmentDiscovery(workspaceRoot, "unknown", reason = "Remote workspace canonicalization or IPC failed: ${result.message ?: result.stderr.take(300)}").also { discovery = it }
+        val markers = result.stdout.lineSequence().filter { it.startsWith("MARKER:") }.map { it.removePrefix("MARKER:") }.toList()
+        val tools = result.stdout.lineSequence().filter { it.startsWith("TOOL:") }.map { it.removePrefix("TOOL:") }.mapNotNull {
+            val name = it.substringBefore('='); val path = it.substringAfter('=', "")
+            if (path.startsWith('/') && path.length <= 512 && '\u0000' !in path && !path.startsWith("$workspaceRoot/")) name to path else null
+        }.toMap()
+        val missing = mutableListOf<String>()
+        for (tool in listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")) if (tool !in tools) missing += tool
+        fun tool(name: String): String { if (name !in tools) missing += name; return quote(tools[name] ?: "/missing/$name") }
+        val type: String
+        when {
+            markers.any { "gradle" in it } -> {
+                val android = if (missing.isEmpty()) listOf("build.gradle.kts", "build.gradle", "app/build.gradle.kts", "app/build.gradle")
+                    .mapNotNull { snapshot(it, 16_000)?.content }.any { "com.android." in it } else false
+                type = if (android) "android-gradle" else "jvm-gradle"
+                tool("java"); tool("javac")
+                val gradle = if ("gradlew" in markers) "./gradlew" else tool("gradle")
+                if ("gradlew" in markers) {
+                    val wrapper = controlled("toolchain_probe", fileGuard("$workspaceRoot/gradlew") + "test -x ./gradlew && test -f gradle/wrapper/gradle-wrapper.jar", timeout = 30)
+                    if (!wrapper.isSuccess) missing += "executable gradlew and gradle-wrapper.jar"
+                }
+                if (android) {
+                    val sdk = controlled("toolchain_probe", rootGuard() + "sdk=\${ANDROID_HOME:-\${ANDROID_SDK_ROOT:-}}; [ -n \"\$sdk\" ] && [ -d \"\$sdk/platforms\" ] && [ -d \"\$sdk/build-tools\" ]", timeout = 30)
+                    if (!sdk.isSuccess) missing += "Android SDK (ANDROID_HOME/ANDROID_SDK_ROOT with platforms and build-tools)"
+                }
+                buildCommand = "$gradle --offline --no-daemon ${if (android) "assembleDebug" else "assemble"}"; testCommand = "$gradle --offline --no-daemon test"
+            }
+            "package.json" in markers -> { type = "node"; tool("node"); val npm = tool("npm"); buildCommand = "$npm --offline run build"; testCommand = "$npm --offline test" }
+            "pyproject.toml" in markers || "setup.py" in markers -> {
+                type = "python"; val python = tool("python3"); buildCommand = "$python -m compileall -q ."; testCommand = "$python -m pytest -q"
+                if ("python3" in tools) {
+                    val pytest = controlled("toolchain_probe", rootGuard() + "$python -I -c 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec(\"pytest\") else 1)'", timeout = 30)
+                    if (!pytest.isSuccess) missing += "python3:pytest"
+                }
+            }
+            "Cargo.toml" in markers -> { type = "rust"; tool("rustc"); val cargo = tool("cargo"); buildCommand = "$cargo build --offline"; testCommand = "$cargo test --offline" }
+            "go.mod" in markers -> { type = "go"; val go = tool("go"); buildCommand = "GOPROXY=off GOSUMDB=off $go build ./..."; testCommand = "GOPROXY=off GOSUMDB=off $go test ./..." }
+            "Makefile" in markers -> { type = "make"; tool("cc"); val make = tool("make"); buildCommand = make; testCommand = "$make test" }
+            else -> { type = "unknown"; missing += "supported build/test project markers" }
         }
-        val result = bridge.runShell(command, environment, working, timeout.coerceIn(1, 600), useTimeoutBinary, approved = true)
-        record("terminal_run", result.exitCode, result.stdout, result.stderr, mutating = assessment.requiresConfirmation)
-        return format(result)
+        val commands = listOfNotNull(buildCommand?.let { ProjectRunKind.BUILD to it }, testCommand?.let { ProjectRunKind.TEST to it }).toMap()
+        return DevelopmentDiscovery(workspaceRoot, type, commands, missing.distinct(), workspaceApproved && missing.isEmpty() && commands.size == 2,
+            when { !workspaceApproved -> "Trusted workspace execution/write approval is required"; missing.isNotEmpty() -> "Missing toolchain; no commands executed and no install attempted"; else -> "Observed fixed toolchain commands; trusted project scripts may execute arbitrary code" }, markers).also { discovery = it }
     }
 
-    private suspend fun readFile(path: String): String {
-        val target = resolve(path) ?: return "Tool error: path is outside the authorized workspace."
-        val result = bridge.runShell("cat -- ${quote(target)}", environment, workspaceRoot, 60, useTimeoutBinary, approved = true)
-        record("file_read", result.exitCode, result.stdout, result.stderr, mutating = false, files = listOf(target))
-        return if (result.kind == TerminalResultKind.SUCCEEDED) result.stdout.take(48_000) else format(result)
+    suspend fun indexSources(maxFiles: Int, maxFileBytes: Int): List<SourceSnapshot> {
+        val listing = controlled("source_index", rootGuard() +
+            "find . -maxdepth 8 \\( -name .git -o -name .hg -o -name .svn -o -name .ssh -o -name .aws -o -name .gnupg -o -name .nyx-checkpoints -o -name .gradle -o -name .idea -o -name node_modules -o -name build -o -name dist -o -name target -o -name __pycache__ -o -name .venv -o -name venv \\) -prune -o -type f -print | head -c 16000")
+        if (!listing.isSuccess) return emptyList()
+        val paths = listing.stdout.lineSequence().map { it.removePrefix("./") }.filter { DevelopmentPaths.isSafeRelative(it) }.take(maxFiles.coerceIn(1, 256)).toList()
+        if (maxFileBytes <= 1) return paths.map { SourceSnapshot(it, "", "") }
+        return paths.mapNotNull { snapshot(it, maxFileBytes.coerceIn(1, MAX_FILE_BYTES)) }
     }
 
-    private suspend fun writeFile(path: String, content: String): String {
-        val target = resolve(path) ?: return "Tool error: path is outside the authorized workspace."
-        if (content.length > 256_000) return "Tool error: content exceeds 256000 characters."
-        val encoded = Base64.encodeToString(content.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        val parent = target.substringBeforeLast('/', workspaceRoot)
-        val command = "mkdir -p ${quote(parent)} && printf '%s' '$encoded' | base64 -d > ${quote(target)} && wc -c < ${quote(target)}"
-        val result = bridge.runShell(command, environment, workspaceRoot, 120, useTimeoutBinary, approved = true)
-        record("file_write", result.exitCode, result.stdout, result.stderr, mutating = true, files = listOf(target))
-        return if (result.kind == TerminalResultKind.SUCCEEDED) "Wrote ${result.stdout.trim()} bytes to $target" else format(result)
-    }
-
-    private suspend fun listFiles(path: String): String {
-        val directory = resolveDirectory(path) ?: return "Tool error: path is outside the authorized workspace."
-        val result = bridge.runShell("find ${quote(directory)} -maxdepth 2 -type f -printf '%p\n' 2>/dev/null | head -200", environment, workspaceRoot, 60, useTimeoutBinary, approved = true)
-        record("file_list", result.exitCode, result.stdout, result.stderr, mutating = false)
-        return format(result)
-    }
-
-    private suspend fun searchFiles(query: String, path: String?): String {
-        if (query.isBlank() || query.length > 200) return "Tool error: search text must be 1-200 characters."
-        val directory = resolveDirectory(path) ?: return "Tool error: path is outside the authorized workspace."
-        val result = bridge.runShell("grep -rIl -- ${quote(query)} ${quote(directory)} 2>/dev/null | head -50", environment, workspaceRoot, 90, useTimeoutBinary, approved = true)
-        record("file_search", result.exitCode, result.stdout, result.stderr, mutating = false)
-        return format(result)
-    }
-
-    private suspend fun detectProject(path: String?): String {
-        val directory = resolveDirectory(path) ?: return "Tool error: path is outside the authorized workspace."
-        val script = buildString {
-            append("cd -- ${quote(directory)} || exit 1; ")
-            append("for f in settings.gradle.kts settings.gradle build.gradle.kts build.gradle gradlew package.json pyproject.toml setup.py Cargo.toml go.mod Makefile CMakeLists.txt; do ")
-            append("if [ -e \"\$f\" ]; then echo \"FOUND:\$f\"; fi; done; ")
-            append("if [ -d .git ]; then echo 'FOUND:.git'; fi")
-        }
-        val result = bridge.runShell(script, environment, workspaceRoot, 45, useTimeoutBinary, approved = true)
-        record("project_detect", result.exitCode, result.stdout, result.stderr, mutating = false)
-        if (result.kind != TerminalResultKind.SUCCEEDED) return format(result)
-        val found = result.stdout.lineSequence().filter { it.startsWith("FOUND:") }.map { it.removePrefix("FOUND:") }.toList()
-        val kind = when {
-            found.any { it.contains("gradle") } -> "android-or-jvm-gradle"
-            "package.json" in found -> "node"
-            "pyproject.toml" in found || "setup.py" in found -> "python"
-            "Cargo.toml" in found -> "rust"
-            "go.mod" in found -> "go"
-            "CMakeLists.txt" in found || "Makefile" in found -> "native-make"
-            else -> "unknown"
-        }
-        val build = when (kind) {
-            "android-or-jvm-gradle" -> if ("gradlew" in found) "./gradlew assembleDebug" else "gradle assembleDebug"
-            "node" -> "npm run build"
-            "python" -> "python3 -m compileall ."
-            "rust" -> "cargo build"
-            "go" -> "go build ./..."
-            "native-make" -> "make"
-            else -> null
-        }
-        val test = when (kind) {
-            "android-or-jvm-gradle" -> if ("gradlew" in found) "./gradlew test" else "gradle test"
-            "node" -> "npm test"
-            "python" -> "python3 -m pytest -q"
-            "rust" -> "cargo test"
-            "go" -> "go test ./..."
-            "native-make" -> "make test"
-            else -> null
-        }
-        return JSONObject()
-            .put("path", directory)
-            .put("projectType", kind)
-            .put("markers", JSONArray(found))
-            .put("buildCommand", build)
-            .put("testCommand", test)
-            .toString(2)
-    }
-
-    private suspend fun build(path: String?, command: String?): String {
-        val directory = resolveDirectory(path) ?: return "Tool error: path is outside the authorized workspace."
-        val actual = command?.takeIf { it.isNotBlank() } ?: defaultCommand(directory, build = true)
-            ?: return "Tool error: no build command could be detected; supply one explicitly."
-        return runProjectCommand("build_run", actual, directory)
-    }
-
-    private suspend fun test(path: String?, command: String?): String {
-        val directory = resolveDirectory(path) ?: return "Tool error: path is outside the authorized workspace."
-        val actual = command?.takeIf { it.isNotBlank() } ?: defaultCommand(directory, build = false)
-            ?: return "Tool error: no test command could be detected; supply one explicitly."
-        return runProjectCommand("test_run", actual, directory)
-    }
-
-    private suspend fun defaultCommand(directory: String, build: Boolean): String? {
-        val probe = bridge.runShell("cd -- ${quote(directory)} && ls -1", environment, workspaceRoot, 30, useTimeoutBinary, approved = true)
-        val entries = probe.stdout.lineSequence().map { it.trim() }.toSet()
-        return when {
-            "gradlew" in entries -> if (build) "./gradlew assembleDebug" else "./gradlew test"
-            "build.gradle.kts" in entries || "build.gradle" in entries -> if (build) "gradle assembleDebug" else "gradle test"
-            "package.json" in entries -> if (build) "npm run build" else "npm test"
-            "Cargo.toml" in entries -> if (build) "cargo build" else "cargo test"
-            "go.mod" in entries -> if (build) "go build ./..." else "go test ./..."
-            "pyproject.toml" in entries || "setup.py" in entries -> if (build) "python3 -m compileall ." else "python3 -m pytest -q"
-            "Makefile" in entries -> if (build) "make" else "make test"
-            else -> null
-        }
-    }
-
-    private suspend fun runProjectCommand(tool: String, command: String, directory: String): String {
-        val assessment = CommandPolicy.assess(command)
-        if (assessment.blocked) return "Tool denied by policy: ${assessment.reasons.joinToString("; ")}"
-        val result = bridge.runShell(command, environment, directory, timeoutSeconds.coerceIn(30, 900), useTimeoutBinary, approved = true)
-        record(tool, result.exitCode, result.stdout, result.stderr, mutating = true)
-        return format(result)
-    }
-
-    private fun format(result: TerminalCommandResult): String = buildString {
-        append("exit=")
-        append(result.exitCode?.toString() ?: "none")
-        append(" (").append(result.kind.name.lowercase()).append(")\n")
-        if (result.stdout.isNotBlank()) {
-            append("stdout:\n")
-            append(result.stdout.take(12_000))
-            if (result.stdout.length > 12_000) append("\n[stdout truncated at 12000 characters]")
-        }
-        if (result.stderr.isNotBlank()) {
-            append("\nstderr:\n")
-            append(result.stderr.take(4_000))
-            if (result.stderr.length > 4_000) append("\n[stderr truncated at 4000 characters]")
-        }
-        if (result.message != null && result.kind != TerminalResultKind.SUCCEEDED) {
-            append("\nmessage: ").append(result.message.take(400))
-        }
-    }
-
-    private fun record(tool: String, exitCode: Int?, stdout: String, stderr: String, mutating: Boolean, files: List<String> = emptyList()) {
-        val now = System.currentTimeMillis()
-        evidence += ToolExecutionEvidence(tool, exitCode, stdout.take(8_000), stderr.take(2_000), files, mutating, now, now)
-    }
-
-    /** Resolves a path inside the workspace; rejects traversal and absolute paths outside it. */
-    private fun resolve(raw: String): String? {
-        if (raw.isBlank()) return null
-        if ('\u0000' in raw) return null
-        val normalizedRoot = workspaceRoot.trimEnd('/')
-        val candidate = when {
-            raw.startsWith("/") -> raw
-            else -> "$normalizedRoot/${raw.removePrefix("./")}"
-        }
-        val segments = candidate.split('/').toMutableList()
-        val stack = ArrayDeque<String>()
-        for (segment in segments) {
-            when (segment) {
-                "", "." -> Unit
-                ".." -> if (stack.isEmpty()) return null else stack.removeLast()
-                else -> stack.addLast(segment)
+    suspend fun sourceSearch(query: String): String {
+        if (query.isBlank() || query.length > 200 || '\u0000' in query) return denied("source_search", "Literal query must be 1-200 characters")
+        val result = StringBuilder()
+        for (file in indexSources(64, 16_000)) {
+            file.content.lineSequence().forEachIndexed { line, text ->
+                if (query in text && result.length < 12_000) result.append(file.path).append(':').append(line + 1).append(':').append(text.take(500)).append('\n')
             }
         }
-        val resolved = "/" + stack.joinToString("/")
-        return resolved.takeIf { it == normalizedRoot || it.startsWith("$normalizedRoot/") }
+        return result.toString().take(12_000)
     }
 
-    private fun resolveDirectory(raw: String?): String? {
-        if (raw.isNullOrBlank()) return workspaceRoot
-        return resolve(raw)
+    suspend fun runProject(kind: ProjectRunKind): DevelopmentCommand {
+        if (!workspaceApproved) return deniedCommand(kind, "Trusted workspace approval required")
+        // Re-discover before every invocation; the model can never pass a replacement command.
+        val inspected = inspectProject()
+        val command = inspected.commands[kind] ?: return deniedCommand(kind, "No detected fixed command")
+        if (!inspected.ready) return deniedCommand(kind, inspected.reason + ": " + inspected.missingTools.joinToString())
+        val start = System.currentTimeMillis()
+        val result = controlled("project_run_${kind.name.lowercase()}", rootGuard() + command, timeout = timeoutSeconds.coerceIn(1, 600), mutating = true, hardTimeout = true)
+        return DevelopmentCommand(kind, command, result.exitCode, result.stdout, result.stderr + result.message?.let { "\n$it" }.orEmpty(), start, System.currentTimeMillis(),
+            result.kind in setOf(TerminalResultKind.SUCCEEDED, TerminalResultKind.PROCESS_EXIT) && result.exitCode != null)
     }
 
-    private fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-
-    private fun schema(name: String, description: String, properties: JSONObject, required: List<String>) = JSONObject()
-        .put("type", "function")
-        .put(
-            "function",
-            JSONObject().put("name", name).put("description", description)
-                .put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)))
-        )
-
-    private fun obj(vararg fields: Pair<String, String>) = JSONObject().apply {
-        fields.forEach { (key, type) ->
-            put(key, JSONObject().put("type", type))
+    suspend fun applyPatch(patch: DevelopmentPatch): PatchApplication = mutationLock.withLock {
+        if (!workspaceApproved) return@withLock PatchApplication(false, reason = "Trusted workspace approval required")
+        if (patch.files.isEmpty() || patch.files.size > 16 || patch.files.map { it.path }.distinct().size != patch.files.size) return@withLock PatchApplication(false, reason = "Invalid patch file count or duplicates")
+        if (patch.files.any { !DevelopmentPaths.isSafeRelative(it.path) || it.content.toByteArray(Charsets.UTF_8).size > MAX_FILE_BYTES || '\u0000' in it.content ||
+                !(it.expectedSha256 == DevelopmentPaths.MISSING || (it.expectedSha256.length == 64 && it.expectedSha256.all { c -> c in "0123456789abcdef" })) }) return@withLock PatchApplication(false, reason = "Invalid file path, content or expected hash")
+        if (patch.files.sumOf { it.content.toByteArray(Charsets.UTF_8).size } > 1_024_000) return@withLock PatchApplication(false, reason = "Patch bytes exceeded")
+        val id = UUID.randomUUID().toString()
+        val files = mutableListOf<CheckpointFile>()
+        // Preflight every file before any mutation.
+        val originals = mutableMapOf<String, SourceSnapshot?>()
+        for (file in patch.files) {
+            val original = snapshot(file.path, MAX_FILE_BYTES)
+            if (file.expectedSha256 == DevelopmentPaths.MISSING) {
+                val result = controlled("patch_preflight", fileGuard("$workspaceRoot/${file.path}", true) + "[ ! -e ${quote("$workspaceRoot/${file.path}")} ] && [ ! -L ${quote("$workspaceRoot/${file.path}")} ]", files = listOf(file.path))
+                if (!result.isSuccess) return@withLock PatchApplication(false, reason = "New path already exists, parent missing or unsafe: ${file.path}")
+            } else if (original?.sha256 != file.expectedSha256) return@withLock PatchApplication(false, reason = "Stale, unreadable or unsafe file: ${file.path}")
+            originals[file.path] = original
         }
+        val prepared = mutableListOf<CheckpointFile>()
+        for (file in patch.files) {
+            val target = "$workspaceRoot/${file.path}"
+            val before = originals[file.path]
+            val backup = if (before != null) backupFile(target, file.path, id, before.sha256) else null
+            if (before != null && backup == null) return@withLock partial(id, prepared, "Backup failed before any edit: ${file.path}")
+            prepared += CheckpointFile(file.path, before, developmentSha256(file.content), backup, committed = false)
+            knownCheckpoints[id] = DevelopmentCheckpoint(id, prepared.toList())
+        }
+        // Every original is now backed up. Each individual replacement is atomic, not the whole set.
+        for ((position, file) in patch.files.withIndex()) {
+            val target = "$workspaceRoot/${file.path}"
+            val written = atomicWrite(target, file.path, file.expectedSha256, file.content)
+            if (!written) return@withLock partial(id, files + prepared.drop(position), "Atomic write failed or stale at commit: ${file.path}", true)
+            files += prepared[position].copy(committed = true)
+            knownCheckpoints[id] = DevelopmentCheckpoint(id, files + prepared.drop(position + 1))
+        }
+        val checkpoint = DevelopmentCheckpoint(id, files.toList())
+        knownCheckpoints[id] = checkpoint
+        PatchApplication(true, checkpoint, "Applied checkpointed atomic replacements")
     }
+
+    /** Explicit rollback only. All current hashes are preflighted, then rechecked at each atomic move. */
+    suspend fun rollbackCheckpoint(checkpoint: DevelopmentCheckpoint): PatchApplication = mutationLock.withLock {
+        if (!workspaceApproved || knownCheckpoints[checkpoint.id] != checkpoint) return@withLock PatchApplication(false, reason = "Unknown checkpoint or workspace not approved", humanReviewRequired = true)
+        if (checkpoint.files.any { !it.committed }) return@withLock PatchApplication(false, checkpoint, "Uncertain/partial checkpoint requires human review", true)
+        if (checkpoint.files.any { it.before == null }) return@withLock PatchApplication(false, checkpoint, "New files require human review; rollback never deletes files", true)
+        for (file in checkpoint.files) if (sha256(file.path) != file.afterSha256) return@withLock PatchApplication(false, checkpoint, "Rollback stale: ${file.path}; no originals overwritten", true)
+        for (file in checkpoint.files) {
+            val original = requireNotNull(file.before)
+            if (!atomicWrite("$workspaceRoot/${file.path}", file.path, file.afterSha256, original.content)) return@withLock PatchApplication(false, checkpoint, "Rollback interrupted/stale at ${file.path}; human review required", true)
+        }
+        PatchApplication(true, checkpoint, "Originals restored after current-hash checks")
+    }
+
+    suspend fun checkpointDiff(checkpoints: List<DevelopmentCheckpoint>, maxChars: Int): String {
+        val first = linkedMapOf<String, CheckpointFile>()
+        checkpoints.forEach { cp -> cp.files.forEach { if (it.path !in first) first[it.path] = it } }
+        val output = StringBuilder()
+        for ((path, file) in first) {
+            if (output.length >= maxChars) break
+            val current = snapshot(path, MAX_FILE_BYTES)
+            if (current == null) output.append("[Unable to observe current confined UTF-8 file: $path; human review required]\n")
+            else output.append(developmentDiff(file.before, current, path, maxChars - output.length))
+        }
+        return output.toString().take(maxChars.coerceIn(1, 128_000))
+    }
+
+    private suspend fun snapshot(path: String, maxBytes: Int): SourceSnapshot? {
+        val rel = relative(path) ?: return null
+        val target = "$workspaceRoot/$rel"
+        val hash = hashTarget(target, rel) ?: return null
+        val sizeResult = controlled("file_size", fileGuard(target) + "wc -c < ${quote(target)}", files = listOf(rel))
+        val size = sizeResult.stdout.trim().toIntOrNull() ?: return null
+        if (!sizeResult.isSuccess || size !in 0..maxBytes) return null
+        val bytes = java.io.ByteArrayOutputStream(size)
+        var offset = 0
+        while (offset < size) {
+            val count = minOf(CHUNK_BYTES, size - offset)
+            val chunk = controlled("file_read", fileGuard(target) + "dd if=${quote(target)} bs=1 skip=$offset count=$count status=none | base64", files = listOf(rel))
+            if (!chunk.isSuccess || chunk.stdout.length > 6_000) return null
+            val decoded = try { Base64.getMimeDecoder().decode(chunk.stdout) } catch (_: IllegalArgumentException) { return null }
+            if (decoded.size != count) return null
+            bytes.write(decoded); offset += count
+        }
+        val content = try { Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes.toByteArray())).toString() } catch (_: java.nio.charset.CharacterCodingException) { return null }
+        if ('\u0000' in content || developmentSha256(content) != hash || hashTarget(target, rel) != hash) return null
+        return SourceSnapshot(rel, hash, content)
+    }
+
+    private suspend fun hashTarget(target: String, path: String): String? {
+        val result = controlled("file_sha256", fileGuard(target) + "sha256sum -- ${quote(target)}", files = listOf(path))
+        val hash = result.stdout.substringBefore(' ').trim()
+        return hash.takeIf { result.isSuccess && it.length == 64 && it.all { c -> c in "0123456789abcdef" } }
+    }
+
+    private suspend fun backupFile(target: String, path: String, id: String, expectedHash: String): String? {
+        val directory = "$workspaceRoot/.nyx-checkpoints"
+        val backup = "$directory/$id-${UUID.randomUUID()}.bak"
+        val command = fileGuard(target) + "if [ ! -e ${quote(directory)} ] && [ ! -L ${quote(directory)} ]; then mkdir -- ${quote(directory)} || exit 73; fi; " +
+            "[ ! -L ${quote(directory)} ] && [ \"\$(realpath -e -- ${quote(directory)})\" = ${quote(directory)} ] || exit 73; " +
+            "(umask 077; cp -- ${quote(target)} ${quote(backup)}) && sha256sum -- ${quote(backup)}"
+        val result = controlled("file_backup", command, mutating = true, files = listOf(path, backup))
+        return backup.takeIf { result.isSuccess && result.stdout.substringBefore(' ').trim() == expectedHash }
+    }
+
+    private suspend fun atomicWrite(target: String, path: String, expected: String, content: String): Boolean {
+        val parent = target.substringBeforeLast('/')
+        val prepared = controlled("file_prepare", fileGuard(target, true) + "(umask 077; mktemp ${quote("$parent/.nyx-write-XXXXXXXX")})", mutating = true, files = listOf(path))
+        val temporary = prepared.stdout.trim()
+        if (!prepared.isSuccess || !temporary.startsWith("$parent/.nyx-write-") || temporary.substringAfterLast('/').any { !it.isLetterOrDigit() && it !in ".-" }) return false
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        for (chunk in bytes.asList().chunked(3_000)) {
+            val encoded = Base64.getEncoder().encodeToString(chunk.toByteArray()) // Each encoded payload is <=4000 characters.
+            val result = controlled("file_write_chunk", fileGuard(temporary) + "printf '%s' ${quote(encoded)} | base64 -d >> ${quote(temporary)}", mutating = true, files = listOf(path))
+            if (!result.isSuccess) return false
+        }
+        val hash = developmentSha256(content)
+        val staleCheck = if (expected == DevelopmentPaths.MISSING) "[ ! -e ${quote(target)} ] && [ ! -L ${quote(target)} ]" else "[ \"\$(sha256sum -- ${quote(target)} | cut -d ' ' -f 1)\" = ${quote(expected)} ]"
+        val command = fileGuard(target, true) + fileGuard(temporary) +
+            "[ \"\$(sha256sum -- ${quote(temporary)} | cut -d ' ' -f 1)\" = ${quote(hash)} ] || exit 74; " +
+            "$staleCheck || exit 75; " +
+            (if (expected == DevelopmentPaths.MISSING) "" else "chmod --reference=${quote(target)} -- ${quote(temporary)} || exit 76; ") +
+            "mv -f -- ${quote(temporary)} ${quote(target)} && sha256sum -- ${quote(target)}"
+        val committed = controlled("file_commit", command, mutating = true, files = listOf(path))
+        return committed.isSuccess && committed.stdout.substringBefore(' ').trim() == hash
+    }
+
+    private fun partial(id: String, files: List<CheckpointFile>, reason: String, uncertain: Boolean = false): PatchApplication {
+        val checkpoint = files.takeIf { it.isNotEmpty() }?.let { DevelopmentCheckpoint(id, it.toList()) }
+        checkpoint?.let { knownCheckpoints[id] = it }
+        return PatchApplication(false, checkpoint, reason, uncertain || files.isNotEmpty())
+    }
+
+    private fun rootGuard(): String = "r=\$(realpath -e -- ${quote(workspaceRoot)}) || exit 71; [ \"\$r\" = ${quote(workspaceRoot)} ] && [ -d \"\$r\" ] || exit 71; cd -- \"\$r\" || exit 71; "
+    private fun fileGuard(target: String, allowMissing: Boolean = false): String {
+        val parent = target.substringBeforeLast('/')
+        val present = "[ ! -L ${quote(target)} ] && [ \"\$(realpath -e -- ${quote(target)})\" = ${quote(target)} ] && [ -f ${quote(target)} ]"
+        return rootGuard() + "[ \"\$(realpath -e -- ${quote(parent)})\" = ${quote(parent)} ] && [ -d ${quote(parent)} ] || exit 72; " +
+            if (allowMissing) "if [ -e ${quote(target)} ] || [ -L ${quote(target)} ]; then $present || exit 72; fi; " else "$present || exit 72; "
+    }
+    private fun relative(path: String): String? {
+        val rel = if (path.startsWith("$workspaceRoot/")) path.removePrefix("$workspaceRoot/") else path
+        return rel.takeIf { DevelopmentPaths.isSafeRelative(it) }
+    }
+    private suspend fun controlled(tool: String, command: String, timeout: Long = 45, mutating: Boolean = false, files: List<String> = emptyList(), hardTimeout: Boolean = useTimeoutBinary): TerminalCommandResult {
+        // Bound the fully wrapped IPC argv too; do not depend on CommandPolicy regex for confinement.
+        if (!workspaceApproved) return TerminalCommandResult(null, TerminalResultKind.DENIED, message = "Approved trusted workspace required for terminal IPC").also {
+            record(tool, it, mutating, files, System.currentTimeMillis())
+        }
+        val wrapped = ShellCommandBuilder.wrap(command, workspaceRoot, timeout, hardTimeout)
+        if (command.length > 7_500 || wrapped.length > TerminalCommandRequest.MAX_ARGUMENT_CHARS) {
+            return TerminalCommandResult(null, TerminalResultKind.INVALID_REQUEST, message = "Controlled command exceeds IPC payload bound").also {
+                record(tool, it, mutating, files, System.currentTimeMillis())
+            }
+        }
+        val start = System.currentTimeMillis()
+        val result = try { executor.run(command, environment, workspaceRoot, timeout, hardTimeout) }
+        catch (cancel: CancellationException) {
+            record(tool, TerminalCommandResult(null, TerminalResultKind.CANCELLED, message = "IPC wait cancelled; underlying process status is uncertain"), mutating, files, start)
+            throw cancel
+        }
+        catch (error: Exception) { TerminalCommandResult(null, TerminalResultKind.DISPATCH_ERROR, message = error.message?.take(300)) }
+        record(tool, result, mutating, files, start)
+        return result
+    }
+    private fun record(tool: String, result: TerminalCommandResult, mutating: Boolean, files: List<String>, start: Long) {
+        evidence += ToolExecutionEvidence(tool, result.exitCode, result.stdout.take(32_768),
+            result.stderr.take(32_000) + result.message?.let { "\n$it" }.orEmpty(), files, mutating, start, System.currentTimeMillis())
+    }
+    private fun denied(tool: String, reason: String): String {
+        record(tool, TerminalCommandResult(null, TerminalResultKind.DENIED, message = reason), false, emptyList(), System.currentTimeMillis())
+        return "Tool denied: $reason"
+    }
+    private fun deniedCommand(kind: ProjectRunKind, reason: String): DevelopmentCommand {
+        denied("project_run", reason)
+        return DevelopmentCommand(kind, "[denied]", null, stderr = reason, infrastructureOk = false)
+    }
+    private fun discoveryJson(value: DevelopmentDiscovery): String = JSONObject().put("path", value.workspace).put("projectType", value.projectType)
+        .put("markers", JSONArray(value.markers)).put("buildCommand", value.commands[ProjectRunKind.BUILD])
+        .put("testCommand", value.commands[ProjectRunKind.TEST]).put("ready", value.ready).put("missingTools", JSONArray(value.missingTools)).put("reason", value.reason).toString()
+    private fun quote(value: String) = ShellCommandBuilder.quote(value)
+    private fun schema(name: String, description: String, properties: JSONObject, required: List<String>) = JSONObject().put("type", "function")
+        .put("function", JSONObject().put("name", name).put("description", description).put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false)))
+    private fun obj(vararg fields: Pair<String, String>) = JSONObject().apply { fields.forEach { (key, type) -> put(key, JSONObject().put("type", type)) } }
+    companion object { const val MAX_FILE_BYTES = 128_000; private const val CHUNK_BYTES = 4_096 }
 }

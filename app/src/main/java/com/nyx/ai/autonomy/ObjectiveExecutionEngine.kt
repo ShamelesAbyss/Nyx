@@ -1,7 +1,12 @@
 package com.nyx.ai.autonomy
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.nyx.ai.agent.AgentEvent
+import com.nyx.ai.agent.AgentOutcome
+import com.nyx.ai.terminal.TerminalAgentTools
+import com.nyx.ai.development.*
+import com.nyx.ai.skills.*
 import com.nyx.ai.agent.AgentRunner
 import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentToolProvider
@@ -29,6 +34,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -52,6 +61,7 @@ class ObjectiveExecutionEngine(
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
+    private val toolTaskMutex = Mutex()
 
     suspend fun planAndExecute(
         objectiveId: String,
@@ -61,7 +71,7 @@ class ObjectiveExecutionEngine(
     ): ObjectiveEntity {
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
         val session = sessions.create(objective, agent)
-        dao.upsertObjective(objective.copy(status = "planning", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
+        saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "planning", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
         event(objectiveId, null, "planning", "Generating a bounded task graph; model output is validated before any tool runs.")
         return try {
             val planResponse = session.provider.chat(
@@ -99,7 +109,7 @@ class ObjectiveExecutionEngine(
                     finishedAt = null,
                 )
             })
-            dao.upsertObjective(objective.copy(status = "running", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
+            saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "running", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
             event(objectiveId, null, "plan_created", "Validated ${parsed.size} tasks (limit ${ObjectivePlanValidator.MAX_TASKS}); execution is dependency-aware and resource-bounded.")
             execute(objectiveId, agent, session, policy, control)
         } catch (pause: PauseRequested) {
@@ -110,7 +120,7 @@ class ObjectiveExecutionEngine(
             throw cancel
         } catch (e: Exception) {
             dao.getObjective(objectiveId)?.let {
-                dao.upsertObjective(it.copy(status = "needs_attention", updatedAt = now(), error = safeError(e)))
+                saveObjective(it.copy(status = "needs_attention", updatedAt = now(), error = safeError(e)))
             }
             event(objectiveId, null, "planning_failed", safeError(e))
             throw e
@@ -132,7 +142,7 @@ class ObjectiveExecutionEngine(
             dao.upsertTask(task.copy(status = "pending", error = null, finishedAt = null, updatedAt = now()))
             event(objectiveId, task.id, "retry_approved", "User reviewed the task and approved another attempt. Previous side effects may already have occurred.")
         }
-        dao.upsertObjective(objective.copy(status = "running", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
+        saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "running", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
         event(objectiveId, null, "resumed", "Execution resumed after explicit review.")
         return execute(objectiveId, agent, session, policy, control)
     }
@@ -159,7 +169,7 @@ class ObjectiveExecutionEngine(
                     )
                 }
                 if (tasks.isNotEmpty() && tasks.all { it.status == "completed" }) {
-                    val done = objective.copy(
+                    val done = requireNotNull(dao.getObjective(objectiveId)).copy(
                         status = "completed",
                         updatedAt = now(),
                         completedAt = now(),
@@ -167,7 +177,7 @@ class ObjectiveExecutionEngine(
                         leaseExpiresAt = null,
                         error = null,
                     )
-                    dao.upsertObjective(done)
+                    saveObjective(done)
                     event(objectiveId, null, "completed", "All ${tasks.size} tasks passed their locally checked evidence.")
                     return@coroutineScope done
                 }
@@ -198,13 +208,17 @@ class ObjectiveExecutionEngine(
                     val task = tasks.firstOrNull { it.id == scheduled.id } ?: continue
                     active[scheduled.id] = launch {
                         try {
-                            runTask(objectiveId, task, agent, session, control)
+                            if (terminalTools != null) toolTaskMutex.withLock { runTask(objectiveId, task, agent, session, control) }
+                            else runTask(objectiveId, task, agent, session, control)
                         } catch (pause: PauseRequested) {
                             // Recorded by runTask; the loop below performs the pause transition.
                         } catch (cancel: CancellationException) {
                             throw cancel
                         } catch (e: Exception) {
-                            event(objectiveId, task.id, "task_error", safeError(e))
+                            withContext(NonCancellable) {
+                                dao.getTask(task.id)?.let { current -> dao.upsertTask(current.copy(status = "needs_review", error = safeError(e), updatedAt = now())) }
+                                event(objectiveId, task.id, "task_error", safeError(e))
+                            }
                         } finally {
                             runCatching { finished.send(scheduled.id) }
                         }
@@ -226,11 +240,11 @@ class ObjectiveExecutionEngine(
             objective
         } catch (pause: PauseRequested) {
             active.values.forEach { it.cancel() }
-            markPaused(objectiveId, "Paused. Any task with possible side effects is marked for review.")
+            withContext(NonCancellable) { markPaused(objectiveId, "Paused. Any task with possible side effects is marked for review.") }
             throw pause
         } catch (cancel: CancellationException) {
             active.values.forEach { it.cancel() }
-            markPaused(objectiveId, "Cancelled. Any task with possible side effects is marked for review.")
+            withContext(NonCancellable) { markPaused(objectiveId, "Cancelled. Any task with possible side effects is marked for review.") }
             throw cancel
         } finally {
             active.values.forEach { runCatching { it.cancel() } }
@@ -273,7 +287,7 @@ class ObjectiveExecutionEngine(
                 verification = task.verification,
                 dependencyTaskIds = dependencyIds,
                 records = records,
-                budgetChars = 12_000,
+                budgetChars = minOf(12_000, session.options.contextLength * 2),
             ),
             contextStore,
         )
@@ -282,12 +296,26 @@ class ObjectiveExecutionEngine(
         val configured = config.optJSONArray("tools")?.let { raw ->
             (0 until raw.length()).map { raw.optString(it) }.toSet()
         } ?: AgentTools.DEFAULT_TOOLS
-        val allowed = configured + (terminalTools?.names ?: emptySet())
+        val approvedSkills = if (terminalTools != null) {
+            val project = (terminalTools as? TerminalAgentTools)?.inspectProject()
+            val preconditions = setOf(SkillPrecondition.WORKSPACE_SELECTED, SkillPrecondition.TERMINAL_AVAILABLE) +
+                (if (project?.ready == true) setOf(SkillPrecondition.PROJECT_DETECTED) else emptySet())
+            val hostContext = SkillValidationContext(terminalTools.names, SkillPermission.entries.toSet(), preconditions)
+            val ids = if (task.workerKind == "development") listOf(BuiltinSkillRegistry.SOURCE_REPAIR, BuiltinSkillRegistry.BUILD_TEST)
+                else if (task.workerKind == "verification") listOf(BuiltinSkillRegistry.WORKSPACE_INSPECTION, BuiltinSkillRegistry.BUILD_TEST)
+                else listOf(BuiltinSkillRegistry.WORKSPACE_INSPECTION, BuiltinSkillRegistry.LOCAL_FILESYSTEM_RESEARCH, BuiltinSkillRegistry.SOURCE_REPAIR, BuiltinSkillRegistry.BUILD_TEST)
+            ids.filter { it != BuiltinSkillRegistry.BUILD_TEST || project?.ready == true }.map { id ->
+                val checked = BuiltinSkillRegistry.validate(id, hostContext)
+                requireNotNull(checked.skill) { "Builtin skill validation failed: ${checked.issues.joinToString { it.message }}" }
+            }
+        } else emptyList()
+        val allowed = configured + approvedSkills.flatMap { it.allowedTools }
+        if (approvedSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", approvedSkills.joinToString { "${it.manifest.id}@${it.manifest.version}" })
         val spec = AgentSpec(
             id = agent.id,
             name = agent.name,
             model = session.modelId,
-            systemPrompt = agent.instructions,
+            systemPrompt = agent.instructions + approvedSkills.joinToString("\n", prefix = "\nValidated offline procedures:\n") { it.manifest.instructions.joinToString("\n") },
             maxSteps = config.optInt("maxSteps", 8),
             allowedTools = allowed,
         )
@@ -298,8 +326,35 @@ class ObjectiveExecutionEngine(
                 event(objectiveId, task.id, item.kind, item.text.take(1_000), item.toolName, item.toolInput, item.toolOutput)
             }
         }
+        var developmentPassed: Boolean? = null
+        var developmentFinalCommands: List<DevelopmentCommand>? = null
         val outcome = try {
-            AgentRunner(app, session.provider, terminalTools).run(
+            if (task.workerKind == "development") {
+                val concrete = terminalTools as? TerminalAgentTools ?: error("Development requires an explicitly approved Termux workspace and available toolchain.")
+                val preferences = app.getSharedPreferences("nyx_settings", 0)
+                val budget = DevelopmentBudget(
+                    maxIterations = preferences.getInt("repair_iterations", 3).coerceIn(1, 5),
+                    maxInferenceCalls = preferences.getInt("repair_calls", 4).coerceIn(1, 6),
+                    maxElapsedMillis = preferences.getLong("repair_millis", 300_000).coerceIn(30_000, 600_000),
+                    maxEditedFiles = preferences.getInt("repair_files", 8).coerceIn(1, 12),
+                    maxContextChars = minOf(24_000, session.options.contextLength * 2).coerceAtLeast(1024),
+                )
+                val report = DevelopmentOrchestrator(TerminalDevelopmentEnvironment(concrete)).run(task.instructions, session.provider, session.modelId, session.options, budget) {
+                    eventChannel.trySend(AgentEvent("development_" + it.phase, "Iteration ${it.iteration}: ${it.message}"))
+                }
+                developmentPassed = report.passed
+                developmentFinalCommands = report.iterations.lastOrNull()?.commands
+                val journal = JSONObject().put("passed", report.passed).put("reason", report.reason).put("calls", report.inferenceCalls).put("elapsedMillis", report.elapsedMillis)
+                    .put("commands", JSONArray().apply { report.commands.forEach { put(JSONObject().put("command", it.command).put("exit", it.exitCode).put("stdout", it.stdout).put("stderr", it.stderr)) } })
+                    .put("files", JSONArray(report.files)).put("diff", report.diff).put("checkpointIds", JSONArray(report.checkpoints.map { it.id }))
+                writeContext(objectiveId, task.id, "observation", "Development evidence", journal.toString())
+                contextStore.checkpoint(objectiveId, task.id, "Development ${report.reason}; checkpoints ${report.checkpoints.joinToString { it.id }}")
+                val text = "Development ${if (report.passed) "verified" else "NOT completed"}: ${report.reason}\n" +
+                    "Inference calls: ${report.inferenceCalls} · elapsed ${report.elapsedMillis}ms\n" +
+                    report.commands.joinToString("\n") { "${it.kind}: ${it.command} -> exit ${it.exitCode}" } +
+                    "\nChanged files: ${report.files.joinToString()}\nCheckpoints: ${report.checkpoints.joinToString { it.id }}\nDiff:\n${report.diff}"
+                AgentOutcome(text, emptyList(), report.inferenceCalls, report.evidence)
+            } else AgentRunner(app, session.provider, terminalTools).run(
                 spec = spec,
                 task = task.instructions,
                 sharedContext = built.text,
@@ -309,24 +364,26 @@ class ObjectiveExecutionEngine(
             )
         } finally {
             eventChannel.close()
-            writer.join()
+            withContext(NonCancellable) { writer.join() }
         }
         control.checkpoint()
 
-        val toolFailures = outcome.events.count { event ->
-            event.kind == "tool_observation" && (event.text.contains("Tool error:") || event.text.contains("Tool denied:"))
-        }
+        val toolFailures = if (developmentPassed != null) { if (developmentPassed == true) 0 else 1 } else
+            outcome.events.count { it.kind == "tool_observation" && Regex("(?i)Tool (error|denied)").containsMatchIn(it.text) } +
+                outcome.evidence.count { it.exitCode != null && it.exitCode != 0 }
+        val effectiveSpecs = if (task.workerKind == "development") specs + EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0") else specs
+        require(task.workerKind == "inference" || effectiveSpecs.isNotEmpty()) { "Tool task has no declared evidence; no completion can be established." }
         val lastExit = outcome.evidence.lastOrNull { it.exitCode != null }
         val observation = ObservationBundle(
-            exitCode = lastExit?.exitCode,
-            stdout = outcome.evidence.joinToString("\n") { it.stdout }.take(64_000),
-            stderr = outcome.evidence.joinToString("\n") { it.stderr }.take(16_000),
+            exitCode = developmentFinalCommands?.lastOrNull()?.exitCode ?: lastExit?.exitCode,
+            stdout = (developmentFinalCommands?.joinToString("\n") { it.stdout } ?: outcome.evidence.joinToString("\n") { it.stdout }).take(64_000),
+            stderr = (developmentFinalCommands?.joinToString("\n") { it.stderr } ?: outcome.evidence.joinToString("\n") { it.stderr }).take(16_000),
             agentOutput = outcome.result,
             fileExists = { path -> fileProbe?.exists(path) ?: false },
             fileText = { path, max -> fileProbe?.read(path, max) },
             checksum = { path -> fileProbe?.sha256(path) },
         )
-        val report = TaskVerifier.verify(specs, observation, toolFailures)
+        val report = TaskVerifier.verify(effectiveSpecs, observation, toolFailures)
 
         val verifying = task.copy(
             status = "verifying",
@@ -376,7 +433,7 @@ class ObjectiveExecutionEngine(
         val decision = RecoveryPolicy.decide(
             attemptCount = attempt,
             maxAttempts = task.maxAttempts,
-            idempotent = !mutating && task.workerKind == "verification",
+            idempotent = !mutating && task.workerKind == "verification" && allowed.none { it in (terminalTools?.names ?: emptySet()) },
             failureSignature = signature,
             previousFailureSignatures = listOfNotNull(task.failureSignature),
             risk = if (mutating) "mutating" else "read-only",
@@ -418,9 +475,14 @@ class ObjectiveExecutionEngine(
         writeContext(objectiveId, task.id, "failure", task.title, report.reason ?: "Verification failed")
         if (decision.action != RecoveryAction.RETRY) {
             dao.getObjective(objectiveId)?.let {
-                dao.upsertObjective(it.copy(status = "needs_attention", updatedAt = now(), error = report.reason))
+                saveObjective(it.copy(status = "needs_attention", updatedAt = now(), error = report.reason))
             }
         }
+    }
+
+    private suspend fun saveObjective(row: ObjectiveEntity) = database.withTransaction {
+        val current = dao.getObjective(row.id)
+        dao.upsertObjective(row.copy(leaseOwner = current?.leaseOwner, leaseExpiresAt = current?.leaseExpiresAt))
     }
 
     private suspend fun markPaused(objectiveId: String, message: String) {
@@ -437,14 +499,14 @@ class ObjectiveExecutionEngine(
             event(objectiveId, task.id, "checkpoint_interrupted", "Checkpoint saved as uncertain; it will not be repeated automatically.")
         }
         dao.getObjective(objectiveId)?.let {
-            dao.upsertObjective(it.copy(status = "paused", updatedAt = now(), leaseOwner = null, leaseExpiresAt = null, error = message))
+            saveObjective(it.copy(status = "paused", updatedAt = now(), leaseOwner = null, leaseExpiresAt = null, error = message))
         }
     }
 
     private suspend fun needsAttention(objectiveId: String, message: String): ObjectiveEntity {
         val objective = requireNotNull(dao.getObjective(objectiveId))
         val attention = objective.copy(status = "needs_attention", updatedAt = now(), leaseOwner = null, leaseExpiresAt = null, error = message)
-        dao.upsertObjective(attention)
+        saveObjective(attention)
         event(objectiveId, null, "needs_attention", message)
         return attention
     }
@@ -565,7 +627,7 @@ class ObjectiveExecutionEngine(
             - Tasks run concurrently when their dependencies allow it, within a device resource limit.
             - "worker" selects the kind of work: inference (reasoning/text), terminal (run commands in the authorized workspace), filesystem (read/write project files), verification (inspect and report), development (inspect, edit, build, test, repair).
             - Optional "evidence" entries are checked locally after the task: {"kind":"exit_code","expected":"0"}, {"kind":"output_contains","expected":"BUILD SUCCESSFUL"}, {"kind":"file_exists","target":"app/build/outputs/apk/debug/app-debug.apk"}, {"kind":"file_contains","target":"path","expected":"text"}, {"kind":"checksum_sha256","target":"path","expected":"hex"}.
-            - Use evidence whenever a command or file can prove completion. Never claim a task succeeded.
+            - Tool/file tasks MUST declare evidence; inference-only prose proves output existence, not semantic correctness. Development tasks use a dedicated build/test/repair loop with fixed detected commands. Never claim success without a verified exit and relevant file evidence.
             - Commands and files are limited to the user-authorized workspace. Destructive, privileged, credential, and publication actions are blocked.
             - If the objective cannot be completed with these capabilities, make the final task explain the blocker instead of inventing capabilities.
             """.trimIndent()
