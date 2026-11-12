@@ -168,3 +168,57 @@ interface ExecutionLogDao {
     @Query("DELETE FROM execution_logs WHERE taskId = :taskId")
     suspend fun deleteForTask(taskId: String)
 }
+
+@Dao
+interface ObjectiveDao {
+    @Upsert
+    suspend fun upsertObjective(objective: ObjectiveEntity)
+
+    @Query("SELECT * FROM objectives ORDER BY updatedAt DESC")
+    fun observeAll(): Flow<List<ObjectiveEntity>>
+
+    @Query("SELECT * FROM objectives WHERE id = :id LIMIT 1")
+    suspend fun getObjective(id: String): ObjectiveEntity?
+
+    @Upsert
+    suspend fun upsertTasks(tasks: List<ObjectiveTaskEntity>)
+
+    @Upsert
+    suspend fun upsertTask(task: ObjectiveTaskEntity)
+
+    @Query(
+        "SELECT * FROM objective_tasks WHERE objectiveId = :objectiveId " +
+            "ORDER BY ordinal ASC, id ASC"
+    )
+    fun observeTasks(objectiveId: String): Flow<List<ObjectiveTaskEntity>>
+
+    @Query(
+        "SELECT * FROM objective_tasks WHERE objectiveId = :objectiveId " +
+            "ORDER BY ordinal ASC, id ASC"
+    )
+    suspend fun getTasks(objectiveId: String): List<ObjectiveTaskEntity>
+
+    @Insert
+    suspend fun appendEvent(event: ObjectiveEventEntity)
+
+    @Query(
+        "SELECT * FROM objective_events WHERE objectiveId = :objectiveId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    fun observeEvents(objectiveId: String): Flow<List<ObjectiveEventEntity>>
+
+    @Upsert
+    suspend fun upsertArtifact(artifact: ObjectiveArtifactEntity)
+
+    @Query(
+        "SELECT * FROM objective_artifacts WHERE objectiveId = :objectiveId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    fun observeArtifacts(objectiveId: String): Flow<List<ObjectiveArtifactEntity>>
+
+    @Query(
+        "SELECT * FROM objective_artifacts WHERE objectiveId = :objectiveId " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    suspend fun getArtifacts(objectiveId: String): List<ObjectiveArtifactEntity>
+}

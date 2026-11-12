@@ -18,7 +18,13 @@ data class AgentSpec(
     val allowedTools: Set<String> = AgentTools.DEFAULT_TOOLS
 )
 
-data class AgentEvent(val kind: String, val text: String)
+data class AgentEvent(
+    val kind: String,
+    val text: String,
+    val toolName: String? = null,
+    val toolInput: String? = null,
+    val toolOutput: String? = null
+)
 data class AgentOutcome(val result: String, val events: List<AgentEvent>, val steps: Int)
 
 /** Executes model -> tool selection -> allowlist validation -> tool -> observation cycles. */
@@ -75,13 +81,13 @@ class AgentRunner(context: Context, private val client: OllamaClient) {
             }
             messages += ApiMessage("assistant", response.content, toolCalls = assistantCalls)
             for (call in response.toolCalls) {
+                onEvent(AgentEvent("tool_invocation", "${spec.name} requested ${call.name}", call.name, call.arguments.toString()))
                 val observation = if (call.name !in allowed) {
                     "Tool denied: '${call.name}' is not enabled for this agent."
                 } else {
-                    onEvent(AgentEvent("tool", "${spec.name} requested ${call.name}"))
                     tools.execute(call)
                 }
-                val event = AgentEvent("observation", "${call.name}: ${observation.take(800)}")
+                val event = AgentEvent("tool_observation", "${call.name}: ${observation.take(800)}", call.name, call.arguments.toString(), observation.take(4_000))
                 events += event
                 onEvent(event)
                 messages += ApiMessage("tool", observation, toolName = call.name, toolCallId = call.id)

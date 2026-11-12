@@ -9,12 +9,16 @@ import com.nyx.ai.agent.AgentEvent
 import com.nyx.ai.agent.AgentRunner
 import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentTools
+import com.nyx.ai.autonomy.ObjectiveCoordinator
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
 import com.nyx.ai.data.ExecutionLogEntity
 import com.nyx.ai.data.MessageEntity
 import com.nyx.ai.data.ModelEndpointEntity
 import com.nyx.ai.data.NyxDatabase
+import com.nyx.ai.data.ObjectiveEntity
+import com.nyx.ai.data.ObjectiveEventEntity
+import com.nyx.ai.data.ObjectiveTaskEntity
 import com.nyx.ai.data.WorkflowDefinitionEntity
 import com.nyx.ai.network.ApiMessage
 import com.nyx.ai.network.InferenceOptions
@@ -63,6 +67,13 @@ data class NyxState(
     val workflowOutput: String = "",
     val workflowRunning: Boolean = false,
     val registeredGguf: List<ModelEndpointEntity> = emptyList(),
+    val objectives: List<ObjectiveEntity> = emptyList(),
+    val selectedObjectiveId: String? = null,
+    val objectiveTasks: List<ObjectiveTaskEntity> = emptyList(),
+    val objectiveEvents: List<ObjectiveEventEntity> = emptyList(),
+    val objectiveArtifacts: List<com.nyx.ai.data.ObjectiveArtifactEntity> = emptyList(),
+    val objectiveRunning: Boolean = false,
+    val objectiveStreaming: String = "",
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
@@ -88,6 +99,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private var generationJob: Job? = null
     private var agentJob: Job? = null
     private var workflowJob: Job? = null
+    private var objectiveJob: Job? = null
+    private var objectiveObservation: Job? = null
     private var messageObservation: Job? = null
     private val inferenceReservationLock = Any()
     private var inferenceReserved = false
@@ -110,6 +123,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
         } }
         viewModelScope.launch { db.workflowDao().observeAll().collect { rows -> _state.update { it.copy(workflows = rows) } } }
+        viewModelScope.launch {
+            db.objectiveDao().observeAll().collect { rows ->
+                val previous = _state.value.selectedObjectiveId
+                val selected = previous?.takeIf { id -> rows.any { it.id == id } } ?: rows.firstOrNull()?.id
+                _state.update { it.copy(objectives = rows, selectedObjectiveId = selected) }
+                if (selected != null && selected != previous) selectObjective(selected)
+            }
+        }
+        viewModelScope.launch { recoverInterruptedObjectives() }
         viewModelScope.launch { db.modelEndpointDao().observeAll().collect { rows -> _state.update { it.copy(registeredGguf = rows.filter { it.provider == "GGUF" }) } } }
         refreshModels()
     }
@@ -445,6 +467,108 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setWorkflowTask(value: String) { _state.update { it.copy(workflowTask = value) } }
     fun toggleWorkflowAgent(id: String) { _state.update { old -> old.copy(workflowAgentIds = if (id in old.workflowAgentIds) old.workflowAgentIds - id else old.workflowAgentIds + id) } }
+
+    /** Creates and executes a durable objective independently of a chat turn. */
+    fun createObjective(goal: String) {
+        val clean = goal.trim().take(8_000)
+        if (clean.isBlank()) return
+        val s = _state.value
+        val agent = s.agents.firstOrNull { it.id == s.selectedAgentId }
+        if (agent == null) { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
+        if (s.selectedModel.isBlank() || !s.connected) { _state.update { it.copy(error = "Connect to an inference model before planning an objective.") }; return }
+        if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required.") }; return }
+        if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is running. Stop it before starting an objective.") }; return }
+        objectiveJob = viewModelScope.launch {
+            val row = ObjectiveEntity(title = clean.take(72), goal = clean, status = "planning", agentId = agent.id, modelId = s.selectedModel)
+            db.objectiveDao().upsertObjective(row)
+            selectObjective(row.id)
+            _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
+            try {
+                ObjectiveCoordinator(app, db, inferenceClient(s.endpoint)).planAndExecute(row, agent, options()) { token ->
+                    _state.update { old -> old.copy(objectiveStreaming = (old.objectiveStreaming + token).takeLast(12_000)) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message ?: "Objective execution needs attention.") }
+            } finally { _state.update { it.copy(objectiveRunning = false, objectiveStreaming = "") } }
+        }
+        objectiveJob?.invokeOnCompletion { releaseInference() }
+    }
+
+    fun selectObjective(id: String) {
+        _state.update { it.copy(selectedObjectiveId = id) }
+        objectiveObservation?.cancel()
+        objectiveObservation = viewModelScope.launch {
+            val dao = db.objectiveDao()
+            kotlinx.coroutines.coroutineScope {
+                launch { dao.observeTasks(id).collect { rows -> _state.update { it.copy(objectiveTasks = rows) } } }
+                launch { dao.observeEvents(id).collect { rows -> _state.update { it.copy(objectiveEvents = rows) } } }
+                launch { dao.observeArtifacts(id).collect { rows -> _state.update { it.copy(objectiveArtifacts = rows) } } }
+            }
+        }
+    }
+
+    /** Re-running failed or interrupted tools is always an explicit user action. */
+    fun resumeObjective(id: String, userApprovedRetry: Boolean) {
+        val s = _state.value
+        val objective = s.objectives.firstOrNull { it.id == id } ?: return
+        val agent = s.agents.firstOrNull { it.id == objective.agentId } ?: run { _state.update { it.copy(error = "The objective's agent is unavailable.") }; return }
+        if (s.selectedModel.isBlank() || !s.connected || !endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "Connect to an allowed inference endpoint before resuming.") }; return }
+        if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is running.") }; return }
+        objectiveJob = viewModelScope.launch {
+            _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
+            try {
+                val client = inferenceClient(s.endpoint)
+                val tasks = db.objectiveDao().getTasks(id)
+                if (tasks.isEmpty()) {
+                    if (!userApprovedRetry && objective.status == "needs_attention") throw IllegalStateException("Review the objective and explicitly approve restarting its plan.")
+                    ObjectiveCoordinator(app, db, client).planAndExecute(objective.copy(status = "planning", modelId = s.selectedModel), agent, options()) { token ->
+                        _state.update { old -> old.copy(objectiveStreaming = (old.objectiveStreaming + token).takeLast(12_000)) }
+                    }
+                } else {
+                    val uncertain = tasks.any { it.status == "needs_review" || it.status == "failed" }
+                    if (uncertain && !userApprovedRetry) throw IllegalStateException("This objective contains a failed or interrupted task. Review it and explicitly approve retry first.")
+                    ObjectiveCoordinator(app, db, client).resumeAfterExplicitReview(id, agent, options()) { token ->
+                        _state.update { old -> old.copy(objectiveStreaming = (old.objectiveStreaming + token).takeLast(12_000)) }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { _state.update { it.copy(error = e.message ?: "Objective could not be resumed.") } }
+            finally { _state.update { it.copy(objectiveRunning = false, objectiveStreaming = "") } }
+        }
+        objectiveJob?.invokeOnCompletion { releaseInference() }
+    }
+
+    fun pauseObjective() { objectiveJob?.cancel(); objectiveJob = null }
+
+    fun cancelObjective(id: String) {
+        viewModelScope.launch {
+            val running = objectiveJob
+            running?.cancel()
+            running?.join()
+            objectiveJob = null
+            val current = db.objectiveDao().getObjective(id) ?: return@launch
+            db.objectiveDao().upsertObjective(current.copy(status = "cancelled", updatedAt = System.currentTimeMillis(), error = "Cancelled by user."))
+            db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "cancelled", "Cancelled by user; any in-flight tool may require review.", System.currentTimeMillis()))
+        }
+    }
+
+    private suspend fun recoverInterruptedObjectives() {
+        val dao = db.objectiveDao()
+        for (objective in dao.observeAll().first()) {
+            if (objective.status !in setOf("planning", "running")) continue
+            val tasks = dao.getTasks(objective.id)
+            var uncertain = false
+            tasks.filter { it.status == "running" || it.status == "verifying" }.forEach { task ->
+                uncertain = true
+                dao.upsertTask(task.copy(status = "needs_review", error = "The app process ended while a task was active. Review possible side effects before retrying.", updatedAt = System.currentTimeMillis()))
+                dao.appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), objective.id, task.id, "recovered_interruption", "Execution was not automatically replayed.", System.currentTimeMillis()))
+            }
+            val status = if (uncertain) "needs_attention" else "paused"
+            dao.upsertObjective(objective.copy(status = status, updatedAt = System.currentTimeMillis(), error = if (uncertain) "A task was interrupted; review it before resuming." else "Planning was interrupted before tools ran; select Resume to plan again."))
+        }
+    }
 
     fun runAgent() {
         val s = _state.value

@@ -2,30 +2,33 @@
 
 **Your intelligence. Your device. Your rules.**
 
-NYX 0.3.0 is a native Android local-first AI workstation. It connects to Ollama (including a user-reported working Termux/Ollama setup) or an explicitly configured OpenAI-compatible `/v1` server, with persisted chat, bounded agents, and sequential workflows.
+NYX 0.4.0 is a native Android, local-first AI workstation that preserves the previous chat, Ollama/OpenAI-compatible inference, agent, workflow, credential-security, and adaptive UI features while adding a durable objective-execution foundation.
 
-## Included
+Download the [NYX v0.4.0 APK and complete source archive](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.4.0). The APK is debug-signed and is not a production/store-signed build. This project retains its Apache-2.0 license; see [LICENSE](LICENSE).
 
-The app uses Kotlin, Jetpack Compose, Material 3, Room, coroutines, and OkHttp (application id `com.nyx.ai`, Android API 26 minimum, target API 35). It discovers Ollama at `http://127.0.0.1:11434`, lists models, streams/cancels chat, and stores conversation history. The OpenAI-compatible adapter uses `GET /models` and streaming `POST /chat/completions`; optional Bearer credentials are attached only to those `/v1` routes.
+## v0.4.0 highlights
 
-Optional credentials are AES-GCM encrypted with a non-exportable Android Keystore key and written to app-private no-backup storage. Room holds only an opaque reference. Credentials are allowed over HTTPS, or loopback HTTP for development; remote credential-bearing requests are rejected over HTTP. Endpoint URLs containing user info, queries, or fragments are rejected, external server use has a separate consent gate, and redirects are disabled. HTTP error bodies are bounded and the exact configured key is redacted from surfaced diagnostics.
+The Autonomy screen accepts an objective and asks the selected local model for a bounded task graph. A strict JSON validator limits the plan to 12 tasks, rejects malformed fields and dependency cycles, assigns stable task IDs locally, and ignores model-supplied agent/tool/action choices. One selected agent and its existing safe tool allowlist execute tasks sequentially. Objective, task, status, attempt, checkpoint, tool invocation/observation, and artifact data are persisted in Room. Failed or interrupted work is not automatically repeated; resumption of uncertain tasks requires user review. The local completion checks are modest and do not prove the model's claims are semantically correct.
 
-Built-in and user-created agents support editing of names/instructions, bounded tool execution, local calculator/memory/planning/workspace tools, trace events, and sequential workflows. If Ollama returns HTTP 400 indicating the model/server does not support native tools, the agent runner reports that condition and makes one text-only retry that is instructed not to claim tool use. Chat/agent/workflow jobs are serialized to avoid competing for a mobile local server. User-selected UTF-8 text, Markdown, CSV, JSON, and log files can be appended to an agent task (256 KB per file; 60,000 characters combined).
+Room schema v2 adds objective tables through an additive 1→2 migration. The Android test source includes a legacy-data preservation fixture. Settings → About reads the installed app's package metadata; a Python release checker cross-checks Gradle metadata, APK manifest, filenames, and versioned docs.
 
-Branding uses the supplied NYX artwork for the adaptive launcher, Android themed monochrome icon, in-app mark, and Android 12+ splash. The UI keeps the dark-violet identity, uses a bottom bar on narrow layouts and a navigation rail when expanded, and has side-by-side chat history plus agent/workflow workspaces on wide layouts. Key UI state and unsent chat text survive Activity recreation. Settings and Models include memory/thermal diagnostics and a conservative available-RAM warning for large reported model files. OkHttp uses a shared process-wide connection pool; requests have bounded connect/read/overall timeouts and cancel with coroutine cancellation.
+The source also contains a standalone Termux RUN_COMMAND adapter core with request validation, host/PRoot environment descriptors, callback classification and bounded results. It is not yet wired into the UI or objective agent tools, and it does not supervise/terminate a Termux process. No autonomous shell access is enabled.
 
-## Device feedback and verification distinction
+## Existing capabilities
 
-The owner reports that the previous build has been installed on a Pixel 10 Pro Fold, looks good on cover and inner displays, and successfully connects/chat with local Ollama. That is user-reported testing of the earlier build; the current 0.3 APK has not been run on this agent's hardware. Width-adaptive layouts and state-save changes target fold/unfold usability, but no claim is made that hinge/posture occlusion or the 0.3 build has been independently validated on-device. No Tensor TPU, Gemini Nano, NNAPI, or proprietary accelerator path is implemented or claimed.
+NYX uses Kotlin, Jetpack Compose, Material 3, Room, coroutines, and OkHttp (`com.nyx.ai`, min API 26, target API 35). Ollama defaults to `http://127.0.0.1:11434`; an OpenAI-compatible `/v1` server can be configured. Chat streams and persists. Optional API keys are encrypted with AES-GCM under an Android Keystore key and stored in app-private no-backup files; remote credential use requires HTTPS. The dark-violet identity, launcher art, compact/expanded navigation, agents, sequential workflows, user-approved bounded text import, and device snapshots are retained.
 
-## Limitations
+## Important limitations
 
-GGUF remains registration-only: llama.cpp/JNI/Rust inference, direct native model loading, GPU acceleration, and model unloading are not included. The importer is task-context text, not a saved document library; PDF, DOCX, XLSX, OCR, arbitrary binary parsing, and document metadata/history are not supported. There is no named multi-endpoint profile manager or first-launch multi-step wizard. Workflows run a selected agent sequence, but editable workflow templates and parallel execution are not included. RAM and thermal data are advisory snapshots; there is no model-fit guarantee or thermal scheduler. Release signing is not configured.
+This is an execution foundation, not a Manus-class autonomous computer. Task DAGs are limited to 12 and model tasks execute serially. There is no dynamic replanning, 20-task management queue, parallel tool worker, filesystem-backed context/memory store, long-history compression, provider abstraction, resource-aware scheduler, or independent WorkManager/foreground-service execution. The ViewModel survives Activity recreation but not process death; on restart, Room records are recovered conservatively and uncertain tasks need review. Termux bridge setup and real execution are not yet integrated or device-verified. Debian PRoot, native GGUF/llama.cpp inference, Android UI automation, full software-development workflows, and production signing are not included. Thermal/RAM diagnostics remain snapshots, not scheduling controls.
 
-## Build
+## Build and verify
 
 ```bash
-./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+python3 tools/check_release_integrity.py --no-apk \
+  --delivery-file NYX-v0.4.0.apk --delivery-file NYX-Source-v0.4.0.zip \
+  --release-doc CHANGELOG.md --release-doc NYX_DEVELOPMENT_REPORT.md --release-doc TEST_RESULTS.md
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. See [BUILD.md](BUILD.md), [USER_GUIDE.md](USER_GUIDE.md), [CHANGELOG.md](CHANGELOG.md), and [TEST_RESULTS.md](TEST_RESULTS.md).
+See [BUILD.md](BUILD.md), [USER_GUIDE.md](USER_GUIDE.md), [CHANGELOG.md](CHANGELOG.md), [TEST_RESULTS.md](TEST_RESULTS.md), and [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md).

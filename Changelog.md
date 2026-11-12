@@ -1,5 +1,7 @@
 # Changelog
 
+> Historical v0.1.0 notes retained from the initial project publication. The current, canonical release history through v0.4.0 is in [CHANGELOG.md](CHANGELOG.md).
+
 ## 0.1.0 — Initial implementation
 
 Created the native Kotlin/Compose Android Studio project and Room schema/DAOs. Implemented default Ollama discovery, model selection, streaming chat, cancellation, persistent conversation history, plus OpenAI-compatible `/v1` model listing, chat streaming, and streamed function-tool calls. Added endpoint consent controls, temperature and Ollama context/thread options, SAF-based GGUF URI registration, an adaptive dark interface, and a launcher icon.

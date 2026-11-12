@@ -1,56 +1,41 @@
-# NYX 0.3.0 — Final Development Report
+# NYX 0.4.0 Development Handoff
 
-## Summary
+## Release identity
 
-NYX 0.3.0 continues the existing native Kotlin/Compose/Room Android app (application id `com.nyx.ai`, versionCode 3). It preserves Ollama chat and stored user data, and completes the agent-editing work that was interrupted. This pass focuses on failures the owner specifically called out: Ollama HTTP 400 responses during function/tool calls, models without native tool support, useful but bounded diagnostics, connection reuse, duplicate inference races, and phone/fold state continuity.
+The target release is versionName `0.4.0`, versionCode `4`, application ID `com.nyx.ai`. Existing v0.3.0 features, app identity, user records, dark-violet brand, Fold-adaptive layout, Ollama/OpenAI-compatible inference, agents, sequential workflows, and Keystore credential protection were preserved. No remote GitHub repository was accessed or changed.
 
-The upgrade is meaningfully improved but does **not** complete every item in the original broad roadmap. The missing native inference, posture-specific foldable, endpoint-profile, document-library, and template-builder work is listed below rather than represented as complete.
+## Implemented in this continuation
 
-## Completed and improved work
+**Durable objective foundation.** Room schema v2 adds objective, task, event, and artifact records, with an additive v1→v2 migration and no destructive fallback. Instrumentation source seeds the prior schema, checks that legacy conversations/messages, endpoint references, agents, workflows, and execution logs survive, and exercises the new DAO.
 
-- **Branding:** kept the existing dark violet NYX artwork across adaptive launcher, themed monochrome icon, splash, and in-app mark.
-- **Chat and layouts:** retained chat/history management, streaming, cancel, copy, regenerate, and width-responsive navigation/workspaces. Current section and unsent composer text are saveable across Activity recreation. The visual identity was intentionally not redesigned after the owner's positive Pixel Fold feedback.
-- **Ollama/OpenAI compatibility:** HTTP status failures now surface at most 600 sanitized response characters, with the configured API key redacted. Requests share one process-wide OkHttp client/connection pool and retain connection/read/call timeouts, disabled redirects, and coroutine cancellation.
-- **Tool-call resilience:** recognizable HTTP 400 errors that explicitly indicate unsupported native tools become a typed capability error. The agent emits a warning and retries once without tool schemas, with instructions not to request tools or pretend to have executed them. Other request failures remain visible with bounded diagnostics.
-- **Agent usability:** existing agents/templates can be edited for name and system instructions while preserving their configured tools. Execution warnings are visually distinct. Existing calculator, private memory, planning, app-private workspace, user-approved text import, and sequential workflow behaviors remain bounded.
-- **Inference scheduling:** chat, agents, and workflows use an atomic single-inference reservation, preventing overlapping local-model runs even while Room preparation is suspending. Cancellation still propagates to the HTTP call.
-- **Device awareness:** the selected Ollama model can show a rough warning when its reported file size approaches current free RAM. It explicitly states this is not a runtime fit prediction. Existing Android/ABI/RAM/thermal snapshots remain advisory only.
-- **Security and storage:** existing AES-GCM Android Keystore credential vault, opaque database reference, no-backup ciphertext, HTTPS requirement for remote API-key use, URL validation, external endpoint consent, and no shell/unrestricted filesystem tools are retained. No Room schema change was made.
+**Bounded planner and scheduler.** The model-produced plan is parsed as strict bounded JSON, capped at 12 tasks and checked for valid fields, duplicate keys/dependencies, missing/self dependencies, and cycles. Stable task UUIDs are derived locally from objective ID and task key. Agent identity is supplied by the caller; unknown model-provided agent/tool/action/model fields are ignored. A deterministic scheduler selects one dependency-ready task at a time.
 
-## Original ten upgrade priorities — status
+**Objective execution and review UI.** The new Autonomy screen displays persisted objective/task status, task trace, and text artifacts. The coordinator calls the existing selected agent and intersects configured tools with the app's safe default allowlist. It stores bounded tool invocation and observation details, checkpoints, outcomes, and modest verification status. Failed or interrupted tasks are not automatically repeated; a user must review and approve a retry. The verifier only checks for non-empty output and absence of reported tool error/denial; it does not establish semantic truth.
 
-| Priority | Status | Delivered / remaining |
-|---|---|---|
-| 1. Branding and identity | **Complete for this upgrade** | Supplied NYX artwork and matching launcher, monochrome, splash, and in-app brand mark retained. |
-| 2. UI/UX and chat polish | **Partial** | Existing chat controls, error banner, streaming, clearer agent warnings, inset handling, and adaptive navigation retained. Full Markdown/code rendering and broader accessibility/usability review remain. |
-| 3. Foldable optimization | **Partial** | Width-responsive phone/expanded layouts, chat history pane, agent/workflow split workspaces, and saveable section/draft state. Hinge/posture-aware placement and direct v0.3 Pixel Fold testing remain. |
-| 4. Model discovery/device awareness | **Partial** | Ollama and OpenAI-compatible discovery/refresh plus endpoint health, device diagnostics, and approximate RAM caution. Named multiple endpoint profiles, richer model metadata, and auto-reconnect/profile management remain. |
-| 5. Agent capabilities | **Partial, improved** | Real bounded tool loop, editing, logs/traces, cancellation, and unsupported-tool fallback. Agent-to-agent messaging, advanced permission editor, and guaranteed tool support across models are absent. |
-| 6. Documents/workflows | **Partial** | User-selected bounded text import into agent tasks and sequential multi-agent workflows/logs. No persisted document library/metadata, PDF/office parsing, editable workflow template builder, or parallel execution. |
-| 7. Performance/efficiency | **Partial** | Batched streaming updates, shared HTTP connection pool, bounded timeouts, cancellation, and exclusive inference. No benchmark suite, sustained battery profiling, or long-session leak test. |
-| 8. Tensor/Pixel optimization | **Not implemented as acceleration** | Informational device/thermal diagnostics and conservative RAM warning only. No Tensor TPU, Gemini Nano, NNAPI, GPU, or proprietary acceleration is claimed. |
-| 9. Settings/power-user controls | **Partial** | Endpoint/auth controls, consent, inference options, and diagnostics exist. No full endpoint-profile manager, log browser, or comprehensive data-management suite. |
-| 10. Tests/docs/delivery | **Build and packaged scope complete; device validation partial** | Five requested Markdown docs plus this report, debug APK, source archive, 9 passing JVM tests, and instrumented-test APK. Keystore/device/live-server tests remain unrun. |
+**Termux protocol and release identity.** A standalone RUN_COMMAND adapter core implements request validation, explicit request authorization, host/Debian environment descriptors, bounded result classification, and readiness checks. It is not yet connected to the Autonomy UI or agent tool set; it cannot guarantee termination of a dispatched Termux process. About uses installed Android package metadata, and a Python checker cross-validates Gradle, APK manifest, delivery filenames, and current release docs.
 
-## Build and test results
+## Milestone status
 
-- `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest` succeeded; the relevant tasks were rerun successfully after the final UI source change.
-- JVM: **9 tests, 0 failures, 0 errors, 0 skipped**.
-- Debug APK and Android instrumentation APK compiled successfully.
-- Instrumentation tests compile but were not run without a connected Android runtime.
-- Gradle emitted only non-fatal `Divider` deprecation, SDK XML compatibility, and library-strip notices.
-- Final APK metadata: application id `com.nyx.ai`, versionCode 3/versionName 0.3.0, min API 26, target API 35.
+| Area | Status |
+|---|---|
+| Room persistence/migration | Implemented; instrumentation test compiles; physical runtime execution pending |
+| Objective/task DAG and stable IDs | Implemented, max 12 tasks |
+| Dependency scheduling | Implemented, one agent/model task at a time |
+| Persistent context | Partial: goal, tasks, outcome, checkpoint, events, and artifacts in Room; no filesystem-backed context store, retrieval, or history compression |
+| Recovery | Conservative interruption states and explicit reviewed retry; no autonomous diagnosis, repair, dynamic replanning, or continuation without app-process work |
+| Inference provider abstraction | Not implemented; current engine uses the existing OllamaClient integration |
+| Queue and parallelism | No 20-task management queue or parallel independent tools; current plans max 12 and execute serially |
+| Termux/Debian | Protocol/library only; not wired into app or agent tasks; real permission, callback, path setup, and PRoot behavior are unverified |
+| Background work | No WorkManager/foreground service; ViewModel survives Activity recreation but not process death. Restart recovery is database-based and conservative |
+| Autonomous software development | Not implemented; no project-edit/build/test/repair loop |
+| Control center | Initial Room-backed objective/task/event/artifact UI; no terminal panel, approval queue, or live resource scheduler |
+| Android UI automation | Not implemented |
+| Pixel Fold/GrapheneOS verification | Not performed in this environment |
 
-See [TEST_RESULTS.md](TEST_RESULTS.md) for test classes, warnings, and unverified runtime scenarios.
+## Build/test evidence
 
-## Device feedback and remaining verification
+The first integrated compile exposed a coroutine Channel import and a missing bounded title parser helper; both were corrected. The final clean v0.4.0 command `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest` passed. It ran 27 JVM tests with zero failures/errors/skips, assembled the debug APK, and compiled the instrumentation APK. The debug certificate matched the v0.3.0 APK checked in this workspace. Migration/Keystore instrumentation tests were compiled, not run. Final APK manifest and release checker results are recorded in `TEST_RESULTS.md`.
 
-The owner reports the previous build was installed and visually tested on a Google Pixel 10 Pro Fold, with good cover/inner-screen presentation and successful local Ollama chat. That feedback is for the prior version; this development environment had no attached Pixel/emulator or live Ollama endpoint. NYX 0.3.0 still needs real-device checks for both displays, fold/unfold state, Keystore behavior, document providers, tool-capable and non-tool-capable Ollama models, memory/thermal behavior, accessibility, cancellation under load, and battery/long-session use.
+## Exact next engineering step
 
-## Signing and upgrade compatibility
-
-The new APK is debug-signed, not a store-release artifact. Its signer certificate SHA-256 matches the preceding delivered v0.2 debug APK (`aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`), so Android can upgrade that exact previously delivered build in place. Other installed NYX copies must have the same signing identity; Android may reject a different signature. Uninstalling a differently signed build may erase app-private chat, agent, and settings data. No release signing credentials are included or fabricated.
-
-## Scope and workspace integrity
-
-The existing Kotlin, Compose, Material 3, Room architecture and package id are preserved. No Git commits, branches, pushes, releases, or remote repository changes were made. The source ZIP excludes build caches, local SDK configuration, and signing secrets. The app remains local-first; remote inference is only used when the user explicitly configures and consents to an endpoint.
+On the owner's Android 17/GrapheneOS Pixel Fold, run the Room migration and Keystore instrumentation suites, then test Termux RUN_COMMAND permission and callback behavior against the installed Termux version. Do not expose the bridge to model-directed tasks until environment setup, process ownership/cancellation, command authorization, audit persistence, and output limits are validated. Next, decouple execution ownership from ViewModel using an Android-appropriate worker/service with visible notification and process-death recovery; then add context storage/retrieval and carefully bounded scheduler parallelism.

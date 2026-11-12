@@ -113,6 +113,8 @@ import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
 import com.nyx.ai.data.MessageEntity
 import com.nyx.ai.network.LocalModel
+import com.nyx.ai.settings.formatInstalledAppVersion
+import com.nyx.ai.settings.installedAppVersion
 import java.util.Locale
 
 private val Obsidian = Color(0xFF09090D)
@@ -152,8 +154,8 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val textDocumentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importTextDocument(uri)
     }
-    val destinations = listOf("Chat", "Models", "Agents", "Workflows", "Settings")
-    val icons = listOf(Icons.Rounded.ChatBubbleOutline, Icons.Rounded.Memory, Icons.Rounded.SmartToy, Icons.Rounded.AccountTree, Icons.Rounded.Settings)
+    val destinations = listOf("Chat", "Models", "Agents", "Autonomy", "Workflows", "Settings")
+    val icons = listOf(Icons.Rounded.ChatBubbleOutline, Icons.Rounded.Memory, Icons.Rounded.SmartToy, Icons.Rounded.PlayArrow, Icons.Rounded.AccountTree, Icons.Rounded.Settings)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 840.dp
         Scaffold(
@@ -190,13 +192,99 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                         0 -> ChatScreen(state, vm)
                         1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
                         2 -> AgentsScreen(state, vm) { textDocumentPicker.launch(arrayOf("text/*", "application/json")) }
-                        3 -> WorkflowScreen(state, vm)
+                        3 -> AutonomyScreen(state, vm)
+                        4 -> WorkflowScreen(state, vm)
                         else -> SettingsScreen(state, vm)
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
+    var goal by rememberSaveable { mutableStateOf("") }
+    var confirmResume by rememberSaveable { mutableStateOf(false) }
+    val selected = state.objectives.firstOrNull { it.id == state.selectedObjectiveId }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionIntro("Autonomy control center", "Create a goal, let NYX build a bounded dependency graph, and review each real agent/tool result. Local agent tools only; this build does not execute shell commands.")
+        Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("NEW OBJECTIVE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                OutlinedTextField(value = goal, onValueChange = { goal = it.take(8_000) }, modifier = Modifier.fillMaxWidth(), label = { Text("What should NYX accomplish?") }, minLines = 3, maxLines = 6, shape = RoundedCornerShape(14.dp))
+                Text("Uses the selected agent, current model, and its existing allowlisted tools. Plans are limited to 12 tasks and are validated before execution.", color = TextMuted, fontSize = 11.sp)
+                Button(onClick = { vm.createObjective(goal); goal = "" }, enabled = goal.isNotBlank() && !state.objectiveRunning, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) {
+                    Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(7.dp)); Text(if (state.objectiveRunning) "Objective running" else "Plan and execute")
+                }
+            }
+        }
+        if (state.objectives.isNotEmpty()) {
+            Text("OBJECTIVES", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+            state.objectives.forEach { item ->
+                val selectedCard = item.id == selected?.id
+                Card(onClick = { vm.selectObjective(item.id) }, colors = CardDefaults.cardColors(containerColor = if (selectedCard) Surface2 else Surface1), shape = RoundedCornerShape(14.dp), border = if (selectedCard) BorderStroke(1.dp, Violet.copy(alpha = .55f)) else null) {
+                    Column(Modifier.fillMaxWidth().padding(13.dp)) {
+                        Text(item.title, color = TextMain, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("${item.status.replace('_', ' ').uppercase(Locale.ROOT)} · ${item.modelId}", color = if (item.status == "completed") Green else TextMuted, fontSize = 10.sp)
+                        if (!item.error.isNullOrBlank()) Text(item.error.orEmpty(), color = Color(0xFFF2C879), fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+        if (selected != null) {
+            Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${selected.status.replace('_', ' ').uppercase(Locale.ROOT)} · ${state.objectiveTasks.count { it.status == "completed" }}/${state.objectiveTasks.size} tasks", color = VioletSoft, fontSize = 11.sp, letterSpacing = .5.sp)
+                    Text(selected.goal, color = TextMain, fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (state.objectiveRunning) OutlinedButton(onClick = vm::pauseObjective) { Icon(Icons.Rounded.Stop, null); Spacer(Modifier.width(4.dp)); Text("Pause") }
+                        if (selected.status in setOf("paused", "needs_attention", "failed")) OutlinedButton(onClick = { confirmResume = true }, enabled = !state.objectiveRunning) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Review & resume") }
+                        if (selected.status !in setOf("completed", "cancelled")) OutlinedButton(onClick = { vm.cancelObjective(selected.id) }) { Text("Cancel") }
+                    }
+                    if (state.objectiveRunning) Text("Running in the app process. Android may stop it if NYX is terminated; checkpoints remain on-device and uncertain tasks are not replayed automatically.", color = TextMuted, fontSize = 11.sp)
+                }
+            }
+            if (state.objectiveStreaming.isNotBlank()) OutputCard("Live model output", state.objectiveStreaming)
+            if (state.objectiveTasks.isNotEmpty()) {
+                Text("TASK GRAPH · SERIAL SCHEDULER", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                state.objectiveTasks.sortedBy { it.ordinal }.forEach { task ->
+                    val deps = runCatching { org.json.JSONArray(task.dependsOnJson).let { array -> (0 until array.length()).joinToString { array.optString(it).take(8) } } }.getOrDefault("")
+                    Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text("${task.ordinal + 1}. ${task.title}", color = TextMain, fontWeight = FontWeight.Medium)
+                            Text("${task.status.replace('_', ' ').uppercase(Locale.ROOT)} · attempt ${task.attemptCount}/${task.maxAttempts}${if (deps.isNotBlank()) " · needs $deps" else " · no prerequisites"}", color = if (task.status == "completed") Green else if (task.status in setOf("failed", "needs_review", "blocked")) Color(0xFFF2C879) else TextMuted, fontSize = 10.sp)
+                            Text(task.instructions, color = TextMuted, fontSize = 11.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                            if (!task.error.isNullOrBlank()) Text(task.error.orEmpty(), color = Color(0xFFF2C879), fontSize = 11.sp)
+                            if (!task.outcome.isNullOrBlank()) Text(task.outcome.orEmpty(), color = TextMain, fontSize = 12.sp, maxLines = 10, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+            if (state.objectiveArtifacts.isNotEmpty()) {
+                Text("ARTIFACTS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                state.objectiveArtifacts.forEach { artifact -> OutputCard(artifact.name, artifact.content) }
+            }
+            if (state.objectiveEvents.isNotEmpty()) {
+                Text("PERSISTED EXECUTION TRACE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(14.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        state.objectiveEvents.takeLast(30).forEach { event ->
+                            Text("${event.kind.uppercase(Locale.ROOT)} · ${event.detail}", color = if (event.kind.contains("failed") || event.kind.contains("error")) Color(0xFFF2C879) else TextMuted, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+            Text("Completion checks verify a non-empty result and check for reported tool errors. They are not independent proof of semantic correctness. Failed or interrupted actions require explicit review before retry.", color = TextMuted, fontSize = 10.sp)
+        }
+    }
+    if (confirmResume && selected != null) AlertDialog(
+        onDismissRequest = { confirmResume = false },
+        title = { Text("Review before resuming") },
+        text = { Text("A failed or interrupted task may already have changed local memory or workspace files. NYX will not automatically retry it. Proceed only after reviewing its trace and deciding a repeat is safe.") },
+        confirmButton = { TextButton(onClick = { confirmResume = false; vm.resumeObjective(selected.id, userApprovedRetry = true) }) { Text("I reviewed · resume") } },
+        dismissButton = { TextButton(onClick = { confirmResume = false }) { Text("Not now") } }
+    )
 }
 
 @Composable
@@ -678,11 +766,14 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
         }
         item { DiagnosticsCard(state) }
         item {
+            val context = LocalContext.current
+            val installedVersion = remember(context) { formatInstalledAppVersion(installedAppVersion(context)) }
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("About this build", color = TextMain, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(5.dp))
-                    Text("NYX 0.2 · Android 8+ · Ollama and OpenAI-compatible APIs, Keystore-protected credentials, bounded agents, and user-approved text import. Native GGUF inference is not included.", color = TextMuted, fontSize = 12.sp)
+                    Text(installedVersion, color = TextMuted, fontSize = 12.sp)
+                    Text("Android 8+ · Ollama and OpenAI-compatible APIs, Keystore-protected credentials, bounded agents, durable objective records, and user-approved text import. Native GGUF inference is not included.", color = TextMuted, fontSize = 12.sp)
                 }
             }
         }
