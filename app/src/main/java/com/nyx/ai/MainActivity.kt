@@ -125,6 +125,7 @@ import com.nyx.ai.ollama.OllamaServerStatus
 import com.nyx.ai.network.InferenceFabric
 import com.nyx.ai.settings.MemoryTelemetry
 import com.nyx.ai.autonomy.WorkerActivityBus
+import com.nyx.ai.autonomy.WorkerConsoleModel
 import com.nyx.ai.terminal.WorkspaceRecord
 import com.nyx.ai.ui.WorkerActivityEntry
 import com.nyx.ai.ui.WorkerActivityPreview
@@ -652,8 +653,9 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
         (liveObjective == null || it.objectiveId == liveObjective.id) && it.status in setOf("running", "verifying")
     }
     val activities by WorkerActivityBus.events.collectAsState()
-    val consoleActivities = if (liveObjective == null) activities else activities.filter {
-        it.objectiveId == null || it.objectiveId == liveObjective.id
+    val consoleRun = liveObjective?.let { WorkerConsoleModel.currentRun(activities, it.id) }
+    val consoleActivities = if (liveObjective == null) emptyList() else {
+        WorkerConsoleModel.forRun(activities, liveObjective.id, consoleRun?.runId)
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionIntro("Autonomy control center", "Create a goal, let NYX build a bounded dependency graph, and review each real agent/tool result. Execution runs in a foreground service; terminal tools are optional and off by default.")
@@ -766,10 +768,21 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
         phase = state.objectivePhase,
         objectiveStatus = liveObjective?.status.orEmpty(),
         activeTask = activeTask?.title.orEmpty(),
+        historyActivities = activities,
+        currentObjectiveId = liveObjective?.id,
+        currentRunId = consoleRun?.runId,
+        objectiveTitles = state.objectives.associate { it.id to it.title },
         onDismiss = { showConsole = false },
         onPause = vm::pauseObjective,
         onResume = liveObjective?.let { objective -> { vm.resumeObjective(objective.id, userApprovedRetry = true) } },
         onCancel = liveObjective?.let { objective -> { vm.cancelObjective(objective.id) } },
+        onClearHistory = { objectiveId, runId ->
+            WorkerActivityBus.clearHistory(
+                preserveObjectiveId = objectiveId,
+                preserveRunId = runId,
+                additionallyPreserve = listOf(liveObjective?.id to consoleActivities.lastOrNull()?.runId),
+            )
+        },
     )
 }
 
@@ -819,8 +832,9 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
     val activeTask = state.objectiveTasks.firstOrNull {
         (activeObjective == null || it.objectiveId == activeObjective.id) && it.status in setOf("running", "verifying")
     }
-    val consoleActivities = if (activeObjective == null) activities else activities.filter {
-        it.objectiveId == null || it.objectiveId == activeObjective.id
+    val consoleRun = activeObjective?.let { WorkerConsoleModel.currentRun(activities, it.id) }
+    val consoleActivities = if (activeObjective == null) emptyList() else {
+        WorkerConsoleModel.forRun(activities, activeObjective.id, consoleRun?.runId)
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 780.dp
@@ -859,10 +873,21 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
         phase = state.objectivePhase,
         objectiveStatus = activeObjective?.status.orEmpty(),
         activeTask = activeTask?.title.orEmpty(),
+        historyActivities = activities,
+        currentObjectiveId = activeObjective?.id,
+        currentRunId = consoleRun?.runId,
+        objectiveTitles = state.objectives.associate { it.id to it.title },
         onDismiss = { showConsole = false },
         onPause = vm::pauseObjective,
         onResume = activeObjective?.let { objective -> { vm.resumeObjective(objective.id, userApprovedRetry = true) } },
         onCancel = activeObjective?.let { objective -> { vm.cancelObjective(objective.id) } },
+        onClearHistory = { objectiveId, runId ->
+            WorkerActivityBus.clearHistory(
+                preserveObjectiveId = objectiveId,
+                preserveRunId = runId,
+                additionallyPreserve = listOf(activeObjective?.id to consoleActivities.lastOrNull()?.runId),
+            )
+        },
     )
 }
 

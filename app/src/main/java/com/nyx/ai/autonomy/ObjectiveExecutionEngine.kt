@@ -36,9 +36,12 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
@@ -65,10 +68,12 @@ class ObjectiveExecutionEngine(
     private val fileProbe: FileProbe?,
     private val contextStore: ContextStore,
     private val onToken: (String) -> Unit = {},
+    private val suppliedRunId: String? = null,
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
     private val toolTaskMutex = Mutex()
+    private var activeRunId: String? = suppliedRunId
 
     suspend fun planAndExecute(
         objectiveId: String,
@@ -76,22 +81,13 @@ class ObjectiveExecutionEngine(
         policy: SchedulingPolicy,
         control: ExecutionControl,
     ): ObjectiveEntity {
+        activeRunId = suppliedRunId ?: "run-${UUID.randomUUID()}"
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
         val session = sessions.create(objective, agent)
         saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "planning", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
         event(objectiveId, null, "planning", "Generating a bounded task graph; model output is validated before any tool runs.")
         return try {
-            val planResponse = session.provider.chat(
-                session.modelId,
-                listOf(
-                    ApiMessage("system", plannerPrompt()),
-                    ApiMessage("user", "Objective:\n${objective.goal.take(8_000)}")
-                ),
-                tools = null,
-                options = session.options,
-            )
-            val parsed = ObjectivePlanValidator.parse(planResponse.content, objective.id, agent.id)
-            require(parsed.isNotEmpty()) { "The planner returned no executable tasks." }
+            val parsed = requestValidatedPlan(objective, session, agent.id)
             val now = now()
             dao.upsertTasks(parsed.mapIndexed { index, task ->
                 ObjectiveTaskEntity(
@@ -117,8 +113,10 @@ class ObjectiveExecutionEngine(
                 )
             })
             saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "running", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
-            event(objectiveId, null, "plan_created", "Validated ${parsed.size} tasks (limit ${ObjectivePlanValidator.MAX_TASKS}); execution is dependency-aware and resource-bounded.")
+            event(objectiveId, null, "plan_created", "Validated ${parsed.size} tasks (limit ${ObjectivePlanValidator.MAX_TASKS}); execution is dependency-aware and resource-bounded.", status = "completed")
             execute(objectiveId, agent, session, policy, control)
+        } catch (failure: PlanningFailureException) {
+            planningNeedsAttention(objectiveId, failure.failure)
         } catch (pause: PauseRequested) {
             markPaused(objectiveId, "Paused during planning; no task was executed.")
             throw pause
@@ -126,12 +124,87 @@ class ObjectiveExecutionEngine(
             markPaused(objectiveId, "Planning was cancelled.")
             throw cancel
         } catch (e: Exception) {
-            dao.getObjective(objectiveId)?.let {
-                saveObjective(it.copy(status = "needs_attention", updatedAt = now(), error = safeError(e)))
-            }
-            event(objectiveId, null, "planning_failed", safeError(e))
-            throw e
+            planningNeedsAttention(objectiveId, PlanningRecovery.classify(e))
         }
+    }
+
+    /**
+     * Requests a plan with a hard deadline and progress events. A completed response that fails
+     * validation gets exactly one structured-output repair; transport failures do not.
+     */
+    private suspend fun requestValidatedPlan(
+        objective: ObjectiveEntity,
+        session: InferenceSession,
+        agentId: String,
+    ): List<PlannedObjectiveTask> {
+        var repair: Pair<String, PlanningFailure>? = null
+        var lastFailure: PlanningFailure? = null
+        for (attempt in 1..PlanningRecovery.MAX_PLAN_ATTEMPTS) {
+            event(objective.id, null, "planning_attempt", "Planning attempt $attempt/${PlanningRecovery.MAX_PLAN_ATTEMPTS}; waiting for a bounded model response.", status = "running")
+            val raw = requestPlanText(objective, session, repair)
+            if (raw.isBlank()) {
+                lastFailure = PlanningFailure(PlanningFailureKind.EMPTY_RESPONSE, "The model returned an empty response.")
+                event(objective.id, null, "planning_validation_failed", lastFailure.reason, status = "failed")
+                break
+            }
+            try {
+                return ObjectivePlanValidator.parse(raw, objective.id, agentId)
+            } catch (validation: ObjectivePlanValidationException) {
+                val failure = PlanningRecovery.classify(validation)
+                lastFailure = failure
+                event(objective.id, null, "planning_validation_failed", "Attempt $attempt rejected: ${failure.reason}", status = "failed")
+                if (attempt >= PlanningRecovery.MAX_PLAN_ATTEMPTS || !PlanningRecovery.shouldRepair(failure.kind)) break
+                event(objective.id, null, "planning_repair", "One bounded structured-output repair attempt is being made for ${failure.kind.name.lowercase()}.", status = "waiting")
+                repair = raw to failure
+            }
+        }
+        throw PlanningFailureException(lastFailure ?: PlanningFailure(PlanningFailureKind.PROVIDER_ERROR, "Planning produced no usable response."))
+    }
+
+    private suspend fun requestPlanText(
+        objective: ObjectiveEntity,
+        session: InferenceSession,
+        repair: Pair<String, PlanningFailure>?,
+    ): String {
+        return coroutineScope {
+            val progress = launch {
+                while (isActive) {
+                    delay(PlanningRecovery.PROGRESS_INTERVAL_MS)
+                    event(objective.id, null, "planning_progress", "Still waiting for the planning response; no tool has run.", status = "waiting")
+                }
+            }
+            try {
+                return@coroutineScope withTimeout(PlanningRecovery.ATTEMPT_TIMEOUT_MS) {
+                val messages = buildList {
+                    add(ApiMessage("system", plannerPrompt()))
+                    add(ApiMessage("user", "Objective:\n${objective.goal.take(8_000)}"))
+                    repair?.let { (previous, failure) ->
+                        add(ApiMessage("user", PlanningRecovery.repairPrompt(previous, failure)))
+                    }
+                }
+                session.provider.chat(
+                    session.modelId,
+                    messages,
+                    tools = null,
+                    options = session.options,
+                    ).content
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw PlanningTimeoutException("The model did not finish planning within ${PlanningRecovery.ATTEMPT_TIMEOUT_MS / 1_000} seconds.")
+            } finally {
+                progress.cancel()
+            }
+        }
+    }
+
+    private suspend fun planningNeedsAttention(objectiveId: String, failure: PlanningFailure): ObjectiveEntity {
+        val message = "${PlanningRecovery.diagnostic(failure.kind)} ${failure.reason}".trim().take(600)
+        val current = dao.getObjective(objectiveId)
+        if (current != null) {
+            saveObjective(current.copy(status = "needs_attention", updatedAt = now(), error = message, leaseOwner = null, leaseExpiresAt = null))
+        }
+        event(objectiveId, null, "planning_failed", "${failure.kind.name.lowercase()}: $message", status = "failed")
+        return requireNotNull(dao.getObjective(objectiveId))
     }
 
     suspend fun resumeAfterReview(
@@ -140,6 +213,7 @@ class ObjectiveExecutionEngine(
         policy: SchedulingPolicy,
         control: ExecutionControl,
     ): ObjectiveEntity {
+        activeRunId = suppliedRunId ?: "run-${UUID.randomUUID()}"
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
         val session = sessions.create(objective, agent)
         val tasks = dao.getTasks(objectiveId)
@@ -628,6 +702,7 @@ class ObjectiveExecutionEngine(
         toolName: String? = null,
         toolInput: String? = null,
         toolOutput: String? = null,
+        status: String? = null,
     ) {
         dao.appendEvent(
             ObjectiveEventEntity(
@@ -651,7 +726,20 @@ class ObjectiveExecutionEngine(
             toolName = toolName,
             toolInput = toolInput,
             toolOutput = toolOutput,
+            runId = activeRunId,
+            status = status ?: statusForKind(kind),
         )
+    }
+
+    private fun statusForKind(kind: String): String? = when {
+        kind == "planning" || kind == "planning_attempt" || kind == "planning_progress" -> "running"
+        kind == "plan_created" || kind == "task_completed" || kind == "completed" || kind == "verification_passed" -> "completed"
+        kind == "planning_failed" || kind == "task_error" || kind == "verification_failed" || kind == "failed" -> "failed"
+        kind == "planning_validation_failed" -> "failed"
+        kind == "planning_repair" || kind == "recovery_retry" || kind == "blocked" -> "waiting"
+        kind == "recovery_needs_review" || kind == "checkpoint_interrupted" -> "interrupted"
+        kind == "task_started" || kind == "task_running" -> "running"
+        else -> null
     }
 
     private fun activityKind(kind: String): WorkerActivityKind = when {

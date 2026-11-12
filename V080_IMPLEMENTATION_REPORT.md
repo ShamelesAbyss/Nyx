@@ -2,7 +2,7 @@
 
 ## Status
 
-Local implementation and verification build. **Not published** to GitHub, not pushed, and not uploaded to Google Play. Version metadata is `versionCode 13` / `versionName 0.8.0`, package `com.nyx.ai`, min SDK 26, compile/target SDK 37, ARM64.
+Historical local implementation and verification report. The later v0.8.0 release was published to GitHub; this report retains the pre-publication build evidence and does not describe the current v0.8.1 release. No Google Play publication was performed. Version metadata in this historical report is `versionCode 13` / `versionName 0.8.0`, package `com.nyx.ai`, min SDK 26, compile/target SDK 37, ARM64.
 
 ## Implemented scope
 

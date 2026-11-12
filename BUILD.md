@@ -1,6 +1,6 @@
-# Building NYX 0.8.0
+# Building NYX 0.8.1
 
-Package identity: `com.nyx.ai`, versionCode **13**, versionName **0.8.0**. The verified command is `./gradlew --no-daemon testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin assembleDebugAndroidTest`; it produces 679 passing JVM tests, a debug APK, and a compiled instrumentation-test APK. No physical device is required for that command, but real Termux/Ollama/Keystore/gateway behavior still requires one.
+Package identity: `com.nyx.ai`, versionCode **14**, versionName **0.8.1**. The verified clean command is `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`; it produces 695 passing JVM tests, a debug APK, and a compiled instrumentation-test APK. No physical device is required for that command, but real console rendering, Termux/Ollama/Keystore/gateway behavior, and planning-provider behavior still require one.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ python3 tools/check_sdk_policy.py --self-test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package identity: `com.nyx.ai`; versionCode 13/versionName 0.8.0; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
+Package identity: `com.nyx.ai`; versionCode 14/versionName 0.8.1; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
 
 Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, settings, and imported GGUF copies; preserve the prior key and back up user data first. `assembleRelease` alone is not a production-signed release. Keep all signing secrets outside source archives.
 

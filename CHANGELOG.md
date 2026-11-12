@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.1 — Project Clear Signal (published)
+
+Package metadata: versionCode 14 / versionName 0.8.1, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the established certificate. Published as GitHub release v0.8.1 with the APK, instrumentation APK, source archive, and checksum manifest. See `RELEASE_NOTES_v0.8.1.md`.
+
+### Run-scoped Live Worker Console
+
+The console now defaults to the current objective and its current execution run instead of merging every activity in the bounded store. Each engine and service event carries a run identity, and the dialog provides an explicit history selector for earlier runs and objectives. A legacy event without a run identity remains available as a separate legacy run. Selecting a run resets the detail view but preserves the run-scoped event set; a new event only auto-scrolls when the user is already near the bottom.
+
+### Operations, duration, and raw diagnostics
+
+Related task, tool, verification, planning, and recovery events are grouped into operation cards. A card shows the observed status, event count, and elapsed time calculated from real event timestamps. Tapping a card opens a full-height chronological breakdown with command input, output, and status; an optional raw-event mode exposes the complete event stream. Terminal ANSI/OSC sequences are stripped before display and export, and credential-shaped values remain redacted. A confirmation-gated Clear History action preserves the selected/current and active runs and never deletes Room objective records or task evidence.
+
+### Bounded planning and recovery
+
+Planning has a hard 120-second per-attempt deadline and emits progress events while waiting. A completed response that fails strict JSON or schema validation gets exactly one structured-output repair with the validator reason. Transport timeouts, interruption, empty responses, context exhaustion, and provider errors are classified separately; a failed planning phase records a sanitized diagnostic and leaves the objective in `needs_attention` instead of silently restarting. Existing tasks, checkpoints, and dependency evidence are preserved, and resuming still requires explicit review.
+
+### Hardened model-directed shell policy
+
+`ModelShellSyntax` rejects output/input redirection, pipes, command chaining, newlines, command substitution, variable expansion, and indirect execution (`sh -c`, `eval`, `xargs`, `find -exec`, and similar) before command classification. Quoted metacharacters remain ordinary arguments, and fixed build/test commands and approved dependency installation are unchanged. The terminal trust boundary remains the existing policy gate, not an OS sandbox.
+
+### Honest limits
+
+No physical Android device was available for this build. Actual console rendering and scrolling, history selection, clear-history behavior, provider planning timeout/repair, and real-device shell behavior remain physical-device checks. The planning deadline is a client-side bound; provider cancellation behavior depends on the provider. No AAB or Google Play publication was performed, and the APK remains a debug-signed development build. 695 JVM tests pass with zero failures, errors, or skips.
+
 ## 0.8.0 — Project Autonomous Bootstrap (published)
 
 Package metadata: versionCode 13 / versionName 0.8.0, min API 26, compile/target API 37, ARM64 JNI. Published as GitHub release v0.8.0 with the APK, instrumentation APK, source archive, and checksum manifest. See `RELEASE_NOTES_v0.8.0.md`.

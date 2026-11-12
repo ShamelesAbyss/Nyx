@@ -98,4 +98,39 @@ class ModelCommandPolicyTest {
         assertFalse(assess("ls", "a/../../b").allowed)
         assertFalse(assess("ls", "a//b").allowed)
     }
+
+    @Test
+    fun `model output redirection is rejected even when the base command is read only`() {
+        assertFalse(assess("echo changed > app/src/main/App.kt").allowed)
+        assertFalse(assess("printf x >> build/out.txt").allowed)
+        assertFalse(assess("cat < secrets.txt").allowed)
+    }
+
+    @Test
+    fun `model command substitution and shell chaining are rejected`() {
+        assertFalse(assess("cat \$(pwd)/file").allowed)
+        assertFalse(assess("echo `id`").allowed)
+        assertFalse(assess("ls | sh").allowed)
+        assertFalse(assess("ls && rm -rf build").allowed)
+        assertFalse(assess("ls; touch changed").allowed)
+        assertFalse(assess("echo first\nrm -rf build").allowed)
+    }
+
+    @Test
+    fun `indirect execution cannot bypass the policy`() {
+        assertFalse(assess("sh -c 'rm -rf build'").allowed)
+        assertFalse(assess("eval 'rm -rf build'").allowed)
+        assertFalse(assess("find . -exec rm -rf {} \\;").allowed)
+        assertFalse(assess("xargs rm -rf").allowed)
+        assertFalse(assess("python3 -c 'import os'").allowed)
+        assertFalse(assess("env rm -rf build").allowed)
+        assertFalse(assess("timeout 5 rm -rf build").allowed)
+        assertFalse(assess("bash script.sh").allowed)
+    }
+
+    @Test
+    fun `quoted shell metacharacters remain ordinary arguments`() {
+        assertTrue(assess("echo \"a > b\"").allowed)
+        assertTrue(assess("echo '\$(not executed)'").allowed)
+    }
 }

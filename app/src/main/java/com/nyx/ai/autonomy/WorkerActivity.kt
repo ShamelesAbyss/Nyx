@@ -25,6 +25,12 @@ data class WorkerActivity(
     val toolName: String? = null,
     val toolInput: String? = null,
     val toolOutput: String? = null,
+    /** One execution of an objective. Null on records written by earlier builds. */
+    val runId: String? = null,
+    /** Observed operation state; null means the event did not establish one. */
+    val status: String? = null,
+    /** Only present when the producer measured a real duration. */
+    val durationMillis: Long? = null,
 )
 
 /**
@@ -67,11 +73,14 @@ object WorkerActivityBus {
         toolName: String? = null,
         toolInput: String? = null,
         toolOutput: String? = null,
+        runId: String? = null,
+        status: String? = null,
+        durationMillis: Long? = null,
     ) {
         val safeTitle = redact(title).take(120).ifBlank { kind.name.lowercase() }
-        val safeDetail = redact(detail).take(2_000)
-        val safeInput = toolInput?.let { redact(it).take(4_000) }?.takeIf { it.isNotBlank() }
-        val safeOutput = toolOutput?.let { redact(it).take(4_000) }?.takeIf { it.isNotBlank() }
+        val safeDetail = sanitizeTerminalText(redact(detail)).take(2_000)
+        val safeInput = toolInput?.let { sanitizeTerminalText(redact(it)).take(4_000) }?.takeIf { it.isNotBlank() }
+        val safeOutput = toolOutput?.let { sanitizeTerminalText(redact(it)).take(4_000) }?.takeIf { it.isNotBlank() }
         synchronized(lock) {
             val item = WorkerActivity(
                 id = "activity-${System.currentTimeMillis()}-${next++}",
@@ -84,6 +93,9 @@ object WorkerActivityBus {
                 toolName = toolName?.take(80),
                 toolInput = safeInput,
                 toolOutput = safeOutput,
+                runId = runId,
+                status = status?.take(32),
+                durationMillis = durationMillis?.coerceAtLeast(0),
             )
             buffer.addLast(item)
             while (buffer.size > MAX_EVENTS) buffer.removeFirst()
@@ -96,6 +108,29 @@ object WorkerActivityBus {
         synchronized(lock) {
             buffer.clear()
             file?.delete()
+            publish()
+        }
+    }
+
+    /**
+     * Removes historical diagnostic events while preserving the selected/current run. Objective
+     * records, tasks, and evidence live in Room and are never touched here.
+     */
+    fun clearHistory(
+        preserveObjectiveId: String?,
+        preserveRunId: String?,
+        additionallyPreserve: List<Pair<String?, String?>> = emptyList(),
+    ) {
+        synchronized(lock) {
+            val preserved = buildSet {
+                if (preserveObjectiveId != null) add(preserveObjectiveId to preserveRunId)
+                addAll(additionallyPreserve.filter { it.first != null })
+            }
+            buffer.removeAll { event ->
+                val active = event.status in setOf("running", "waiting", "paused", "interrupted")
+                !active && (event.objectiveId to event.runId) !in preserved
+            }
+            rewrite()
             publish()
         }
     }
@@ -118,12 +153,20 @@ object WorkerActivityBus {
                 put("toolName", item.toolName ?: "")
                 put("toolInput", item.toolInput ?: "")
                 put("toolOutput", item.toolOutput ?: "")
+                put("runId", item.runId ?: "")
+                put("status", item.status ?: "")
+                put("durationMillis", item.durationMillis ?: -1L)
             }.toString() + "\n")
             // Keep the file bounded even after many sessions.
             if (target.length() > 1_500_000L) {
-                target.writeText(buffer.joinToString("\n") { encode(it) } + "\n")
+                rewrite()
             }
         }
+    }
+
+    private fun rewrite() {
+        val target = file ?: return
+        runCatching { target.writeText(buffer.joinToString("\n") { encode(it) } + "\n") }
     }
 
     private fun encode(item: WorkerActivity): String = JSONObject().apply {
@@ -137,6 +180,9 @@ object WorkerActivityBus {
         put("toolName", item.toolName ?: "")
         put("toolInput", item.toolInput ?: "")
         put("toolOutput", item.toolOutput ?: "")
+        put("runId", item.runId ?: "")
+        put("status", item.status ?: "")
+        put("durationMillis", item.durationMillis ?: -1L)
     }.toString()
 
     private fun decode(line: String): WorkerActivity? = runCatching {
@@ -153,9 +199,49 @@ object WorkerActivityBus {
             toolName = json.optString("toolName").takeIf { it.isNotBlank() },
             toolInput = json.optString("toolInput").take(4_000).takeIf { it.isNotBlank() },
             toolOutput = json.optString("toolOutput").take(4_000).takeIf { it.isNotBlank() },
+            runId = json.optString("runId").takeIf { it.isNotBlank() },
+            status = json.optString("status").takeIf { it.isNotBlank() },
+            durationMillis = json.optLong("durationMillis", -1L).takeIf { it >= 0 },
         )
     }.getOrNull()
 
+    /** Removes ANSI/OSC control sequences and unsafe terminal control bytes before display. */
+    internal fun sanitizeTerminalText(raw: String): String {
+        val out = StringBuilder(raw.length)
+        var index = 0
+        while (index < raw.length) {
+            val ch = raw[index]
+            if (ch == '\u001B') {
+                when {
+                    index + 1 < raw.length && raw[index + 1] == '[' -> {
+                        index += 2
+                        while (index < raw.length && raw[index] !in '@'..'~') index++
+                        if (index < raw.length) index++
+                    }
+                    index + 1 < raw.length && raw[index + 1] == ']' -> {
+                        index += 2
+                        while (index < raw.length && raw[index] != '\u0007') {
+                            if (raw[index] == '\u001B' && index + 1 < raw.length && raw[index + 1] == '\\') {
+                                index++
+                                break
+                            }
+                            index++
+                        }
+                        if (index < raw.length) index++
+                    }
+                    else -> index++
+                }
+                continue
+            }
+            when {
+                ch == '\n' || ch == '\t' -> out.append(ch)
+                ch == '\r' -> Unit
+                ch.code in 32..126 || ch.code >= 160 -> out.append(ch)
+            }
+            index++
+        }
+        return out.toString()
+    }
     /** Hides common credential shapes before anything reaches the UI or the log file. */
     internal fun redact(raw: String): String {
         var text = raw
@@ -195,7 +281,7 @@ object WorkerActivityExport {
             out.append(text.take(bounded - out.length)).append('\n')
         }
         line("NYX LIVE ACTIVITY")
-        if (objectiveTitle.isNotBlank()) line("Objective: ${WorkerActivityBus.redact(objectiveTitle).take(200)}")
+        if (objectiveTitle.isNotBlank()) line("Objective: ${clean(objectiveTitle).take(200)}")
         if (phase.isNotBlank()) line("Phase: ${phase.take(80)}")
         if (status.isNotBlank()) line("Status: ${status.take(80)}")
         if (activeTask.isNotBlank()) line("Active task: ${WorkerActivityBus.redact(activeTask).take(200)}")
@@ -204,16 +290,22 @@ object WorkerActivityExport {
         activities.takeLast(300).forEach { event ->
             val body = buildString {
                 append('[').append(formatTime(event.at)).append("] ")
-                append(event.kind.name).append(" · ").append(WorkerActivityBus.redact(event.title)).append('\n')
-                if (event.detail.isNotBlank()) append("  ").append(WorkerActivityBus.redact(event.detail)).append('\n')
-                if (!event.toolName.isNullOrBlank()) append("  tool: ").append(WorkerActivityBus.redact(event.toolName)).append('\n')
-                if (!event.toolInput.isNullOrBlank()) append("  input: ").append(WorkerActivityBus.redact(event.toolInput)).append('\n')
-                if (!event.toolOutput.isNullOrBlank()) append("  output: ").append(WorkerActivityBus.redact(event.toolOutput)).append('\n')
+                append(event.kind.name).append(" · ").append(clean(event.title)).append('\n')
+                if (event.detail.isNotBlank()) append("  ").append(clean(event.detail)).append('\n')
+                if (!event.runId.isNullOrBlank()) append("  run: ").append(event.runId).append('\n')
+                if (!event.status.isNullOrBlank()) append("  status: ").append(event.status).append('\n')
+                if (event.durationMillis != null) append("  duration: ").append(event.durationMillis).append(" ms\n")
+                if (!event.toolName.isNullOrBlank()) append("  tool: ").append(clean(event.toolName)).append('\n')
+                if (!event.toolInput.isNullOrBlank()) append("  input: ").append(clean(event.toolInput)).append('\n')
+                if (!event.toolOutput.isNullOrBlank()) append("  output: ").append(clean(event.toolOutput)).append('\n')
             }.take(MAX_EVENT_CHARS)
             line(body.trimEnd())
         }
         return out.toString().trimEnd()
     }
+
+    private fun clean(text: String): String =
+        WorkerActivityBus.sanitizeTerminalText(WorkerActivityBus.redact(text))
 
     private fun formatTime(at: Long): String =
         java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(at))

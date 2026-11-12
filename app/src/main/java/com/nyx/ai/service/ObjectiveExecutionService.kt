@@ -87,6 +87,7 @@ class ObjectiveExecutionService : Service() {
     private var control: ExecutionControl? = null
     private var cancelRequested = false
     private var currentObjectiveId: String? = null
+    private var currentRunId: String? = null
     private var currentTitle: String = "Objective"
 
     override fun onCreate() {
@@ -162,6 +163,7 @@ class ObjectiveExecutionService : Service() {
         control = executionControl
         cancelRequested = false
         currentObjectiveId = objectiveId
+        currentRunId = "run-${UUID.randomUUID()}"
         ExecutionMonitor.begin(objectiveId)
         runJob = scope.launch {
             val before = InferenceFabric.metrics.value
@@ -365,6 +367,7 @@ class ObjectiveExecutionService : Service() {
                 },
                 fileProbe = terminalTools,
                 contextStore = contextStore,
+                suppliedRunId = currentRunId,
             )
             val result = if (tasks.isEmpty()) {
                 engine.planAndExecute(objectiveId, agent, resourceProfile.policy, executionControl)
@@ -415,6 +418,7 @@ class ObjectiveExecutionService : Service() {
             title = kind.replace('_', ' '),
             detail = detail,
             objectiveId = objectiveId,
+            runId = currentRunId,
         )
     }
 

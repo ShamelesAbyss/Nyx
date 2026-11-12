@@ -1,8 +1,23 @@
-# NYX User Guide — 0.8.0
+# NYX User Guide — 0.8.1
 
-> 0.8.0 “Project Autonomous Bootstrap” is the latest published release. Physical-device execution of the fixed Debian install path, the new Live Worker Console rendering, and workspace deletion is still pending.
+> 0.8.1 “Project Clear Signal” is the latest published release. Physical-device execution of the run-scoped console, history selection, planning recovery, and shell-policy behavior is still pending.
 
-## What changed in 0.8.0 — Project Autonomous Bootstrap
+## What changed in 0.8.1 — Project Clear Signal
+
+**The Live Worker Console is now run-scoped.** It opens on the selected or currently running objective and its current execution run. Earlier runs are available under **History**; they are not merged into the live view. Each run is identified by objective and run/session identity, and legacy events from earlier builds remain visible as a separate legacy run. The dialog uses the full screen with safe display insets.
+
+**Operations replace an undifferentiated event stream.** Related task, tool, verification, planning, and recovery events are grouped into cards with observed status, event count, and elapsed time measured from real timestamps. Tap a card to see its chronological detail, including command input and output. **Raw events** switches to the complete timestamped stream. ANSI/OSC terminal sequences are stripped, credential-shaped values are redacted, and copy/share use a bounded diagnostic export.
+
+**Scrolling respects your position.** A new event auto-scrolls only when you are already near the bottom. Switching runs starts at that run's newest item. **Clear history** asks for confirmation, preserves the selected/current and active runs, and removes only console diagnostics; objective records, task evidence, and workspace files are untouched.
+
+**Planning is bounded and recoverable.** A planning attempt has a hard 120-second deadline and emits progress events while waiting. A completed response that fails strict JSON or schema validation gets one structured-output repair with the validator's reason. Timeouts, interruptions, empty responses, context exhaustion, and provider errors are reported as distinct failure categories. A failed plan stops in `needs_attention` with a sanitized diagnostic; it does not silently restart. Existing tasks, checkpoints, and dependency evidence remain intact, and resuming still requires explicit review.
+
+**Model shell syntax is more strictly confined.** Model-directed `terminal_run` now rejects output/input redirection, pipes, compound commands, newlines, command substitution, unquoted variable expansion, and indirect execution such as `sh -c`, `eval`, `xargs`, or `find -exec`. Quoted metacharacters remain ordinary arguments, fixed build/test commands are unchanged, and approved dependency installation does not use this model-directed path. The real command still runs in Termux or Debian/PRoot; this is a policy boundary, not an OS sandbox.
+
+**Limits.** No physical Android device was available for this build. The console layout, scrolling, history selection, clear-history behavior, provider planning timeout/repair, and shell behavior are JVM/build verified only. The client-side deadline does not guarantee that a provider stops generation immediately. See [docs/V081_IMPLEMENTATION_STATUS.md](docs/V081_IMPLEMENTATION_STATUS.md) for the device checklist.
+
+## What changed in 0.8.0 — Project Autonomous Bootstrap (historical)
+
 
 **Environment preparation is now part of the objective.** Before a task runs, the objective foreground service re-discovers the current Termux/PRoot state and reconciles it with the objective's stored environment. A current verified guest clears a stale historical error; an unavailable or diverted environment records a diagnostic and stops before any task executes. `DependencyBootstrap` probes the guest, builds the existing trusted dependency plan, installs only approved candidates, re-probes every required executable, and then continues the original objective with its task graph and checkpoints intact.
 
@@ -46,7 +61,7 @@
 
 **MCP and GitHub gateways.** Open **Gateways** to add a streamable-HTTP MCP server or a GitHub token gateway. Tokens are encrypted in Android Keystore-backed storage; the gateway record stores only an opaque reference. Each server has an allowlist and a per-run call budget. Check health and list tools before invoking one manually; GitHub writes are separate tools and remain policy-gated. Objective execution snapshots the allowed tools before a run, so a model cannot enable a server or widen its allowlist mid-task.
 
-**Live worker console.** While an objective runs, Chat shows a compact live preview and Autonomy shows a Live Activity card. Tap either for the expandable full-height timeline: plans, delegated roles, tool calls, terminal output, installation, file operations, skill scopes, gateway calls, verification, recovery decisions, metrics, and errors. Pause, Resume, Cancel, copy, and redacted export are available. The timeline is persisted locally and is evidence-backed, not simulated.
+**Live worker console.** While an objective runs, Chat shows a compact live preview and Autonomy shows a Live Activity card. Tap either for the full-height console. It opens on the current objective and current execution run; use **History** to inspect earlier runs. Related events are grouped into operation cards with observed status and measured elapsed time. Tap an operation for its chronological detail, or switch to **Raw events** for the complete timestamped stream. Pause, Resume, Cancel, copy, and redacted export are available. New events auto-follow only when you are near the bottom. **Clear history** is confirmation-gated and preserves the current/active run plus objective records. The timeline is persisted locally and is evidence-backed, not simulated.
 
 **Project memory.** Verified task outcomes, build instructions, and lessons are stored per workspace with evidence hashes. Relevant memory is injected into later prompts; stale or unverified claims are suppressed. Use the workspace diagnostics if you need to confirm what was recorded.
 
@@ -123,7 +138,7 @@ NYX executes real commands through Termux's `RUN_COMMAND` service and reads real
 
 The manual terminal panel classifies user-entered commands and requires explicit approval of the exact command before execution, including read-only commands. Privileged/protected-Android/destructive operations are blocked. This manual route does **not** authorize arbitrary model shell commands, and a risk classifier is not a shell sandbox.
 
-Objective workspace hooks support bounded file inspection/search, expected-hash writes/checkpoints, project detection, and detected fixed build/test commands. Model `terminal_run` is policy-gated: only workspace-confined, non-destructive commands authorized by the active autonomy policy run; otherwise it is denied. Models cannot override build/test command strings or timeouts. Remote `realpath` checks reject symlink/path escapes, and exact hashes protect supported edits. Standalone agents and sequential workflows keep their app-private tools; enabling objectives' workspace is not a general Termux grant to those features.
+Objective workspace hooks support bounded file inspection/search, expected-hash writes/checkpoints, project detection, and detected fixed build/test commands. Model `terminal_run` is policy-gated: only workspace-confined commands authorized by the active autonomy policy run, after the v0.8.1 rejection of redirection, chaining, substitution, and indirect execution; otherwise it is denied. Models cannot override build/test command strings or timeouts. Remote `realpath` checks reject symlink/path escapes, and exact hashes protect supported edits. Standalone agents and sequential workflows keep their app-private tools; enabling objectives' workspace is not a general Termux grant to those features.
 
 **Only approve trusted projects.** Gradle wrappers, npm/Make scripts, imports/tests, and other project build hooks can execute arbitrary code with Termux/PRoot user permissions, read outside the workspace, or use the network. Supported offline flags are best effort, not an OS sandbox or firewall. Existing scripts are trusted code; do not approve an untrusted repository merely because path checks passed.
 

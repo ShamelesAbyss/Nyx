@@ -85,6 +85,10 @@ object ModelCommandPolicy {
             return denied("The working directory is too long.")
         }
 
+        ModelShellSyntax.rejection(command)?.let { reason ->
+            return denied(reason, workingDirectory)
+        }
+
         val assessment = CommandPolicy.assess(command)
         if (assessment.blocked) {
             return ModelCommandDecision(

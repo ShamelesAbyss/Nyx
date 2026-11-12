@@ -1,5 +1,31 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.1 — Project Clear Signal (published)
+
+NYX 0.8.1 is versionCode 14 / versionName 0.8.1, debug-signed with the established certificate, and published as GitHub release v0.8.1. It is a focused observability and planning-reliability release, not a new autonomy claim. The established NYX identity, README layout, history, license, and prior releases are preserved.
+
+| Directive area | Status | What changed |
+| :--- | :--- | :--- |
+| Run separation | Implemented, JVM-tested | `WorkerActivity` carries `runId`; the service assigns one identity per launch and passes it to engine/service events. `WorkerConsoleModel` separates objectives and runs, including legacy null-run events. |
+| Current-run default | Implemented, device-untested | Chat and Autonomy filter the preview to the current objective/current run. The dialog defaults to that run and exposes earlier runs through a history selector. |
+| Operation grouping | Implemented, JVM-tested | Related task/planning events are grouped into `ConsoleOperation` cards with observed status, event count, and elapsed time from real timestamps. Tapping opens a full-height chronological breakdown. |
+| Scroll and layout | Implemented, device-untested | A full-screen dialog applies safe display insets. Auto-follow happens only when the user is near the bottom; switching runs starts at the newest item. |
+| Raw diagnostics | Implemented, JVM-tested | Raw-event mode exposes the complete stream. ANSI CSI/OSC sequences are stripped and credential-shaped values remain redacted in display and export. |
+| History clearing | Implemented, device-untested | Confirmation-gated `clearHistory` preserves the selected/current and active runs and never deletes Room objectives, tasks, evidence, or workspace files. |
+| Planning deadline | Implemented, JVM-tested | Each planning attempt has a 120-second hard deadline and emits progress events every 10 seconds. Timeout is surfaced as its own category. |
+| Structured-output repair | Implemented, JVM-tested | A completed response that fails strict JSON/schema validation gets exactly one repair prompt with the validator reason. Transport failures are not repaired as malformed output. |
+| Honest failure state | Implemented, JVM-tested | Planning failure records a sanitized category and leaves the objective in `needs_attention`; it does not silently restart. Existing checkpoints and dependency evidence remain intact. |
+| Shell syntax hardening | Implemented, JVM-tested | Model-directed commands reject redirection, pipes, chaining, substitution, variable expansion, and indirect execution before risk classification. Quoted metacharacters remain ordinary arguments. |
+| Tests | Implemented | Full suite: **695 JVM tests, 0 failures, 0 errors, 0 skips**. New focused coverage includes `WorkerConsoleModelTest`, `PlanningRecoveryTest`, and expanded `ModelCommandPolicyTest`. |
+
+### Physical-device evidence and limits
+
+No physical Android device was available for this build. The console rendering, history selector, operation cards, scroll behavior, clear-history flow, provider planning timeout/repair, and shell-policy behavior are JVM/build verified only. The client-side deadline does not guarantee provider-side cancellation. The console is a bounded diagnostic store, not an unlimited audit archive; objective and task truth remains in Room. The APK is debug-signed and is not a Play Store artifact. No AAB or Play publication was performed.
+
+### Verification
+
+The final clean build, test counts, APK identity, signer, and checksums are recorded in `TEST_RESULTS.md` and `docs/V081_IMPLEMENTATION_STATUS.md`.
+
 ## v0.8.0 — Project Autonomous Bootstrap (published)
 
 NYX 0.8.0 is versionCode 13 / versionName 0.8.0, debug-signed with the established certificate, and published as GitHub release v0.8.0. It turns verified dependency preparation into part of objective execution and adds a policy-gated terminal, an expandable Live Worker Console, and a guarded workspace lifecycle. It is not a claim of full autonomous development.

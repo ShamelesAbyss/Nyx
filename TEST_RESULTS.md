@@ -1,5 +1,28 @@
 # NYX Test Results
 
+## 0.8.1 — Project Clear Signal (published build)
+
+Executed on 2026-11-12 UTC from `/home/ubuntu/nyx` for v0.8.1:
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" \
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+
+Result: `BUILD SUCCESSFUL in 35s` (final incremental rebuild after the current-run selection fix).
+
+- JVM tests: **695**, failures **0**, errors **0**, skipped **0** across 66 classes.
+- New focused coverage: `WorkerConsoleModelTest` (5), `PlanningRecoveryTest` (5), and expanded `ModelCommandPolicyTest` cases for redirection, chaining, substitution, and indirect execution.
+- Pre-existing warnings remain: `Divider` deprecation in `MainActivity.kt` and Room migration parameter-name warnings. No compile errors.
+- Debug APK: `com.nyx.ai`, versionCode **14**, versionName **0.8.1**, minSdk 26, compile/target 37, `arm64-v8a`.
+- Debug APK SHA-256: `7a05ac2dee6b7b5c3cda54769b659b88bc06ce4af8ed004c3cd8333801949ea6`.
+- Instrumentation APK SHA-256: `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3`.
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` (unchanged).
+- 16 KB ZIP alignment check passed (`zipalign -c -P 16 -v 4`).
+
+No physical Android device was attached. Console rendering, history selection, operation detail, scroll behavior, clear-history preservation, provider planning timeout/repair, and real Termux/PRoot shell behavior remain device checks. The JVM tests prove the run/operation model, failure classification, repair prompt bounds, stream-safety, and model-command syntax policy; they do not replace an on-device run.
+
 ## 0.8.0 — Project Autonomous Bootstrap (published build)
 
 Executed on 2026-11-12 UTC from `/home/ubuntu/nyx` for the published v0.8.0 build:
