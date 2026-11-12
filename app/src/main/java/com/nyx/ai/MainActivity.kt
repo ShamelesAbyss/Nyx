@@ -110,6 +110,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nyx.ai.terminal.TerminalEnvironment
+import com.nyx.ai.terminal.CapabilityState
+import com.nyx.ai.terminal.WorkspaceCheck
+import com.nyx.ai.autonomy.PreflightResult
 import com.nyx.ai.nativeinference.NativePhase
 import com.nyx.ai.network.InferenceFabric
 import com.nyx.ai.settings.MemoryTelemetry
@@ -276,6 +279,72 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     OutlinedButton(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.DEBIAN_PROOT) }) { Text("Debian") }
                 }
                 Text("Selected environment: ${state.terminalEnvironment.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }}", color = VioletSoft, fontSize = 11.sp)
+                val verifiedGuests = profile?.verifiedDistros.orEmpty()
+                if (verifiedGuests.isNotEmpty()) {
+                    Text("VERIFIED GUESTS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        verifiedGuests.forEach { alias ->
+                            val selected = state.guestAlias.equals(alias, ignoreCase = true)
+                            OutlinedButton(
+                                onClick = {
+                                    vm.setGuestAlias(alias)
+                                    vm.setTerminalEnvironment(TerminalEnvironment.DEBIAN_PROOT)
+                                },
+                                colors = if (selected) ButtonDefaults.outlinedButtonColors(contentColor = Violet) else ButtonDefaults.outlinedButtonColors()
+                            ) { Text(if (selected) "$alias · selected" else alias) }
+                        }
+                    }
+                }
+                if (profile?.nestedProot == true) {
+                    Text("Nested PRoot: ${profile.detail.orEmpty()}", color = Color(0xFFF2C879), fontSize = 11.sp)
+                }
+                if (profile != null && profile.listError != null && profile.distros.isEmpty()) {
+                    Text("Distro list error: ${profile.listError}", color = Color(0xFFF2C879), fontSize = 11.sp)
+                }
+                profile?.guest(state.guestAlias)?.let { guest ->
+                    Text(
+                        "Guest ${state.guestAlias}: HOME ${guest.home ?: "unknown"} · ${guest.osName ?: "unknown OS"} · uid ${guest.uid ?: "?"}",
+                        color = TextMuted, fontSize = 11.sp
+                    )
+                }
+            }
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("ENVIRONMENT CAPABILITIES", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                    TextButton(onClick = vm::refreshEnvironmentCapabilities) { Text("Refresh", color = VioletSoft, fontSize = 11.sp) }
+                }
+                val capabilities = state.environmentCapabilities
+                if (capabilities == null) {
+                    Text("Not probed yet. Detect the environment, then refresh capabilities.", color = TextMuted, fontSize = 11.sp)
+                } else {
+                    val verifiedCount = capabilities.tools.count { it.value.state == CapabilityState.VERIFIED }
+                    Text(
+                        "${capabilities.kind} · $verifiedCount verified · ${capabilities.tools.size} checked",
+                        color = TextMain, fontSize = 11.sp
+                    )
+                    capabilities.tools.entries.sortedBy { it.key }.take(14).forEach { (name, tool) ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, color = TextMain, fontSize = 11.sp, modifier = Modifier.width(78.dp))
+                            Text(
+                                tool.state.name.replace('_', ' ').lowercase(),
+                                color = when (tool.state) {
+                                    CapabilityState.VERIFIED -> Green
+                                    CapabilityState.MISSING, CapabilityState.INCOMPATIBLE -> Color(0xFFF2C879)
+                                    CapabilityState.PERMISSION_DENIED -> Color(0xFFF28B82)
+                                    CapabilityState.NOT_CHECKED -> TextMuted
+                                },
+                                fontSize = 10.sp,
+                                modifier = Modifier.width(92.dp)
+                            )
+                            Text(tool.version ?: tool.path ?: "", color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    capabilities.storageFreeBytes?.let { bytes ->
+                        Text("Free storage: ${bytes / (1024L * 1024L)} MB", color = TextMuted, fontSize = 11.sp)
+                    }
+                }
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
@@ -327,11 +396,24 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     value = workspace,
                     onValueChange = { workspace = it.take(4_096) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Workspace path in Termux, e.g. ~/projects/app") },
+                    label = {
+                        Text(
+                            if (state.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) "Guest path, e.g. /root/nyx-scratch"
+                            else "Workspace path in Termux, e.g. ~/projects/app"
+                        )
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp)
                 )
                 OutlinedButton(onClick = { vm.setTerminalWorkspace(workspace) }) { Text("Save workspace") }
+                when (val check = state.workspaceCheck) {
+                    is WorkspaceCheck.Valid -> Text("Verified in the selected environment: ${check.normalizedPath}", color = Green, fontSize = 11.sp)
+                    is WorkspaceCheck.Invalid -> Text("${check.code}: ${check.message} ${check.action}", color = Color(0xFFF2C879), fontSize = 11.sp)
+                    null -> Text("Workspace is not verified yet. Save it to run a real existence and write check.", color = TextMuted, fontSize = 11.sp)
+                }
+                if (state.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
+                    Text("Guest paths belong to the PRoot filesystem. /storage/emulated/0 and /sdcard are Android paths and are rejected here.", color = TextMuted, fontSize = 10.sp)
+                }
             }
         }
         if (state.terminalHistory.isNotEmpty()) {
@@ -379,6 +461,19 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
                     Text("Use verified project repair loop", color = TextMain, fontSize = 12.sp)
                 }
                 if (development) Text("Uses the saved trusted workspace/environment, detected existing build/test commands and configured repair limits. Baseline passing does not implement a new feature. No model shell, installs or publishing.", color = TextMuted, fontSize = 11.sp)
+                if (development) {
+                    OutlinedButton(onClick = { vm.preflightDevelopment() }) { Text("Run preflight") }
+                    state.preflight?.let { pre ->
+                        Text(
+                            if (pre.ready) "Preflight ready." else "Preflight blocked (${pre.blockers.size}).",
+                            color = if (pre.ready) Green else Color(0xFFF2C879),
+                            fontSize = 11.sp
+                        )
+                        pre.blockers.take(4).forEach { blocker ->
+                            Text("${blocker.code}: ${blocker.message} ${blocker.action}", color = TextMuted, fontSize = 10.sp)
+                        }
+                    }
+                }
                 Button(onClick = { vm.createObjective(goal, development); goal = "" }, enabled = goal.isNotBlank() && !state.objectiveRunning, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) {
                     Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(7.dp)); Text(if (state.objectiveRunning) "Objective running" else "Plan and execute")
                 }

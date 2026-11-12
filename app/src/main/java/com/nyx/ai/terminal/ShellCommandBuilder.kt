@@ -63,11 +63,13 @@ object ShellCommandBuilder {
         timeoutSeconds: Long?,
         useTimeoutBinary: Boolean,
         authorized: Boolean = true,
+        distroAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
     ): TerminalCommandRequest = TerminalCommandRequest(
         environment = TerminalEnvironment.DEBIAN_PROOT,
         commandPath = PROOT_SHELL,
         arguments = listOf("-lc", wrap(command, workingDirectory, timeoutSeconds, useTimeoutBinary)),
         workingDirectory = null,
+        distroAlias = distroAlias,
         authorized = authorized,
         timeoutMillis = ((timeoutSeconds ?: 120L) * 1000L).coerceIn(1_000L, TerminalCommandRequest.MAX_TIMEOUT_MILLIS),
     )

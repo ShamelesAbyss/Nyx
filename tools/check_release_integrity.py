@@ -245,13 +245,16 @@ def check_release_doc(path: Path, expected_version: str, expected_code: int) -> 
         text = path.read_text(encoding="utf-8")
     except OSError as error:
         raise CheckError(f"cannot read release document {path}: {error}") from error
+    lines = text.splitlines()
     first_versioned_heading: str | None = None
-    for line in text.splitlines():
+    heading_index = 0
+    for index, line in enumerate(lines):
         match = HEADING_RE.match(line)
         if match:
             versions = VERSION_RE.findall(match.group(1))
             if versions:
                 first_versioned_heading = versions[0]
+                heading_index = index
                 break
     if first_versioned_heading is None:
         raise CheckError(f"{path}: no versioned Markdown heading identifies the current release")
@@ -260,9 +263,14 @@ def check_release_doc(path: Path, expected_version: str, expected_code: int) -> 
             f"{path}: first versioned heading is {first_versioned_heading}, expected {expected_version}"
         )
 
-    # Explicit current-release versionCode declarations near the start of a
-    # report are checked, while historical Changelog sections remain untouched.
-    for match in CODE_RE.finditer("\n".join(text.splitlines()[:40])):
+    # Only the current release section is checked; historical Changelog sections
+    # must remain untouched and must not fail the current release's code check.
+    section_end = len(lines)
+    for index in range(heading_index + 1, len(lines)):
+        if lines[index].startswith("## "):
+            section_end = index
+            break
+    for match in CODE_RE.finditer("\n".join(lines[heading_index:section_end])):
         documented_code = int(match.group(1))
         if documented_code != expected_code:
             raise CheckError(

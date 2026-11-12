@@ -30,6 +30,45 @@ class TerminalRepository(
     suspend fun discover(prootPathHint: String? = null): EnvironmentProfile =
         EnvironmentDiscovery(bridge).discover(prootPathHint)
 
+    /**
+     * Bounded, read-only capability probe for the selected execution environment. Results are
+     * timestamped so callers can treat stale data as unverified rather than as current proof.
+     */
+    suspend fun probeCapabilities(
+        environment: TerminalEnvironment,
+        guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
+    ): EnvironmentCapabilities {
+        val script = CapabilityProbe.script()
+        val result = when (environment) {
+            TerminalEnvironment.TERMUX_HOST -> bridge.runHostIsolated(script, timeoutSeconds = 60)
+            TerminalEnvironment.DEBIAN_PROOT -> bridge.runShell(
+                script, environment, workingDirectory = null, timeoutSeconds = 60,
+                useTimeoutBinary = false, approved = true, guestAlias = guestAlias,
+            )
+        }
+        val kind = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
+        return CapabilityProbe.parse(result.stdout, kind, kind, System.currentTimeMillis())
+    }
+
+    /** Validates syntax, then verifies the directory really exists in the selected environment. */
+    suspend fun validateWorkspace(
+        environment: TerminalEnvironment,
+        path: String,
+        guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
+    ): WorkspaceCheck {
+        val syntax = WorkspaceValidator.validateSyntax(WorkspaceRequest(environment, path, authorized = true))
+        if (syntax !is WorkspaceCheck.Valid) return syntax
+        val script = WorkspaceValidator.probeScript(syntax.normalizedPath)
+        val result = when (environment) {
+            TerminalEnvironment.TERMUX_HOST -> bridge.runHostIsolated(script, timeoutSeconds = 30)
+            TerminalEnvironment.DEBIAN_PROOT -> bridge.runShell(
+                script, environment, workingDirectory = null, timeoutSeconds = 30,
+                useTimeoutBinary = false, approved = true, guestAlias = guestAlias,
+            )
+        }
+        return WorkspaceValidator.parseProbe(result.stdout, result.stderr, result.exitCode)
+    }
+
     suspend fun execute(
         command: String,
         environment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST,
@@ -39,6 +78,7 @@ class TerminalRepository(
         objectiveId: String? = null,
         taskId: String? = null,
         useTimeoutBinary: Boolean = true,
+        guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
     ): TerminalCommandResult {
         val assessment = CommandPolicy.assess(command)
         val id = UUID.randomUUID().toString()
@@ -68,7 +108,7 @@ class TerminalRepository(
         } else if (assessment.requiresConfirmation && !approvedByUser) {
             TerminalCommandResult(null, TerminalResultKind.CONFIRMATION_REQUIRED, message = assessment.reasons.joinToString("; "))
         } else {
-            bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser)
+            bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser, guestAlias)
         } } catch (cancel: CancellationException) {
             withContext(NonCancellable) {
                 database.terminalCommandDao().upsert(row.copy(status = "needs_review", finishedAt = System.currentTimeMillis(), error = "Result wait cancelled. Termux process may still run until its timeout; do not replay automatically."))

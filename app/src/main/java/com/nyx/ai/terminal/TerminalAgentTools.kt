@@ -45,6 +45,7 @@ class TerminalAgentTools(
     private val timeoutSeconds: Long = 180,
     private val useTimeoutBinary: Boolean = true,
     private val workspaceApproved: Boolean = false,
+    private val guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
 ) : AgentToolProvider, FileProbe {
     constructor(
         bridge: TerminalBridge,
@@ -53,9 +54,10 @@ class TerminalAgentTools(
         timeoutSeconds: Long = 180,
         useTimeoutBinary: Boolean = true,
         workspaceApproved: Boolean = false,
+        guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
     ) : this(TerminalToolExecutor { command, env, directory, timeout, hardTimeout ->
-        bridge.runShell(command, env, directory, timeout, hardTimeout, approved = true)
-    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved)
+        bridge.runShell(command, env, directory, timeout, hardTimeout, approved = true, guestAlias = guestAlias)
+    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias)
 
     init { require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspaceRoot)) { "Workspace must be absolute and normalized; resolve ~/ before constructing terminal tools" } }
 
@@ -200,7 +202,27 @@ class TerminalAgentTools(
         if (!listing.isSuccess) return emptyList()
         val paths = listing.stdout.lineSequence().map { it.removePrefix("./") }.filter { DevelopmentPaths.isSafeRelative(it) }.take(maxFiles.coerceIn(1, 256)).toList()
         if (maxFileBytes <= 1) return paths.map { SourceSnapshot(it, "", "") }
-        return paths.mapNotNull { snapshot(it, maxFileBytes.coerceIn(1, MAX_FILE_BYTES)) }
+        val effective = maxFileBytes.coerceIn(1, MAX_FILE_BYTES)
+        val snapshots = linkedMapOf<String, SourceSnapshot>()
+        // One IPC round trip per bounded group instead of one per file; a failed group falls back
+        // to the already-verified single-file path so correctness never depends on the fast path.
+        for (group in paths.chunked(BATCH_FILES_PER_COMMAND)) {
+            val request = BatchReadRequest(
+                paths = group,
+                maxFileBytes = effective,
+                maxTotalBytes = minOf(group.size * effective, MAX_BATCH_TOTAL_BYTES),
+            )
+            if (SourceBatchReader.validate(request).isNotEmpty()) {
+                group.forEach { path -> snapshot(path, effective)?.let { snapshots[it.path] = it } }
+                continue
+            }
+            val result = controlled("source_batch", rootGuard() + SourceBatchReader.script(request), timeout = 90, files = group)
+            when (val parsed = SourceBatchReader.parse(result.stdout, request)) {
+                is BatchReadResult.Success -> parsed.files.forEach { snapshots[it.path] = SourceSnapshot(it.path, it.sha256, it.content) }
+                is BatchReadResult.Failure -> group.forEach { path -> snapshot(path, effective)?.let { snapshots[it.path] = it } }
+            }
+        }
+        return paths.mapNotNull { snapshots[it] }
     }
 
     suspend fun sourceSearch(query: String): String {
@@ -409,5 +431,10 @@ class TerminalAgentTools(
     private fun schema(name: String, description: String, properties: JSONObject, required: List<String>) = JSONObject().put("type", "function")
         .put("function", JSONObject().put("name", name).put("description", description).put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false)))
     private fun obj(vararg fields: Pair<String, String>) = JSONObject().apply { fields.forEach { (key, type) -> put(key, JSONObject().put("type", type)) } }
-    companion object { const val MAX_FILE_BYTES = 128_000; private const val CHUNK_BYTES = 4_096 }
+    companion object {
+        const val MAX_FILE_BYTES = 128_000
+        private const val CHUNK_BYTES = 4_096
+        private const val BATCH_FILES_PER_COMMAND = 12
+        private const val MAX_BATCH_TOTAL_BYTES = 384_000
+    }
 }

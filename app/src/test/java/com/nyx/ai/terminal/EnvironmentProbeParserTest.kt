@@ -1,6 +1,7 @@
 package com.nyx.ai.terminal
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,7 +56,11 @@ class EnvironmentProbeParserTest {
 
     @Test
     fun `profile reports debian availability`() {
-        val profile = EnvironmentProfile(hostAvailable = true, distros = listOf("debian", "alpine"))
-        assertTrue(profile.debianAvailable)
+        val listed = EnvironmentProfile(hostAvailable = true, distros = listOf("debian", "alpine"))
+        assertTrue(listed.debianListed)
+        assertFalse("A listed alias is not a verified guest", listed.debianAvailable)
+
+        val verified = listed.copy(verifiedDistros = listOf("debian"))
+        assertTrue(verified.debianAvailable)
     }
 }

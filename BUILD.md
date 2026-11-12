@@ -1,4 +1,4 @@
-# Building NYX 0.6.0
+# Building NYX 0.6.1
 
 ## Requirements
 

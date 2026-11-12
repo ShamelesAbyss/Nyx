@@ -104,6 +104,9 @@ data class DevelopmentReport(
     val evidence: List<ToolExecutionEvidence>,
     val modelResponses: List<String>,
     val humanReviewRequired: Boolean = false,
+    val goalKind: GoalKind = GoalKind.MODIFY_FEATURE,
+    val outcome: DevelopmentOutcome = DevelopmentOutcome.GOAL_NOT_VERIFIED,
+    val acceptance: AcceptanceCriteria? = null,
 )
 
 object DevelopmentPaths {

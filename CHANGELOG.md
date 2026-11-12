@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.1 — Environment truth and verified developer (published)
+
+Package metadata: versionCode 7/versionName 0.6.1, min API 26, compile/target API 37, ARM64 JNI. This is a debug-signed development release, published as v0.6.1.
+
+- Fixed false "Debian missing" and host/guest confusion. Environment discovery now launches `$PREFIX/bin/bash --noprofile --norc` with `BASH_ENV`/`ENV` cleared, so a Termux startup profile that ends in `proot-distro login` cannot divert the probe into a guest. A real host identity probe reports `nestedProot` with the remedy when diversion still occurs.
+- Replaced the distro-list parse with a strict parser for `proot-distro list --quiet`, sectioned, and older annotated output. A non-zero exit, missing exit code, or nested-PRoot error is a failure, never an apparently empty "none installed" list.
+- Added real guest verification: `/bin/sh` inside the selected distribution must print `NYX_GUEST_OK`, HOME, PWD, OS, uid, and resolved tools. A distribution is not marked available from its name alone. The foreground service refuses Debian objectives unless the selected guest passed verification.
+- Added an explicit validated `distroAlias` to terminal requests and execution tools; Debian is no longer hardcoded in the command descriptor.
+- Added a timestamped capability profile per environment (`VERIFIED`, `MISSING`, `INCOMPATIBLE`, `PERMISSION_DENIED`, `NOT_CHECKED`) with paths, bounded versions, free storage, and a workspace write check. Stale profiles are not presented as current proof.
+- Added two-stage workspace validation (syntax then real existence/write probe), guest-path rules that reject Android `/storage` and `/sdcard` paths for Debian, and a verified path that is what gets saved and snapshotted.
+- Added deterministic development preflight (provider, model, verified environment, authorized and accessible workspace, required tools, advisory memory) with stable blocker codes and actions; objective creation refuses to start until it is ready.
+- Verified developer v2: deterministic goal classification, acceptance criteria, relevance-ranked context, batch source reads (12 files per IPC round trip with per-file fallback), original command evidence retained separately from model text, and typed outcomes. A healthy baseline yields `BASELINE_HEALTHY`, not a repair; a feature without changed test evidence yields `GOAL_NOT_VERIFIED`; only `REPAIR_VERIFIED` and `FEATURE_IMPLEMENTED_AND_VERIFIED` set `passed=true`.
+- Added four required development fixture scenarios plus adversarial cases, and tightened two existing tests (baseline-healthy is not success; a listed Debian alias is not a verified guest). Full JVM suite: 350 tests, zero failures.
+- Limits: no physical Android device run; Termux/PRoot behavior is verified by parsing and JVM tests only. "Test evidence" means a test file changed and the suite passed, not that the test is meaningful. No real-model autonomous coding run on a phone is claimed.
+
 ## 0.6.0 — Native CPU inference and verified project repair (local)
 
 This entry describes local v0.6.0 source/build scope, not a published GitHub release. The latest published release remains v0.5.0. Package metadata is versionCode 6/versionName 0.6.0, min API 26, compile/target API 37, with ARM64-only JNI. The coordinating integrated Gradle run reported **BUILD SUCCESSFUL: 212 JVM tests, zero failures/errors/skips**, and assembled debug app/instrumentation-test APKs. Final clean source-rebuild/archive checks are separate; no Android-runtime or physical-device inference pass is claimed.

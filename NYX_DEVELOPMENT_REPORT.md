@@ -1,4 +1,20 @@
-# NYX Eclipse AI v0.6.0 — Project Singularity
+# NYX Eclipse AI — Development Reports
+
+## v0.6.1 continuation (current release)
+
+NYX 0.6.1 addresses the environment failures observed on the Pixel Fold and closes the "passing baseline equals success" gap in development objectives. Package metadata is versionCode 7 / versionName 0.6.1. The build is debug-signed and verified by compilation and JVM tests only; no physical device was available.
+
+**Environment reliability.** Discovery now bypasses Termux startup profiles by invoking `$PREFIX/bin/bash --noprofile --norc` with `BASH_ENV` and `ENV` cleared, and verifies the result really is the Termux host via `getprop`. A command that still lands in a guest is reported as `nestedProot` with the remedy instead of being misread as a missing installation. The installed-distro list is parsed from `proot-distro list --quiet` (plus sectioned/older formats); failure, a missing exit code, and a nested-PRoot refusal are distinct from a genuinely empty list. Each distribution is verified by running `/bin/sh` inside it and requiring `NYX_GUEST_OK` plus observed HOME, PWD, OS, uid, and tool paths. Execution requests carry a validated `distroAlias`, and the service refuses Debian objectives unless that guest verified.
+
+**Capabilities, workspace, preflight.** A timestamped per-environment capability profile records tool state, path, bounded version, free storage, and workspace writability. Workspace validation is syntax first, then a real existence/write probe; guest paths reject Android `/storage` and `/sdcard` locations. Development preflight reports stable blocker codes for provider, model, environment, workspace authorization/accessibility, required tools, and advisory memory, and `createObjective` will not start while blocked.
+
+**Verified developer v2.** Goals are classified deterministically; acceptance criteria are derived from the goal kind. Only `REPAIR_VERIFIED` and `FEATURE_IMPLEMENTED_AND_VERIFIED` count as passed. A healthy baseline for a repair goal is `BASELINE_HEALTHY`; a feature whose suite passes but which changed no test is `GOAL_NOT_VERIFIED`; a missing toolchain is `ENVIRONMENT_UNAVAILABLE`. Original command output is retained as evidence, separate from model responses. Source context is relevance-ranked and read in batches of up to 12 files per IPC call with a per-file fallback.
+
+**Verification.** 350 JVM tests pass with zero failures, including the four required development fixtures and adversarial path/patch cases. Two prior tests were tightened: baseline health no longer asserts success, and a listed distro no longer asserts availability. The instrumentation APK compiles. **Device execution of the Termux/PRoot flows, the foreground service, and real-model coding remains unverified and is listed as a checklist in `docs/V061_VERIFIED_DEVELOPER.md`.**
+
+**Known limits.** Capability data is a point-in-time snapshot. "Test evidence" does not judge test quality. Preflight does not install tools or elevate privileges. The public release is v0.6.1.
+
+## v0.6.0 — Project Singularity (previous local build)
 
 NYX v0.6.0 continues the existing Kotlin/Compose, Room, provider, task-engine and Termux architecture. It adds genuine llama.cpp CPU inference, a bounded development repair loop and Android API 37 compatibility without replacing the app. This is a locally delivered, debug-signed development build, not a claim of production readiness or Google Play approval. The Apache-2.0 project license and vendored runtime licenses are preserved.
 

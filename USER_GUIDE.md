@@ -1,4 +1,11 @@
-# NYX User Guide — 0.6.0
+# NYX User Guide — 0.6.1
+
+## What changed in 0.6.1 — environment truth and preflight
+- **Verified guests.** Debian (or any installed alias) is marked available only after a real command inside it succeeds. A nested-PRoot configuration is reported explicitly.
+- **Capability table.** After discovery, **Refresh** shows each tool as verified, missing, incompatible, or permission-denied, with its path, version, and free storage.
+- **Workspace verification.** Saving a path now runs a real existence and write check in the selected environment. Guest paths such as `/root/project` are valid for Debian; Android paths such as `/storage/emulated/0` are rejected there.
+- **Preflight.** Before a development objective, tap **Run preflight**. It lists exact blockers for the provider, model, environment, workspace, tools, and memory. The objective will not start while a blocker remains.
+- **Honest outcomes.** A passing baseline is not a repair. A feature objective needs a changed test and a green suite; otherwise the report says `GOAL_NOT_VERIFIED`.
 
 ## Run a native GGUF model
 
@@ -41,7 +48,7 @@ NYX executes real commands through Termux's `RUN_COMMAND` service and reads real
 2. Add `allow-external-apps=true` to `~/.termux/termux.properties` and restart Termux.
 3. Grant NYX the Termux command permission using the explicit button or Android settings.
 4. Open **Autonomy → Terminal → Detect environment**. Discovery observes actual `HOME`, `PREFIX`, shell, `proot-distro`, `timeout`, installed distributions, and tools through `RUN_COMMAND`.
-5. If you want Debian, install/configure it yourself (for example, `proot-distro install debian`) and select **Debian**. Discovery must verify the actual PRoot environment; NYX does not inspect Termux-private paths with cross-app `File` checks or pretend a distribution is installed.
+5. If you want Debian, install/configure it yourself (for example, `proot-distro install debian`) and select **Debian**. NYX lists installed aliases, then runs a real `/bin/sh` command inside each one. A guest appears under **Verified guests** only after it returns the expected marker plus its HOME, OS, uid, and tool paths. If Termux is configured to auto-login to a guest, NYX reports the nested-PRoot state with the remedy instead of claiming the distribution is missing.
 6. For objective tools only, explicitly enable **Allow terminal tools for objectives**, enter an absolute, normalized workspace path in the chosen environment, and click **Save workspace**. Resolve `~/...` using discovery rather than treating it as an app-private path.
 
 The manual terminal panel classifies user-entered commands and requires explicit approval of the exact command before execution, including read-only commands. Privileged/protected-Android/destructive operations are blocked. This manual route does **not** authorize arbitrary model shell commands, and a risk classifier is not a shell sandbox.
@@ -95,4 +102,4 @@ Pause/cancel cancels waits and native coroutines. Native cancellation signals th
 
 Room's retained additive migrations preserve existing chat/endpoint/agent/workflow/objective records. Objectives, tasks, events, artifacts, command history, evidence, and context records remain local. A foreground service is not an exemption from Android memory/battery restrictions. System available RAM, Java heap, native model/KV/graph allocations, and Android's per-app limits are different quantities; estimates and point-in-time diagnostics cannot guarantee process survival.
 
-Current source uses min API 26, compile/target API 37, and ARM64-only JNI. The coordinating integrated build succeeded with **212 JVM tests, zero failures/errors/skips**, and assembled debug app/instrumentation-test APKs. No Android-runtime/physical-device inference, Pixel/GrapheneOS/Fold, Termux/PRoot, notification/LAN prompt, lifecycle, thermal, or 16 KB runtime validation is claimed here. See [TEST_RESULTS.md](TEST_RESULTS.md) for exact results and separate final clean-source/archive checks. The published GitHub release remains v0.5.0, separate from local v0.6.0 artifacts. No autonomous installation, self-update, or publication is implied.
+Current source uses min API 26, compile/target API 37, and ARM64-only JNI. The coordinating integrated build succeeded with **350 JVM tests, zero failures/errors/skips**, and assembled debug app/instrumentation-test APKs. No Android-runtime/physical-device inference, Pixel/GrapheneOS/Fold, Termux/PRoot, notification/LAN prompt, lifecycle, thermal, or 16 KB runtime validation is claimed here. See [TEST_RESULTS.md](TEST_RESULTS.md) for exact results and separate final clean-source/archive checks. The published GitHub release remains v0.6.0, separate from local v0.6.1 artifacts. No autonomous installation, self-update, or publication is implied.

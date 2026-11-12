@@ -11,13 +11,20 @@ import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentTools
 import com.nyx.ai.autonomy.ExecutionMonitor
 import com.nyx.ai.autonomy.ExecutionRecovery
+import com.nyx.ai.autonomy.Preflight
+import com.nyx.ai.autonomy.PreflightInput
+import com.nyx.ai.autonomy.PreflightResult
 import com.nyx.ai.service.ObjectiveExecutionService
 import com.nyx.ai.terminal.CommandPolicy
+import com.nyx.ai.terminal.CapabilityState
+import com.nyx.ai.terminal.EnvironmentCapabilities
 import com.nyx.ai.terminal.EnvironmentProfile
+import com.nyx.ai.terminal.HostShell
 import com.nyx.ai.terminal.TerminalCommandResult
 import com.nyx.ai.terminal.TerminalEnvironment
 import com.nyx.ai.terminal.TerminalRepository
 import com.nyx.ai.terminal.TerminalResultKind
+import com.nyx.ai.terminal.WorkspaceCheck
 import com.nyx.ai.data.TerminalCommandEntity
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
@@ -35,6 +42,7 @@ import com.nyx.ai.network.LocalModel
 import com.nyx.ai.network.OllamaClient
 import com.nyx.ai.settings.CredentialTransportPolicy
 import com.nyx.ai.settings.CredentialVault
+import com.nyx.ai.settings.EnvironmentProfileStore
 import com.nyx.ai.settings.InferenceClientFactory
 import com.nyx.ai.network.InferenceProvider
 import com.nyx.ai.nativeinference.*
@@ -103,6 +111,10 @@ data class NyxState(
     val terminalEnvironment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST,
     val terminalToolsEnabled: Boolean = false,
     val terminalWorkspace: String = "",
+    val guestAlias: String = "debian",
+    val environmentCapabilities: EnvironmentCapabilities? = null,
+    val workspaceCheck: WorkspaceCheck? = null,
+    val preflight: PreflightResult? = null,
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
@@ -116,6 +128,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private val nativeRepository = NativeModelRepository(application)
     private val providerFactory = InferenceClientFactory(db, credentialVault, application)
     private val prefs = application.getSharedPreferences("nyx_settings", 0)
+    private val environmentProfiles = EnvironmentProfileStore(application)
     private val _state = MutableStateFlow(
         NyxState(
             endpoint = prefs.getString("endpoint", DEFAULT_ENDPOINT) ?: DEFAULT_ENDPOINT,
@@ -127,6 +140,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             terminalToolsEnabled = prefs.getBoolean(ObjectiveExecutionService.KEY_TERMINAL_ENABLED, false),
             terminalEnvironment = runCatching { TerminalEnvironment.valueOf(prefs.getString("terminal_environment", "TERMUX_HOST") ?: "TERMUX_HOST") }.getOrDefault(TerminalEnvironment.TERMUX_HOST),
             terminalWorkspace = prefs.getString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, "") ?: "",
+            guestAlias = prefs.getString("terminal_guest_alias", "debian") ?: "debian",
         )
     )
     val state: StateFlow<NyxState> = _state.asStateFlow()
@@ -343,7 +357,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         persistEndpointNow(s)
         val snapshot = JSONObject().put("endpointId", endpointRecordId(s.endpoint)).put("modelId", s.selectedModel)
             .put("options", JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads))
-            .put("terminalEnabled", s.terminalToolsEnabled).put("workspace", s.terminalWorkspace).put("environment", s.terminalEnvironment.name)
+            .put("terminalEnabled", s.terminalToolsEnabled).put("workspace", s.terminalWorkspace)
+            .put("environment", s.terminalEnvironment.name).put("guestAlias", s.guestAlias)
         db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "execution_config", snapshot.toString(), System.currentTimeMillis()))
     }
 
@@ -549,6 +564,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val clean = goal.trim().take(8_000)
         if (clean.isBlank()) return
         if (development && !_state.value.terminalToolsEnabled) { _state.update { it.copy(error = "Enable an approved development workspace first.") }; return }
+        if (development) {
+            val pre = preflightDevelopment()
+            if (!pre.ready) {
+                _state.update {
+                    it.copy(error = "Preflight blocked: " + pre.blockers.joinToString("; ") { blocker -> "${blocker.code} — ${blocker.message}" })
+                }
+                return
+            }
+        }
         val s = _state.value
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId }
         if (agent == null) { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
@@ -666,14 +690,108 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(terminalDiscovering = true, terminalMessage = "Probing Termux…") }
             val profile = withContext(Dispatchers.IO) { terminalRepository.discover() }
+            val environment = _state.value.terminalEnvironment
+            val alias = _state.value.guestAlias
+            val guestVerified = profile.verifiedDistros.any { it.equals(alias, ignoreCase = true) }
+            val capabilities = if (environment == TerminalEnvironment.TERMUX_HOST || guestVerified) {
+                withContext(Dispatchers.IO) {
+                    runCatching { terminalRepository.probeCapabilities(environment, alias) }.getOrNull()
+                }
+            } else null
+            capabilities?.let { environmentProfiles.save(it) }
+            val workspace = _state.value.terminalWorkspace
+            val check = if (workspace.isNotBlank() && (environment == TerminalEnvironment.TERMUX_HOST || guestVerified)) {
+                withContext(Dispatchers.IO) {
+                    runCatching { terminalRepository.validateWorkspace(environment, workspace, alias) }.getOrNull()
+                }
+            } else null
             _state.update {
                 it.copy(
                     terminalDiscovering = false,
                     terminalProfile = profile,
+                    environmentCapabilities = capabilities ?: it.environmentCapabilities,
+                    workspaceCheck = check ?: it.workspaceCheck,
                     terminalMessage = profile.detail ?: if (profile.hostAvailable) "Termux host is ready." else "Termux is unavailable.",
                 )
             }
         }
+    }
+
+    /** Refreshes only the capability profile, keeping the existing discovery result. */
+    fun refreshEnvironmentCapabilities() {
+        if (_state.value.terminalDiscovering) return
+        viewModelScope.launch {
+            val s = _state.value
+            val guestVerified = s.terminalProfile?.verifiedDistros?.any { it.equals(s.guestAlias, ignoreCase = true) } == true
+            if (s.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT && !guestVerified) {
+                _state.update { it.copy(terminalMessage = "Verify the ${s.guestAlias} guest before probing its tools.") }
+                return@launch
+            }
+            _state.update { it.copy(terminalDiscovering = true, terminalMessage = "Probing environment capabilities…") }
+            val capabilities = withContext(Dispatchers.IO) {
+                runCatching { terminalRepository.probeCapabilities(s.terminalEnvironment, s.guestAlias) }.getOrNull()
+            }
+            capabilities?.let { environmentProfiles.save(it) }
+            _state.update {
+                it.copy(
+                    terminalDiscovering = false,
+                    environmentCapabilities = capabilities ?: it.environmentCapabilities,
+                    terminalMessage = capabilities?.let { profile ->
+                        "Capabilities refreshed: ${profile.tools.count { tool -> tool.value.state == CapabilityState.VERIFIED }} verified."
+                    } ?: "Capability probe did not return a result.",
+                )
+            }
+        }
+    }
+
+    fun setGuestAlias(alias: String) {
+        if (!HostShell.isSafeAlias(alias)) return
+        prefs.edit().putString("terminal_guest_alias", alias).apply()
+        _state.update { it.copy(guestAlias = alias, environmentCapabilities = null, workspaceCheck = null) }
+    }
+
+    /**
+     * Deterministic preflight for a development objective. It never calls a model and reports the
+     * exact blocker so the user can fix the environment instead of looping on failed commands.
+     */
+    fun preflightDevelopment(): PreflightResult {
+        val s = _state.value
+        val guestVerified = s.terminalProfile?.verifiedDistros?.any { it.equals(s.guestAlias, ignoreCase = true) } == true
+        val environmentVerified = when (s.terminalEnvironment) {
+            TerminalEnvironment.TERMUX_HOST -> s.terminalProfile?.isolatedHost == true
+            TerminalEnvironment.DEBIAN_PROOT -> guestVerified
+        }
+        val capabilities = s.environmentCapabilities?.tools?.mapValues { it.value.state }.orEmpty()
+        val required = when (s.terminalEnvironment) {
+            TerminalEnvironment.TERMUX_HOST -> setOf("sh", "realpath", "sha256sum")
+            TerminalEnvironment.DEBIAN_PROOT -> setOf("sh")
+        }
+        val result = Preflight.evaluate(
+            PreflightInput(
+                providerConfigured = s.endpoint.isNotBlank(),
+                modelSelected = s.selectedModel.isNotBlank() && s.connected,
+                requiresTerminal = true,
+                environmentVerified = environmentVerified,
+                environmentKind = if (s.terminalEnvironment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:${s.guestAlias}",
+                workspaceAuthorized = s.terminalToolsEnabled,
+                workspaceAccessible = s.workspaceCheck is WorkspaceCheck.Valid,
+                requiredTools = required,
+                capabilities = capabilities,
+                availableMemoryMb = availableMemoryMb(),
+                requiresDevelopment = true,
+            )
+        )
+        _state.update { it.copy(preflight = result) }
+        return result
+    }
+
+    private fun availableMemoryMb(): Long? = try {
+        val manager = app.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val info = android.app.ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(info)
+        info.availMem / (1024L * 1024L)
+    } catch (_: Exception) {
+        null
     }
 
     fun requestTerminalCommand(command: String) {
@@ -722,6 +840,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                     timeoutSeconds = 120,
                     approvedByUser = approved,
                     useTimeoutBinary = _state.value.terminalProfile?.timeoutAvailable == true,
+                    guestAlias = _state.value.guestAlias,
                 )
             }
             _state.update {
@@ -746,9 +865,29 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun setTerminalWorkspace(path: String) {
         val raw = path.trim().trimEnd('/')
         val clean = if (raw == "~" || raw.startsWith("~/")) _state.value.terminalProfile?.home?.let { it + raw.removePrefix("~") } ?: raw else raw
-        if (!com.nyx.ai.development.DevelopmentPaths.isAbsoluteNormalizedWorkspace(clean)) { _state.update { it.copy(error = "Use an absolute normalized workspace (run discovery first for ~/ paths).") }; return }
-        prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, clean).apply()
-        _state.update { it.copy(terminalWorkspace = clean) }
+        if (clean.isBlank()) { _state.update { it.copy(error = "Enter an absolute workspace path.") }; return }
+        val s = _state.value
+        viewModelScope.launch {
+            _state.update { it.copy(terminalMessage = "Verifying workspace in the selected environment…") }
+            val check = withContext(Dispatchers.IO) {
+                runCatching { terminalRepository.validateWorkspace(s.terminalEnvironment, clean, s.guestAlias) }
+                    .getOrElse { WorkspaceCheck.Invalid("probe_failed", it.message?.take(200) ?: "Workspace probe failed", "Run discovery and retry.") }
+            }
+            if (check is WorkspaceCheck.Valid) {
+                prefs.edit().putString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, check.normalizedPath).apply()
+                _state.update {
+                    it.copy(
+                        terminalWorkspace = check.normalizedPath,
+                        workspaceCheck = check,
+                        terminalMessage = "Workspace verified: ${check.normalizedPath}",
+                        error = "",
+                    )
+                }
+            } else {
+                val invalid = check as WorkspaceCheck.Invalid
+                _state.update { it.copy(workspaceCheck = invalid, error = invalid.message) }
+            }
+        }
     }
 
     private fun formatTerminalResult(result: TerminalCommandResult): String = buildString {

@@ -12,12 +12,15 @@ data class TerminalCommandRequest(
     val arguments: List<String> = emptyList(),
     val stdin: String? = null,
     val workingDirectory: String? = null,
+    /** PRoot distribution alias for [TerminalEnvironment.DEBIAN_PROOT]; never interpolated unvalidated. */
+    val distroAlias: String = DEFAULT_DISTRO_ALIAS,
     /** Must be explicitly set true for this individual command. Defaults to deny. */
     val authorized: Boolean = false,
     val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
 ) {
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS = 120_000L
+        const val DEFAULT_DISTRO_ALIAS = "debian"
         const val MAX_TIMEOUT_MILLIS = 10 * 60 * 1000L
         const val MAX_COMMAND_PATH_CHARS = 4_096
         const val MAX_ARGUMENT_COUNT = 256
@@ -66,6 +69,9 @@ object TerminalRequestValidator {
         if (request.environment == TerminalEnvironment.DEBIAN_PROOT && request.workingDirectory != null) {
             add(ValidationIssue("workingDirectory", "Debian proot working directories are not supported by this initial adapter"))
         }
+        if (request.environment == TerminalEnvironment.DEBIAN_PROOT && !HostShell.isSafeAlias(request.distroAlias)) {
+            add(ValidationIssue("distroAlias", "must be a valid proot-distro alias"))
+        }
     }
 
     private fun isSupportedCommandPath(value: String): Boolean =
@@ -102,7 +108,7 @@ object TerminalCommandDescriptors {
                     ?: return null
                 TerminalCommandDescriptor(
                     executablePath = prootPath,
-                    arguments = listOf("login", "debian", "--", request.commandPath) + request.arguments,
+                    arguments = listOf("login", request.distroAlias, "--", request.commandPath) + request.arguments,
                     stdin = request.stdin,
                     workingDirectory = null,
                 )

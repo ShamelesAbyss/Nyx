@@ -230,10 +230,20 @@ class ObjectiveExecutionService : Service() {
                 val profile = EnvironmentDiscovery(bridge).discover()
                 require(profile.hostAvailable) { profile.detail ?: "Termux setup is incomplete." }
                 val environment = runCatching { TerminalEnvironment.valueOf(snapshot.optString("environment", "TERMUX_HOST")) }.getOrDefault(TerminalEnvironment.TERMUX_HOST)
-                require(environment != TerminalEnvironment.DEBIAN_PROOT || profile.debianAvailable) { "Debian PRoot is not installed or not verified by discovery." }
+                val guestAlias = snapshot.optString("guestAlias", "debian")
+                require(com.nyx.ai.terminal.HostShell.isSafeAlias(guestAlias)) { "The selected PRoot distribution alias is invalid." }
+                val guestVerified = profile.verifiedDistros.any { it.equals(guestAlias, ignoreCase = true) }
+                require(environment != TerminalEnvironment.DEBIAN_PROOT || guestVerified) {
+                    profile.listError ?: "PRoot guest '$guestAlias' is not verified: no real command inside it returned the expected marker."
+                }
                 val workspace = snapshot.optString("workspace")
                 require(workspace.startsWith("/") && workspace.length <= 4096) { "Select an absolute authorized workspace." }
-                terminalTools = TerminalAgentTools(bridge, workspace, environment, useTimeoutBinary = profile.timeoutAvailable, workspaceApproved = true)
+                terminalTools = TerminalAgentTools(
+                    bridge, workspace, environment,
+                    useTimeoutBinary = profile.timeoutAvailable,
+                    workspaceApproved = true,
+                    guestAlias = guestAlias,
+                )
             }
             val resources = DeviceResourceReader.read(this)
             val profile = ResourcePolicy.profile(resources, objective.parallelism)

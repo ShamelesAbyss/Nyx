@@ -32,6 +32,29 @@ class TerminalBridge(
 
     fun assess(command: String): CommandAssessment = CommandPolicy.assess(command)
 
+    /**
+     * Runs a fixed, read-only probe on the Termux host, bypassing startup profile scripts that can
+     * divert an ordinary shell into a PRoot guest. Policy blocking still applies; these scripts are
+     * constructed by NYX rather than supplied by a model or the user.
+     */
+    suspend fun runHostIsolated(script: String, timeoutSeconds: Long = 45): TerminalCommandResult {
+        val assessment = CommandPolicy.assess(script)
+        if (assessment.blocked) {
+            return TerminalCommandResult(
+                requestId = null,
+                kind = TerminalResultKind.POLICY_BLOCKED,
+                message = assessment.reasons.joinToString("; ").ifBlank { "Discovery probe is blocked by policy." },
+            )
+        }
+        return try {
+            execute(HostShell.isolatedRequest(script, timeoutSeconds))
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (e: Exception) {
+            TerminalCommandResult(null, TerminalResultKind.DISPATCH_ERROR, message = e.message?.take(300) ?: "Isolated host execution failed")
+        }
+    }
+
     suspend fun execute(request: TerminalCommandRequest): TerminalCommandResult =
         suspendCancellableCoroutine { continuation ->
             val completed = AtomicBoolean(false)
@@ -71,6 +94,7 @@ class TerminalBridge(
         timeoutSeconds: Long = 120,
         useTimeoutBinary: Boolean = true,
         approved: Boolean = false,
+        guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
     ): TerminalCommandResult {
         val assessment = CommandPolicy.assess(command)
         if (assessment.blocked) {
@@ -92,7 +116,9 @@ class TerminalBridge(
         }
         val request = when (environment) {
             TerminalEnvironment.TERMUX_HOST -> ShellCommandBuilder.hostRequest(command, workingDirectory, timeoutSeconds, useTimeoutBinary)
-            TerminalEnvironment.DEBIAN_PROOT -> ShellCommandBuilder.prootRequest(command, workingDirectory, timeoutSeconds, useTimeoutBinary)
+            TerminalEnvironment.DEBIAN_PROOT -> ShellCommandBuilder.prootRequest(
+                command, workingDirectory, timeoutSeconds, useTimeoutBinary, distroAlias = guestAlias,
+            )
         }
         return try {
             execute(request)

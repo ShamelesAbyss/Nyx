@@ -127,7 +127,11 @@ class DevelopmentOrchestratorTest {
     @Test fun alreadyPassingBaselineIsPreciselyReportedNotClaimedAsRepair() = runBlocking {
         val env = Environment().apply { source = "fixed" }
         val provider = Provider { _, _ -> error("baseline requires no repair") }
-        val report = DevelopmentOrchestrator(env).run("fix", provider, "fixture")
-        assertTrue(report.passed); assertEquals("baseline_passed", report.reason); assertEquals(0, provider.calls); assertTrue(report.files.isEmpty())
+        val report = DevelopmentOrchestrator(env).run("fix the failing test", provider, "fixture")
+        assertFalse(report.passed)
+        assertEquals("baseline_healthy", report.reason)
+        assertEquals(DevelopmentOutcome.BASELINE_HEALTHY, report.outcome)
+        assertEquals(0, provider.calls)
+        assertTrue(report.files.isEmpty())
     }
 }
