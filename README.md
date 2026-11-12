@@ -8,7 +8,7 @@
 
 **A free and open-source, local-first Android AI workstation** — on-device language models, autonomous objectives, real execution tools, and persistent agent workflows in one application.
 
-[![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.5)
+[![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.7)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#build-from-source)
 [![min API](https://img.shields.io/badge/min%20API-26-8B5CF6?style=for-the-badge)](#requirements)
@@ -22,30 +22,30 @@
 ---
 
 > [!NOTE]
-> **NYX v0.7.5 “Project Continuum” is the latest stable release.** It adds managed Termux Ollama lifecycle, Arsenal operational skills, MCP/GitHub gateways, durable project memory, a source symbol index, the Live Worker Console, and workspace/policy hardening. It is versionCode 9 / versionName 0.7.5, debug-signed, and passes 598 JVM tests. Physical-device validation of the new integrations remains pending.
+> **NYX v0.7.7 “Project Liberation” is the latest stable release.** It fixes Debian-only Ollama discovery and management, repeated Full-Autonomy workspace creation, and environment-scoped process ownership. It is versionCode 10 / versionName 0.7.7, debug-signed, and passes 609 JVM tests. Physical-device validation of the new Debian/Ollama path remains pending.
 
-## ⬇️ Download NYX v0.7.5 — Project Continuum
+## ⬇️ Download NYX v0.7.7 — Project Liberation
 
 <div align="center">
 
-### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.5)
+### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.7)
 
 | Asset | What it is |
 | :--- | :--- |
-| **[NYX-v0.7.5.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.5/NYX-v0.7.5.apk)** | The application. ARM64, debug-signed. |
-| **[NYX-Source-v0.7.5.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.5/NYX-Source-v0.7.5.zip)** | Complete source, tests, docs, licenses, and Gradle wrapper. |
-| **[NYX-v0.7.5-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.5/NYX-v0.7.5-androidTest.apk)** | Instrumentation tests for device verification. |
-| **[NYX-v0.7.5-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.5/NYX-v0.7.5-SHA256SUMS.txt)** | SHA-256 digests for every artifact. |
+| **[NYX-v0.7.7.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.7/NYX-v0.7.7.apk)** | The application. ARM64, debug-signed. |
+| **[NYX-Source-v0.7.7.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.7/NYX-Source-v0.7.7.zip)** | Complete source, tests, docs, licenses, and Gradle wrapper. |
+| **[NYX-v0.7.7-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.7/NYX-v0.7.7-androidTest.apk)** | Instrumentation tests for device verification. |
+| **[NYX-v0.7.7-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.7.7/NYX-v0.7.7-SHA256SUMS.txt)** | SHA-256 digests for every artifact. |
 
 </div>
 
 > [!IMPORTANT]
 > **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device.
 >
-> Existing **v0.7.0** installations can update **in place** when the signing certificate matches — the v0.7.5 APK uses the same debug certificate as v0.7.0. Do not uninstall a data-bearing installation just to test an upgrade; back up anything important first.
+> Existing **v0.7.5** installations can update **in place** when the signing certificate matches — the v0.7.7 APK uses the same debug certificate as v0.7.5. Do not uninstall a data-bearing installation just to test an upgrade; back up anything important first.
 
 > [!NOTE]
-> **v0.7.5 “Project Continuum” adds operational continuity:** managed Termux Ollama lifecycle, nine Arsenal procedures, streamable-HTTP MCP and GitHub gateways, durable project memory, incremental Kotlin/Java source indexing, a persisted Live Worker Console, atomic workspace creation, and scoped policy grants. Physical-device execution of these new integrations is still pending.
+> **v0.7.7 “Project Liberation” makes the autonomous workstation work with real environments:** Debian-hosted Ollama is discovered and managed, Full Autonomy can create multiple projects under an approved root, and server ownership is scoped to the host or guest that produced it. Existing Arsenal skills, MCP/GitHub gateways, project memory, symbol indexing, the Live Worker Console, and autonomy modes are preserved. Physical-device execution of the Debian/Ollama path is still pending.
 
 ---
 
@@ -53,7 +53,7 @@
 
 NYX is not a chat wrapper around a hosted API. It is an Android application that can hold a long-running objective, break it into a dependency graph, run allowlisted tools on your device, and refuse to call the work finished until local evidence says it is.
 
-The v0.7.5 build keeps the genuine **llama.cpp CPU runtime**, the bounded **inspect → repair → retest** loop, and the verified environment foundation. It adds a managed Ollama lifecycle, reusable Arsenal procedures, MCP/GitHub gateways, durable project memory, a source symbol index, a Live Worker Console, atomic workspace creation, and one scoped autonomy policy. A healthy baseline is still never reported as a completed repair, and a model's prose is still never accepted as proof.
+The v0.7.7 build keeps the genuine **llama.cpp CPU runtime**, the bounded **inspect → repair → retest** loop, and the verified environment foundation. It builds on the v0.7.5 managed lifecycle, reusable Arsenal procedures, MCP/GitHub gateways, durable project memory, source symbol index, Live Worker Console, atomic workspace creation, and scoped autonomy policy, and adds Debian-aware Ollama selection plus repeatable Full-Autonomy workspace creation. A healthy baseline is still never reported as a completed repair, and a model's prose is still never accepted as proof.
 
 What it is *not* yet: a fully autonomous developer, a frontier-model replacement, or a system with unrestricted control of your device. The [current status](#-current-status) section states exactly what has been verified and what has not.
 
@@ -61,7 +61,15 @@ What it is *not* yet: a fully autonomous developer, a frontier-model replacement
 
 ## ✨ Capabilities
 
-### 🧩 New in 0.7.5
+### 🧩 New in 0.7.7
+
+- **Debian-aware Ollama:** probes the Termux host and every verified PRoot guest, recognizes `/usr/local/bin/ollama`, records version/architecture/compatibility, and selects a compatible installation instead of reporting the host alone.
+- **Guest lifecycle safety:** starts, verifies, refreshes, stops, and restarts a Debian-hosted server through the existing PRoot bridge with target-scoped PID/start-token records. Adopted or unverified processes are never signalled.
+- **Repeated Full-Autonomy projects:** project creation is a distinct routine action against the approved root, so multiple independent workspaces can be created without reusing directories or binding grants to temporary project names.
+- **Actionable approvals:** Manual/Smart workspace creation now presents an explicit approval card instead of a raw `full_elevated_grant_required` code.
+- **Automatic objective reconnect:** a loopback Ollama server is started and its model list reloaded before planning or resuming an objective.
+
+### 🧩 Also in 0.7.5
 
 - **Managed local Ollama:** detect, start, inspect, stop, and restart a Termux-hosted server with verified PID ownership; adopted servers are never killed.
 - **Arsenal:** nine versioned offline procedures, relevance-bounded injection, strict untrusted imports, enable/configure/remove controls, and evidence-linked execution logs.
@@ -216,7 +224,7 @@ NYX supports two independent ways to run a model. You do not need both, and nati
 
 ### Option A — Native GGUF mode (no Termux, no network)
 
-1. Install `NYX-v0.7.5.apk` on a 64-bit ARM Android device running Android 8.0 (API 26) or newer.
+1. Install `NYX-v0.7.7.apk` on a 64-bit ARM Android device running Android 8.0 (API 26) or newer.
 2. Obtain a **compatible instruct-tuned GGUF** file. Start small: a 0.5B–3B model quantized to `Q4_K_M` is a realistic first test. Memory use grows with parameter count and context length.
 3. Open **Models → Import GGUF** and pick the file with the Android document picker. NYX copies it into app-private storage and reads its metadata.
 4. Review the reported architecture, quantization, context limit, and memory estimate. An incompatible or oversized model is refused rather than attempted.
@@ -270,14 +278,14 @@ This table separates what exists from what has actually been demonstrated. It is
 | Status | Area |
 | :--- | :--- |
 | ✅ **Implemented and build-tested** | Native GGUF provider, model import and management, provider factory, inference admission, objective engine, scheduler, verifier, context store, Arsenal procedures, repair loop, Termux bridge, autonomy policy, dependency provisioning, network tools, specialist roles, Android 17 permission handling, managed Ollama lifecycle, MCP/GitHub gateways, project memory, source symbol index, Live Worker Console |
-| ✅ **Build-tested** | Debug APK, instrumentation APK, and **598 JVM tests with zero failures, errors, or skips** on a clean build |
+| ✅ **Build-tested** | Debug APK, instrumentation APK, and **609 JVM tests with zero failures, errors, or skips** on the v0.7.7 source |
 | 🧪 **Verified on Linux host only** | Real llama.cpp JNI generation from an Apache-2.0 SmolLM2-135M Q4_K_M GGUF (`The capital of France is Paris.`, 7 selected tokens), plus cancellation, session reuse, callback-error propagation, and safe unload |
 | 🧪 **Verified on Linux host only** | Autonomous repair of a genuinely failing fixture: baseline build `0`, baseline test `2`, exact-hash edit, retest build `0` / test `0`, with backup and diff retained |
 | 📱 **Confirmed on the owner's Android 17 device** | Termux environment discovery (earlier development cycle) |
-| ⏳ **Awaiting physical-device verification** | v0.7.5 managed Ollama start/stop/restart and ownership checks, Arsenal imports and execution, MCP/GitHub network calls and Keystore token use, Live Worker Console, project memory, symbol indexing, atomic workspace creation, scoped cancellation, and the prior autonomy/development/native-inference flows; Termux-host discovery, PRoot guest verification, capability probes, and development preflight; Room migration preservation; notification actions; process-death recovery; fold and unfold layout |
+| ⏳ **Awaiting physical-device verification** | v0.7.7 Debian-only Ollama discovery, guest `ollama serve` startup, readiness, model listing, and Chat/objective reconnect; host/guest/both/neither/incompatible selection; adopted-server protection and owned stop/restart; repeated workspace creation under one root; automatic objective startup; Arsenal/MCP/GitHub/memory/symbol/console flows; Termux IPC, Keystore, notifications, foreground service, process-death recovery, Room migration, and fold/unfold layout |
 | 🗺️ **Planned** | See the [roadmap](#-roadmap) |
 
-Artifact checks performed on the published build: package `com.nyx.ai`, versionName `0.7.5`, versionCode `9`, target and compile SDK `37`, minimum SDK `26`, `arm64-v8a` only, and the same debug signing certificate as v0.7.0. Full detail is in [TEST_RESULTS.md](TEST_RESULTS.md).
+Artifact checks performed on the published v0.7.7 build: package `com.nyx.ai`, versionName `0.7.7`, versionCode `10`, target and compile SDK `37`, minimum SDK `26`, `arm64-v8a` only, and the same debug signing certificate as v0.7.5. Full detail is in [TEST_RESULTS.md](TEST_RESULTS.md). The APK, instrumentation APK, source archive, and checksum manifest are attached to the v0.7.7 GitHub release.
 
 ---
 
@@ -325,6 +333,8 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 | [docs/V061_VERIFIED_DEVELOPER.md](docs/V061_VERIFIED_DEVELOPER.md) | v0.6.1 environment, preflight, and verified-developer details |
 | [docs/V070_IMPLEMENTATION_STATUS.md](docs/V070_IMPLEMENTATION_STATUS.md) | v0.7.0 policy, environment, network, and delegation implementation status |
 | [docs/V075_INTEGRATION_STATUS.md](docs/V075_INTEGRATION_STATUS.md) | v0.7.5 managed Ollama, Arsenal, gateways, memory, console, and workspace integration status |
+| [docs/V077_IMPLEMENTATION_STATUS.md](docs/V077_IMPLEMENTATION_STATUS.md) | v0.7.7 Debian Ollama, target-scoped lifecycle, workspace authorization, and verification status |
+| [docs/DEVICE_VALIDATION_v0.7.7.md](docs/DEVICE_VALIDATION_v0.7.7.md) | Remaining physical-device checklist for v0.7.7 |
 | [docs/](docs/) | Native inference, development engine, context and skills, Android compatibility |
 
 ### Contributing
@@ -349,6 +359,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.7.5 — Project Continuum · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.7.7 — Project Liberation · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

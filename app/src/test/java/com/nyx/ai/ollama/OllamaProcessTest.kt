@@ -14,6 +14,48 @@ class OllamaProcessTest {
 
     private val saved = SavedOllamaProcess(pid = 4321, startTimeTicks = 987_654_321L, startedAtMillis = 1_700_000_000_000L)
 
+    @Test
+    fun `guest detection keeps origin architecture and compatibility evidence`() {
+        val guest = OllamaTarget.guest("debian")!!
+        val detection = OllamaProcess.parseDetection(
+            """
+                NYX_OLLAMA_INSTALLED=1
+                NYX_OLLAMA_PATH=/usr/local/bin/ollama
+                NYX_OLLAMA_ARCH=aarch64
+                NYX_OLLAMA_VERSION=0.12.3
+                NYX_OLLAMA_COMPATIBLE=1
+            """.trimIndent(),
+            guest,
+        )
+
+        assertTrue(detection.installed)
+        assertTrue(detection.compatible)
+        assertEquals(guest, detection.target)
+        assertEquals("aarch64", detection.architecture)
+        assertEquals("0.12.3", detection.version)
+    }
+
+    @Test
+    fun `portable start path uses nohup and still refuses duplicate processes`() {
+        val script = OllamaProcess.startScript("/usr/local/bin/ollama", useSetsid = false)
+
+        assertTrue(script.contains("nohup sh -c"))
+        assertTrue(script.contains("if false; then"))
+        assertTrue(script.contains("pid_file"))
+        assertTrue(script.contains("NYX_OLLAMA_START=0"))
+        assertTrue(script.contains("the detached Ollama process did not report a usable PID"))
+    }
+
+    @Test
+    fun `detection script reports architecture and compatibility explicitly`() {
+        val script = OllamaProcess.detectScript()
+
+        assertTrue(script.contains("NYX_OLLAMA_ARCH"))
+        assertTrue(script.contains("NYX_OLLAMA_COMPATIBLE"))
+        assertTrue(script.contains("command -v ollama"))
+        assertFalse(script.contains("proot-distro login"))
+    }
+
     /** Builds a `/proc/<pid>/stat` line whose field 22 is [startTicks]. */
     private fun statWithStart(startTicks: Long, comm: String = "ollama"): String {
         // Field 3 onwards; the twentieth token after `)` is field 22 (starttime).

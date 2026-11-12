@@ -473,4 +473,40 @@ class AutonomyPolicyEngineTest {
         assertTrue(scopeCovers("*", "/anything"))
         assertFalse(scopeCovers("/root/p", "/root"))
     }
+
+    @Test
+    fun fullAutonomyCanCreateAProjectInsideTheAuthorizedRootWithoutAnElevatedGrant() {
+        val policy = engine(AutonomyMode.FULL)
+
+        val decision = policy.authorize(
+            ActionRequest(
+                kind = ActionKind.CREATE_WORKSPACE,
+                target = "/root/nyx-workspaces",
+                environmentId = "proot:debian",
+                insideAuthorizedWorkspace = true,
+            ),
+        )
+
+        assertTrue(decision.allowed)
+        assertFalse(decision.requiresApproval)
+        assertEquals("full_routine_workspace", decision.reason)
+        assertEquals(RiskLevel.ROUTINE, decision.risk)
+    }
+
+    @Test
+    fun manualAutonomyStillRequiresApprovalToCreateAProject() {
+        val policy = engine(AutonomyMode.MANUAL)
+
+        val decision = policy.authorize(
+            ActionRequest(
+                kind = ActionKind.CREATE_WORKSPACE,
+                target = "/root/nyx-workspaces",
+                insideAuthorizedWorkspace = true,
+            ),
+        )
+
+        assertFalse(decision.allowed)
+        assertTrue(decision.requiresApproval)
+        assertEquals("manual_requires_approval", decision.reason)
+    }
 }

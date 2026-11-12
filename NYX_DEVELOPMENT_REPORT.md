@@ -1,5 +1,33 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.7.7 — Project Liberation (published)
+
+NYX 0.7.7 is versionCode 10 / versionName 0.7.7, debug-signed with the v0.7.5 certificate, and published for physical-device validation. The Debian/Ollama and repeated-workspace acceptance tests still need to be run on the owner's device.
+
+| Directive area | Status | What changed |
+| :--- | :--- | :--- |
+| Debian Ollama discovery | Implemented, device-untested | The manager probes the isolated host and every verified PRoot guest. `OllamaTarget` records environment + guest alias; `OllamaDetection` now carries target, `uname -m`, and compatibility. `/usr/local/bin/ollama` is recognized through `command -v`, and warning-prefixed `ollama --version` output yields a parsed version with `COMPATIBLE=1` rather than “missing.” |
+| Multi-environment selection | Implemented | `OllamaDiscovery.choose` prefers the current environment, then the host, then a compatible guest, while retaining incompatible installations for diagnostics. The Models card shows the selected target, version, architecture, and probed candidates. |
+| Guest lifecycle | Implemented, device-untested | Start/stop/state scripts execute through `TerminalBridge.runShell(... DEBIAN_PROOT ..., guestAlias=...)`. PID/start-token records are scoped by environment, adopted servers remain protected, and a live-but-unreachable owned process is reported distinctly. Start uses `setsid` with a `nohup` fallback for PRoot. |
+| Model reconnect | Implemented | Detection/refresh reloads the model inventory when the server is running. Creating or resuming a loopback objective starts the managed server if needed, waits for readiness, calls the shared suspend model refresh, and only then proceeds. |
+| Full workspace authorization | Implemented | `CREATE_WORKSPACE` is a separate routine action against the authorized root. Full mode allows repeated project creation inside that root without a per-project elevated grant; Manual still prompts. The UI shows an explicit approval card and never presents the raw policy code as the only explanation. |
+| Provisioning continuity | Partially integrated | Atomic workspace creation, dependency planning, approved installation, capability refresh, and development preflight remain wired as in v0.7.5. Automatic objective continuation after a dependency install is not a new v0.7.7 claim; the existing flow still requires the user to start the objective after setup. |
+| Arsenal/MCP/memory/console | Inherited, not reworked | The v0.7.5 implementations remain: nine built-ins, per-server gateway allowlists, evidence-linked project memory, symbol index, and the persisted worker console. This release did not add new framework code in those areas. |
+| UI and safety | Implemented | The managed Ollama card exposes target/status/version/architecture/probes; Stop is available for any verified owned process. The global error banner is limited to actionable screens and cleared when navigating to unrelated sections. Policy access remains synchronized, and Emergency Stop still gates lifecycle and workspace actions. |
+| Release engineering | Implemented | VersionCode 10 / versionName 0.7.7; 609 JVM tests pass; debug APK and instrumentation-test APK build; signing identity matches v0.7.5. Artifacts are published with a SHA-256 manifest and release notes. |
+
+### Honest limits and remaining device checks
+
+- No physical device was attached. Real Debian `ollama serve` detachment, API readiness, model listing, Chat reconnect, stop/restart, and PRoot IPC remain unverified on hardware.
+- The probe is limited to the host plus at most four verified guest aliases.
+- Automatic dependency installation still follows the existing policy: Full/Smart may plan it, but a high-risk package action can still require explicit approval. The objective is not automatically resumed after an install.
+- The v0.7.7 APK is published; physical-device acceptance remains outstanding.
+- Debug signing is retained; this is not a Play Store artifact.
+
+### Verification
+
+`clean testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin` and `assembleDebugAndroidTest` completed successfully. **609 tests, 0 failures, 0 errors, 0 skipped.** APK package `com.nyx.ai`, versionCode 10, versionName 0.7.7, compile/target SDK 37, minSdk 26, `arm64-v8a`, certificate SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. Exact artifact digests are in `TEST_RESULTS.md` and the delivered checksum manifest.
+
 ## v0.7.5 — Project Continuum (published)
 
 NYX 0.7.5 is versionCode 9 / versionName 0.7.5, debug-signed, published as v0.7.5, and intended for device testing. It keeps the v0.7.0 autonomy foundation and closes the largest operational gaps in the v0.7 directive.

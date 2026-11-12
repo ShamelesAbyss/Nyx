@@ -40,6 +40,12 @@ data class OllamaDetection(
     val version: String = "",
     /** Why the probe could not produce an answer, if it failed; empty when the probe really ran. */
     val error: String = "",
+    /** Where the binary was found: the Termux host or a verified PRoot guest. */
+    val target: OllamaTarget? = null,
+    /** `uname -m` in the same environment as the binary. */
+    val architecture: String = "",
+    /** False when the binary exists but cannot execute or does not identify as Ollama. */
+    val compatible: Boolean = true,
 )
 
 /** Result of the detached start script. */
@@ -232,12 +238,14 @@ object OllamaProcess {
         return if (start == saved.startTimeTicks) OllamaOwnership.OWNED else OllamaOwnership.PID_REUSED
     }
 
-    fun parseDetection(stdout: String): OllamaDetection {
+    fun parseDetection(stdout: String, target: OllamaTarget? = null): OllamaDetection {
         val installed = markerValue(stdout, "NYX_OLLAMA_INSTALLED") == "1"
         val path = markerValue(stdout, "NYX_OLLAMA_PATH")?.takeIf { it.startsWith('/') && it.length <= 4_096 }
         val version = markerValue(stdout, "NYX_OLLAMA_VERSION").orEmpty().take(160)
         val error = markerValue(stdout, "NYX_OLLAMA_ERROR").orEmpty().take(MAX_ERROR_CHARS)
-        return OllamaDetection(installed, path, version, error)
+        val architecture = markerValue(stdout, "NYX_OLLAMA_ARCH").orEmpty().take(80)
+        val compatible = markerValue(stdout, "NYX_OLLAMA_COMPATIBLE")?.let { it != "0" } ?: installed
+        return OllamaDetection(installed, path, version, error, target, architecture, compatible)
     }
 
     fun parseStartOutcome(stdout: String): OllamaStartOutcome {
@@ -367,12 +375,12 @@ object OllamaProcess {
     // ------------------------------------------------------------------ scripts
 
     /**
-     * Read-only detection. This is the only command that establishes "installed", and it is always
-     * dispatched through the isolated host shell so an auto-login profile cannot hide the binary
-     * inside a PRoot guest.
+     * Read-only detection. It runs in exactly one environment: the isolated Termux host or a
+     * verified PRoot guest. Discovery decides which environments to probe and never trusts an
+     * interactive shell profile to choose for it.
      */
     fun detectScript(): String = """
-        # NYX Ollama detection: read-only, Termux host only.
+        # NYX Ollama detection: read-only, one explicitly selected environment.
         export LC_ALL=C
         ollama_bin=${'$'}(command -v ollama 2>/dev/null | head -n 1)
         case "${'$'}ollama_bin" in
@@ -381,8 +389,20 @@ object OllamaProcess {
         esac
         printf 'NYX_OLLAMA_INSTALLED=1\n'
         printf 'NYX_OLLAMA_PATH=%s\n' "${'$'}ollama_bin"
-        version=${'$'}("${'$'}ollama_bin" --version 2>&1 | head -n 1)
+        printf 'NYX_OLLAMA_ARCH=%s\n' "${'$'}(uname -m 2>/dev/null)"
+        version_output=${'$'}("${'$'}ollama_bin" --version 2>&1)
+        version_status=${'$'}?
+        version=$(printf '%s\n' "${'$'}version_output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+        if [ -z "${'$'}version" ]; then
+          version=$(printf '%s\n' "${'$'}version_output" | sed -n '1p')
+        fi
         printf 'NYX_OLLAMA_VERSION=%s\n' "${'$'}version"
+        if [ "${'$'}version_status" -eq 0 ] && [ -n "${'$'}version" ]; then
+          printf 'NYX_OLLAMA_COMPATIBLE=1\n'
+        else
+          printf 'NYX_OLLAMA_COMPATIBLE=0\n'
+          printf 'NYX_OLLAMA_ERROR=%s\n' 'the ollama binary exists but could not identify itself'
+        fi
         exit 0
     """.trimIndent()
 
@@ -394,7 +414,7 @@ object OllamaProcess {
      * A live, verified record in the PID file aborts the script, which makes duplicate starts
      * impossible even if two callers race.
      */
-    fun startScript(ollamaBinary: String): String = """
+    fun startScript(ollamaBinary: String, useSetsid: Boolean = true): String = """
         # NYX Ollama start: one detached server, stdin closed, duplicate starts refused.
         export LC_ALL=C
         umask 077
@@ -440,7 +460,7 @@ object OllamaProcess {
           exit 5
         fi
         : > "${'$'}pid_tmp"
-        if command -v setsid >/dev/null 2>&1; then
+        if ${if (useSetsid) "command -v setsid >/dev/null 2>&1" else "false"}; then
           setsid sh -c 'printf "%s\n" "${'$'}${'$'}" > "${'$'}1"; exec "${'$'}0" serve >>"${'$'}2" 2>&1 < /dev/null' "${'$'}ollama_bin" "${'$'}pid_tmp" "${'$'}log_file" &
         else
           nohup sh -c 'printf "%s\n" "${'$'}${'$'}" > "${'$'}1"; exec "${'$'}0" serve >>"${'$'}2" 2>&1 < /dev/null' "${'$'}ollama_bin" "${'$'}pid_tmp" "${'$'}log_file" &

@@ -107,7 +107,7 @@ object OllamaLifecyclePolicy {
 
         !installed -> OllamaStartPlan(
             OllamaStartDecision.INSTALL_REQUIRED,
-            "The ollama binary is not available on the Termux host.",
+            "No compatible ollama binary is available in the selected host or verified guests.",
         )
 
         else -> OllamaStartPlan(

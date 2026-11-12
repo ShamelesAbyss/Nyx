@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.7 — Project Liberation (published)
+
+Package metadata: versionCode 10 / versionName 0.7.7, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the same certificate as v0.7.5; published as v0.7.7 with all four assets.
+
+### Debian-aware managed Ollama
+
+`OllamaServerManager` now probes the isolated Termux host and every PRoot guest that environment discovery actually verified. Detection records the executable path, origin, version, architecture, and compatibility; `/usr/local/bin/ollama` is recognized as a Debian-native installation, and warning-prefixed `ollama --version` output is parsed as installed-but-stopped rather than missing. Compatible host/guest installations are selected deterministically, with the current environment preferred. Lifecycle commands execute in the selected filesystem/process namespace, PID records are scoped per target, and `setsid` startup has a `nohup` fallback for PRoot guests. A live-but-unreachable owned server is reported distinctly; adopted or unverified processes remain unkillable. Detection and refresh automatically reload the model inventory and reconnect Chat when the server is ready.
+
+### Full-Autonomy workspace authorization
+
+Project creation is now a distinct `CREATE_WORKSPACE` routine action against the approved root, not an elevated write to the first project. Full mode can create multiple independent projects under the same authorized root; Manual still asks, Smart follows its routine/high-risk split, and the UI presents an explicit approval card instead of `full_elevated_grant_required`. The provisioner remains atomic, collision-safe, and never reuses an existing directory.
+
+### Automatic objective reconnect
+
+Before planning or resuming an objective against a loopback Ollama endpoint, NYX starts the managed server if needed, waits for readiness, refreshes the model list, and continues only after Chat reconnects. This uses the same managed lifecycle and ownership checks as the Models screen.
+
+### Reliability and UI
+
+The global error banner is limited to screens where the error is actionable and is cleared when navigating to unrelated sections. The managed Ollama card shows the selected host/guest, version, architecture, probed installations, and the full status set. Added JVM coverage for Debian-only selection, preferred guest selection, incompatible binaries, portable startup, detection markers, and repeated Full workspace creation.
+
+### Verification and limits
+
+609 JVM tests pass with zero failures/errors/skips. The debug APK and instrumentation-test APK compile. No physical Android device was available: real Debian `ollama serve` startup, PRoot IPC, Keystore, notifications, foreground-service restart, and actual model inference are not claimed as device-verified. The v0.7.7 APK, instrumentation APK, source archive, and checksum manifest are published with the v0.7.7 GitHub release.
+
 ## 0.7.5 — Project Continuum (published)
 
 Package metadata: versionCode 9 / versionName 0.7.5, min API 26, compile/target API 37, ARM64 JNI. Debug-signed and published as v0.7.5.

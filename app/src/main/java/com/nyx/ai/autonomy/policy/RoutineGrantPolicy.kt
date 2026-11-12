@@ -9,6 +9,7 @@ package com.nyx.ai.autonomy.policy
  */
 object RoutineGrantPolicy {
     val CAPABILITIES = setOf(
+        "workspace.create",
         "workspace.read",
         "workspace.write",
         "workspace.delete",

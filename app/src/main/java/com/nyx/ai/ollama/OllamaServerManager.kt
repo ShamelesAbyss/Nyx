@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.nyx.ai.network.LocalModel
 import com.nyx.ai.network.OllamaClient
+import com.nyx.ai.terminal.HostShell
 import com.nyx.ai.terminal.TerminalBridge
 import com.nyx.ai.terminal.TerminalCommandResult
+import com.nyx.ai.terminal.TerminalEnvironment
 import com.nyx.ai.terminal.TerminalResultKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -58,6 +60,22 @@ class OllamaServerManager(
     private val client: OllamaClient = client ?: OllamaClient(this.endpoint)
     private val mutex = Mutex()
 
+    /** The exact filesystem/process namespace whose Ollama installation is being managed. */
+    @Volatile
+    private var target: OllamaTarget = readSavedTarget() ?: OllamaTarget.HOST
+
+    @Volatile
+    private var targetResolved: Boolean = prefs.contains(KEY_TARGET_ENV)
+
+    @Volatile
+    private var guestAliases: List<String> = emptyList()
+
+    @Volatile
+    private var preferredGuestAlias: String? = null
+
+    @Volatile
+    private var preferredEnvironment: TerminalEnvironment = target.environment
+
     /** Manager-owned scope for the optional startup reconciliation only. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -82,40 +100,40 @@ class OllamaServerManager(
         }
     }
 
+    /**
+     * Supplies the guests that were really verified by environment discovery. An unverified alias
+     * is never added to the candidate list, so a typo cannot become a probe or a lifecycle target.
+     */
+    fun configureGuests(
+        verifiedAliases: List<String>,
+        selectedAlias: String?,
+        environment: TerminalEnvironment = preferredEnvironment,
+    ) {
+        val safe = verifiedAliases.filter { HostShell.isSafeAlias(it) }.distinct().take(MAX_GUESTS)
+        guestAliases = safe
+        preferredGuestAlias = selectedAlias?.takeIf { it in safe }
+        preferredEnvironment = environment
+        if (!target.isHost && target.guestAlias !in safe) {
+            // The saved guest disappeared. Keep the selection for diagnostics, but force discovery
+            // before any lifecycle command can use a stale target.
+            targetResolved = false
+        }
+    }
+
     // ------------------------------------------------------------------ public API
 
-    /** Read-only installation probe on the Termux host. Never starts or stops anything. */
+    /** Read-only discovery across the isolated host and every verified PRoot guest. */
     suspend fun detect(): OllamaServerState = mutex.withLock {
         if (closed) return@withLock state.value
-        val detection = probeInstallation()
-        val installed = detection.installed
-        val moved = OllamaLifecyclePolicy.nextState(
-            _state.value.status,
-            if (installed) OllamaLifecycleEvent.DETECTED_INSTALLED else OllamaLifecycleEvent.DETECTED_MISSING,
-        )
-        val message = if (detection.error.isNotBlank() && !installed) {
-            "The Termux host could not be queried: ${detection.error}"
-        } else if (installed) {
-            buildString {
-                append("Ollama")
-                if (detection.version.isNotBlank()) append(' ').append(detection.version)
-                append(" is installed")
-                detection.path?.let { append(" at ").append(it) }
-                append('.')
-            }
-        } else {
-            "Ollama is not installed on the Termux host. Install it in Termux before starting a local server."
+        val plan = discoverInstallations()
+        plan.selected?.let { selected ->
+            target = selected.target
+            saveTarget(target)
+            targetResolved = true
         }
-        update { current ->
-            current.copy(
-                status = moved,
-                pid = if (moved == OllamaServerStatus.RUNNING) current.pid else null,
-                startedByNyx = if (moved == OllamaServerStatus.RUNNING) current.startedByNyx else false,
-                models = if (moved == OllamaServerStatus.RUNNING) current.models else emptyList(),
-                message = message,
-            )
-        }
-        state.value
+        val snapshot = readSnapshot()
+        val owned = snapshot.ownership == OllamaOwnership.OWNED && readStartedByNyxFlag()
+        applyDiscovery(plan, probeApi(), snapshot, owned)
     }
 
     /**
@@ -183,6 +201,14 @@ class OllamaServerManager(
     // ------------------------------------------------------------------ reconcile
 
     private suspend fun doRefresh(): OllamaServerState {
+        if (!targetResolved) {
+            val discovery = discoverInstallations()
+            discovery.selected?.let { selected ->
+                target = selected.target
+                saveTarget(target)
+                targetResolved = true
+            }
+        }
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val owned = snapshot.ownership == OllamaOwnership.OWNED && readStartedByNyxFlag()
@@ -210,6 +236,9 @@ class OllamaServerManager(
                     logTail = snapshot.logTail,
                     rssKb = if (owned) snapshot.rssKb else null,
                     uptimeMillis = if (owned) snapshot.uptimeMillis else null,
+                    target = target,
+                    architecture = state.value.architecture,
+                    version = state.value.version,
                 )
             }
             return state.value
@@ -234,27 +263,38 @@ class OllamaServerManager(
             }
             return state.value
         }
-        val detection = probeInstallation()
-        val moved = OllamaLifecyclePolicy.nextState(
-            OllamaServerStatus.STOPPED,
-            if (detection.installed) OllamaLifecycleEvent.DETECTED_INSTALLED else OllamaLifecycleEvent.DETECTED_MISSING,
-        )
+        val discovery = discoverInstallations()
+        val selected = discovery.selected
+        if (selected != null) {
+            target = selected.target
+            saveTarget(target)
+            targetResolved = true
+        }
+        val status = when {
+            selected == null -> OllamaLifecyclePolicy.nextState(
+                OllamaServerStatus.STOPPED,
+                OllamaLifecycleEvent.DETECTED_MISSING,
+            )
+            !selected.detection.compatible -> OllamaServerStatus.INCOMPATIBLE
+            else -> OllamaLifecyclePolicy.nextState(
+                OllamaServerStatus.STOPPED,
+                OllamaLifecycleEvent.DETECTED_INSTALLED,
+            )
+        }
         update {
             it.copy(
-                status = if (detection.error.isNotBlank() && !detection.installed) currentOrErrorStatus() else moved,
+                status = status,
                 pid = null,
                 models = emptyList(),
                 startedByNyx = false,
-                message = if (detection.error.isNotBlank() && !detection.installed) {
-                    "The Termux host could not be queried: ${detection.error}"
-                } else if (detection.installed) {
-                    "Ollama is installed but the server is not running."
-                } else {
-                    "Ollama is not installed on the Termux host."
-                },
+                message = discovery.detail,
                 logTail = snapshot.logTail,
                 rssKb = null,
                 uptimeMillis = null,
+                target = selected?.target ?: target,
+                installations = discovery.installations,
+                architecture = selected?.detection?.architecture.orEmpty(),
+                version = selected?.detection?.version.orEmpty(),
             )
         }
         return state.value
@@ -264,15 +304,21 @@ class OllamaServerManager(
 
     private suspend fun doStart(): OllamaServerState {
         currentCoroutineContext().ensureActive()
+        val discovery = discoverInstallations()
+        val selected = discovery.selected
+        if (selected != null) {
+            target = selected.target
+            saveTarget(target)
+            targetResolved = true
+        }
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val apiHealthy = probeApi()
-        // Installation is only relevant when a new process may actually be launched.
-        val detection = if (apiHealthy || (saved != null && snapshot.ownership == OllamaOwnership.OWNED)) {
-            OllamaDetection(installed = true, path = null)
-        } else {
-            probeInstallation()
-        }
+        val detection = selected?.detection ?: OllamaDetection(
+            installed = false,
+            error = discovery.detail,
+            target = target,
+        )
         val plan = OllamaLifecyclePolicy.planStart(
             endpointLoopback = OllamaProcess.isLoopbackEndpoint(endpoint),
             apiHealthy = apiHealthy,
@@ -305,10 +351,13 @@ class OllamaServerManager(
             OllamaStartDecision.REFUSE_REMOTE_ENDPOINT -> fail(plan.reason, snapshot.logTail)
 
             OllamaStartDecision.INSTALL_REQUIRED -> {
-                val hostFailed = detection.error.isNotBlank()
+                val incompatible = selected != null && !selected.detection.compatible
+                val probeFailed = selected == null && detection.error.isNotBlank()
                 update {
                     it.copy(
-                        status = if (hostFailed) {
+                        status = if (incompatible) {
+                            OllamaServerStatus.INCOMPATIBLE
+                        } else if (probeFailed) {
                             OllamaServerStatus.ERROR
                         } else {
                             OllamaLifecyclePolicy.nextState(it.status, OllamaLifecycleEvent.DETECTED_MISSING)
@@ -316,8 +365,12 @@ class OllamaServerManager(
                         pid = null,
                         models = emptyList(),
                         startedByNyx = false,
-                        message = if (hostFailed) "The Termux host could not be queried: ${detection.error}" else plan.reason,
+                        message = if (probeFailed || incompatible) discovery.detail else plan.reason,
                         logTail = snapshot.logTail,
+                        target = selected?.target ?: target,
+                        installations = discovery.installations,
+                        architecture = selected?.detection?.architecture.orEmpty(),
+                        version = selected?.detection?.version.orEmpty(),
                     )
                 }
                 state.value
@@ -344,6 +397,7 @@ class OllamaServerManager(
                 logTail = snapshot.logTail,
                 rssKb = if (owned) snapshot.rssKb else null,
                 uptimeMillis = if (owned) snapshot.uptimeMillis else null,
+                target = target,
             )
         }
         return state.value
@@ -351,21 +405,30 @@ class OllamaServerManager(
 
     private suspend fun launch(detection: OllamaDetection, snapshot: OllamaHostSnapshot): OllamaServerState {
         val binary = detection.path
-            ?: return fail("The ollama binary path could not be resolved on the Termux host.", snapshot.logTail)
+            ?: return fail("The ollama binary path could not be resolved in ${target.label}.", snapshot.logTail)
         update {
             it.copy(
                 status = OllamaLifecyclePolicy.nextState(it.status, OllamaLifecycleEvent.START_REQUESTED),
                 pid = null,
                 models = emptyList(),
                 startedByNyx = false,
-                message = "Starting Ollama on the Termux host…",
+                message = "Starting Ollama in ${target.label}…",
                 logTail = "",
                 rssKb = null,
                 uptimeMillis = null,
+                target = target,
+                architecture = detection.architecture,
+                version = detection.version,
             )
         }
-        val result = host(OllamaProcess.startScript(binary), START_TIMEOUT_SECONDS)
-        val outcome = OllamaProcess.parseStartOutcome(result.stdout)
+        var result = host(OllamaProcess.startScript(binary, useSetsid = true), START_TIMEOUT_SECONDS)
+        var outcome = OllamaProcess.parseStartOutcome(result.stdout)
+        if (!outcome.started && !outcome.duplicate) {
+            // PRoot may expose setsid but refuse the session call. The script's nohup branch closes
+            // stdin and redirects both streams, so a retry is still detached and duplicate-safe.
+            result = host(OllamaProcess.startScript(binary, useSetsid = false), START_TIMEOUT_SECONDS)
+            outcome = OllamaProcess.parseStartOutcome(result.stdout)
+        }
         if (outcome.duplicate) {
             // Another caller won the race. The script verified that PID, so wait for it rather than
             // spawning a second server.
@@ -617,16 +680,41 @@ class OllamaServerManager(
 
     // ------------------------------------------------------------------ host + network
 
-    private suspend fun host(script: String, timeoutSeconds: Long): TerminalCommandResult = try {
-        // Host-isolated on purpose: the interactive profile may `exec` into Debian.
-        bridge.runHostIsolated(script, timeoutSeconds)
+    private suspend fun host(script: String, timeoutSeconds: Long): TerminalCommandResult =
+        execute(target, script, timeoutSeconds)
+
+    private suspend fun execute(
+        at: OllamaTarget,
+        script: String,
+        timeoutSeconds: Long,
+    ): TerminalCommandResult = try {
+        if (at.isHost) {
+            // Host-isolated on purpose: the interactive profile may `exec` into Debian.
+            bridge.runHostIsolated(script, timeoutSeconds)
+        } else {
+            val alias = at.guestAlias
+                ?: return TerminalCommandResult(
+                    requestId = null,
+                    kind = TerminalResultKind.INVALID_REQUEST,
+                    message = "The selected PRoot guest has no valid distribution alias.",
+                )
+            bridge.runShell(
+                script,
+                environment = TerminalEnvironment.DEBIAN_PROOT,
+                workingDirectory = null,
+                timeoutSeconds = timeoutSeconds,
+                useTimeoutBinary = false,
+                approved = true,
+                guestAlias = alias,
+            )
+        }
     } catch (cancel: CancellationException) {
         throw cancel
     } catch (e: Exception) {
         TerminalCommandResult(
             requestId = null,
             kind = TerminalResultKind.DISPATCH_ERROR,
-            message = e.message?.take(300) ?: "The host command could not be dispatched.",
+            message = e.message?.take(300) ?: "The Ollama command could not be dispatched.",
         )
     }
 
@@ -640,13 +728,93 @@ class OllamaServerManager(
         }
     }
 
-    private suspend fun probeInstallation(): OllamaDetection {
-        val result = host(OllamaProcess.detectScript(), DETECT_TIMEOUT_SECONDS)
-        val detection = OllamaProcess.parseDetection(result.stdout)
-        if (!detection.installed && !result.isSuccess && result.kind != TerminalResultKind.PROCESS_EXIT) {
-            return OllamaDetection(installed = false, error = failureDetail(result).take(300))
+    /**
+     * Probes the isolated host and every guest that environment discovery actually verified. The
+     * caller's current environment is a preference, never proof that a binary exists there.
+     */
+    private suspend fun discoverInstallations(): OllamaDiscoveryPlan {
+        val installations = mutableListOf<OllamaInstallation>()
+        installations += probeInstallation(OllamaTarget.HOST)
+        for (alias in guestAliases) {
+            OllamaTarget.guest(alias)?.let { installations += probeInstallation(it) }
         }
-        return detection
+        return OllamaDiscovery.choose(
+            installations = installations,
+            preferredEnvironment = preferredEnvironment,
+            preferredGuest = preferredGuestAlias ?: target.guestAlias,
+        )
+    }
+
+    private suspend fun probeInstallation(at: OllamaTarget): OllamaInstallation {
+        val result = execute(at, OllamaProcess.detectScript(), DETECT_TIMEOUT_SECONDS)
+        var detection = OllamaProcess.parseDetection(result.stdout, at)
+        if (!detection.installed && !result.isSuccess && result.kind != TerminalResultKind.PROCESS_EXIT) {
+            detection = detection.copy(error = failureDetail(result).take(300))
+        }
+        return OllamaInstallation(at, detection)
+    }
+
+    private suspend fun applyDiscovery(
+        plan: OllamaDiscoveryPlan,
+        apiHealthy: Boolean,
+        snapshot: OllamaHostSnapshot? = null,
+        owned: Boolean = false,
+    ): OllamaServerState {
+        val selected = plan.selected
+        if (selected != null) {
+            target = selected.target
+            saveTarget(target)
+            targetResolved = true
+        }
+        val status = when {
+            apiHealthy -> OllamaServerStatus.RUNNING
+            selected == null -> OllamaServerStatus.NOT_INSTALLED
+            !selected.detection.compatible -> OllamaServerStatus.INCOMPATIBLE
+            snapshot?.ownership == OllamaOwnership.OWNED ->
+                if (OllamaLifecyclePolicy.statusForOwnedButNotReady(snapshot.uptimeMillis) == OllamaServerStatus.ERROR) {
+                    OllamaServerStatus.UNREACHABLE
+                } else {
+                    OllamaServerStatus.STARTING
+                }
+            else -> OllamaServerStatus.STOPPED
+        }
+        val models = if (apiHealthy) fetchModels() else emptyList()
+        val message = when {
+            apiHealthy && selected == null ->
+                "An Ollama-compatible server is answering on $endpoint, but no local binary was found. It will be adopted and never stopped."
+            apiHealthy -> "Ollama is running from ${selected?.target?.label ?: target.label}. " +
+                if (models.isEmpty()) "No models are installed yet." else "Reconnected to ${models.size} model(s)."
+            selected == null -> plan.detail
+            !selected.detection.compatible -> plan.detail
+            status == OllamaServerStatus.UNREACHABLE ->
+                "The NYX-started Ollama process is alive in ${selected.target.label}, but its API is not answering. Check the bounded log before restarting."
+            else -> buildString {
+                append("Ollama ")
+                if (selected.detection.version.isNotBlank()) append(selected.detection.version).append(' ')
+                append("is installed in ${selected.target.label}")
+                selected.detection.path?.let { append(" at ").append(it) }
+                append(". The server is not running.")
+            }
+        }
+        update {
+            it.copy(
+                status = status,
+                // A PID is meaningful only for the target that produced it. Never carry a host PID
+                // across a target switch; an adopted API server intentionally has no stop handle.
+                pid = if (owned) snapshot?.record?.pid else null,
+                models = models,
+                startedByNyx = owned,
+                message = message,
+                target = selected?.target ?: target,
+                installations = plan.installations,
+                architecture = selected?.detection?.architecture.orEmpty(),
+                version = selected?.detection?.version.orEmpty(),
+                logTail = snapshot?.logTail.orEmpty(),
+                rssKb = if (owned) snapshot?.rssKb else null,
+                uptimeMillis = if (owned) snapshot?.uptimeMillis else null,
+            )
+        }
+        return state.value
     }
 
     private suspend fun probeApi(): Boolean = try {
@@ -687,7 +855,30 @@ class OllamaServerManager(
 
     // ------------------------------------------------------------------ persistence
 
-    private fun readStartedByNyxFlag(): Boolean = prefs.getBoolean(KEY_STARTED_BY_NYX, false)
+    private fun readSavedTarget(): OllamaTarget? {
+        val kind = prefs.getString(KEY_TARGET_ENV, null) ?: return null
+        return when (kind) {
+            "host" -> OllamaTarget.HOST
+            "guest" -> prefs.getString(KEY_TARGET_GUEST, null)?.let(OllamaTarget::guest)
+            else -> null
+        }
+    }
+
+    private fun saveTarget(value: OllamaTarget) {
+        if (!value.valid) return
+        prefs.edit()
+            .putString(KEY_TARGET_ENV, if (value.isHost) "host" else "guest")
+            .putString(KEY_TARGET_GUEST, value.guestAlias)
+            .apply()
+    }
+
+    private fun targetKey(base: String): String =
+        "$base:${target.environment.name}:${target.guestAlias.orEmpty()}"
+
+    private fun readStartedByNyxFlag(): Boolean {
+        val scoped = prefs.getBoolean(targetKey(KEY_STARTED_BY_NYX), false)
+        return scoped || (target.isHost && prefs.getBoolean(KEY_STARTED_BY_NYX, false))
+    }
 
     /** Ownership verdicts that prove the saved record can never be signalled again. */
     private fun isDefinitelyStale(ownership: OllamaOwnership): Boolean = ownership == OllamaOwnership.MISSING ||
@@ -698,19 +889,40 @@ class OllamaServerManager(
         if (_state.value.status == OllamaServerStatus.ERROR) OllamaServerStatus.ERROR else OllamaServerStatus.STOPPED
 
     private fun saveRecord(record: SavedOllamaProcess, startedByNyx: Boolean) {
+        saveTarget(target)
         prefs.edit()
-            .putString(KEY_RECORD, OllamaProcess.encodeRecord(record))
-            .putBoolean(KEY_STARTED_BY_NYX, startedByNyx)
-            .putLong(KEY_STARTED_AT, record.startedAtMillis)
+            .putString(targetKey(KEY_RECORD), OllamaProcess.encodeRecord(record))
+            .putBoolean(targetKey(KEY_STARTED_BY_NYX), startedByNyx)
+            .putLong(targetKey(KEY_STARTED_AT), record.startedAtMillis)
             .putString(KEY_ENDPOINT, endpoint)
             .apply()
     }
 
     private fun clearSaved() {
         prefs.edit()
-            .remove(KEY_RECORD)
-            .putBoolean(KEY_STARTED_BY_NYX, false)
-            .remove(KEY_STARTED_AT)
+            .remove(targetKey(KEY_RECORD))
+            .putBoolean(targetKey(KEY_STARTED_BY_NYX), false)
+            .remove(targetKey(KEY_STARTED_AT))
+            .apply()
+        if (target.isHost) {
+            prefs.edit()
+                .remove(KEY_RECORD)
+                .putBoolean(KEY_STARTED_BY_NYX, false)
+                .remove(KEY_STARTED_AT)
+                .apply()
+        }
+    }
+
+    /** Migrates a pre-v0.7.7 host record into the target-scoped key on first read. */
+    private fun migrateLegacyRecordIfNeeded() {
+        if (!target.isHost) return
+        val scoped = targetKey(KEY_RECORD)
+        if (prefs.contains(scoped)) return
+        val legacy = prefs.getString(KEY_RECORD, null) ?: return
+        prefs.edit()
+            .putString(scoped, legacy)
+            .putBoolean(targetKey(KEY_STARTED_BY_NYX), prefs.getBoolean(KEY_STARTED_BY_NYX, false))
+            .putLong(targetKey(KEY_STARTED_AT), prefs.getLong(KEY_STARTED_AT, 0L))
             .apply()
     }
 
@@ -742,10 +954,13 @@ class OllamaServerManager(
         const val KEY_STARTED_BY_NYX = "started_by_nyx"
         const val KEY_STARTED_AT = "started_at"
         const val KEY_ENDPOINT = "endpoint"
+        const val KEY_TARGET_ENV = "target_environment"
+        const val KEY_TARGET_GUEST = "target_guest"
 
         private const val DETECT_TIMEOUT_SECONDS = 20L
         private const val STATE_TIMEOUT_SECONDS = 20L
         private const val START_TIMEOUT_SECONDS = 30L
         private const val STOP_TIMEOUT_SECONDS = 30L
+        private const val MAX_GUESTS = 4
     }
 }

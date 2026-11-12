@@ -70,6 +70,8 @@ import com.nyx.ai.gateway.GatewayServerConfig
 import com.nyx.ai.gateway.GatewayTool
 import com.nyx.ai.ollama.OllamaServerManager
 import com.nyx.ai.ollama.OllamaServerState
+import com.nyx.ai.ollama.OllamaServerStatus
+import com.nyx.ai.ollama.OllamaProcess
 import com.nyx.ai.network.InferenceProvider
 import com.nyx.ai.nativeinference.*
 import kotlinx.coroutines.CancellationException
@@ -148,6 +150,7 @@ data class NyxState(
     val installationReport: InstallationReport? = null,
     val pendingInstallApproval: List<PackageCandidate> = emptyList(),
     val workspaceProvisioning: Boolean = false,
+    val pendingWorkspaceCreation: String? = null,
     val policyMessage: String = "",
     val arsenalSkills: List<ArsenalSkill> = emptyList(),
     val arsenalMessage: String = "",
@@ -276,25 +279,32 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshModels() {
         viewModelScope.launch {
-            val endpoint = _state.value.endpoint
-            val hasCredential = db.modelEndpointDao().getById(endpointRecordId(endpoint))?.credentialReference != null
-            _state.update { it.copy(credentialConfigured = hasCredential) }
-            if (!endpointAllowed(endpoint)) {
-                _state.update { it.copy(connected = false, models = emptyList(), error = "External endpoints require explicit consent in Settings.") }
-                return@launch
+            refreshModelsNow()
+        }
+    }
+
+    /** Shared suspend refresh used by the UI and by automatic objective reconnection. */
+    private suspend fun refreshModelsNow(): Boolean {
+        val endpoint = _state.value.endpoint
+        val hasCredential = db.modelEndpointDao().getById(endpointRecordId(endpoint))?.credentialReference != null
+        _state.update { it.copy(credentialConfigured = hasCredential) }
+        if (!endpointAllowed(endpoint)) {
+            _state.update { it.copy(connected = false, models = emptyList(), error = "External endpoints require explicit consent in Settings.") }
+            return false
+        }
+        _state.update { it.copy(error = "") }
+        return try {
+            val models = inferenceProvider(endpoint).listModels()
+            _state.update { old ->
+                val selected = old.selectedModel.takeIf { name -> models.any { it.name == name } } ?: models.firstOrNull()?.name.orEmpty()
+                prefs.edit().putString("selected_model", selected).apply()
+                old.copy(connected = true, models = models, selectedModel = selected, credentialConfigured = hasCredential, error = if (models.isEmpty()) "Inference server is reachable, but no models are installed." else "")
             }
-            _state.update { it.copy(error = "") }
-            try {
-                val models = inferenceProvider(endpoint).listModels()
-                _state.update { old ->
-                    val selected = old.selectedModel.takeIf { name -> models.any { it.name == name } } ?: models.firstOrNull()?.name.orEmpty()
-                    prefs.edit().putString("selected_model", selected).apply()
-                    old.copy(connected = true, models = models, selectedModel = selected, credentialConfigured = hasCredential, error = if (models.isEmpty()) "Inference server is reachable, but no models are installed." else "")
-                }
-                persistOllamaEndpoint()
-            } catch (e: Exception) {
-                _state.update { it.copy(connected = false, models = emptyList(), error = e.message ?: "Could not connect to the local inference server.") }
-            }
+            persistOllamaEndpoint()
+            true
+        } catch (e: Exception) {
+            _state.update { it.copy(connected = false, models = emptyList(), error = e.message ?: "Could not connect to the local inference server.") }
+            false
         }
     }
 
@@ -637,6 +647,25 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId }
         if (agent == null) { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
+        if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
+            _state.update { it.copy(error = "Starting the local Ollama server and reconnecting…") }
+            viewModelScope.launch(Dispatchers.IO) {
+                val result = runCatching { ollamaManager.start() }.getOrElse { error ->
+                    _state.update { it.copy(error = "Local Ollama could not start: ${error.message?.take(220) ?: "unknown error"}") }
+                    return@launch
+                }
+                if (!result.isRunning) {
+                    _state.update { it.copy(error = result.message.take(260)) }
+                    return@launch
+                }
+                if (!refreshModelsNow()) {
+                    _state.update { it.copy(error = "Ollama started, but Chat could not reconnect to its models.") }
+                    return@launch
+                }
+                createObjective(clean, development)
+            }
+            return
+        }
         if (s.selectedModel.isBlank() || !s.connected) { _state.update { it.copy(error = "Connect to an inference model before planning an objective.") }; return }
         if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required.") }; return }
         if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is running. Stop it before starting an objective.") }; return }
@@ -683,6 +712,21 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         val objective = s.objectives.firstOrNull { it.id == id } ?: return
         val agent = s.agents.firstOrNull { it.id == objective.agentId } ?: run { _state.update { it.copy(error = "The objective's agent is unavailable.") }; return }
+        if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
+            _state.update { it.copy(error = "Reconnecting the local Ollama server before resume…") }
+            viewModelScope.launch(Dispatchers.IO) {
+                val result = runCatching { ollamaManager.start() }.getOrElse { error ->
+                    _state.update { it.copy(error = "Local Ollama could not start: ${error.message?.take(220) ?: "unknown error"}") }
+                    return@launch
+                }
+                if (result.isRunning && refreshModelsNow()) {
+                    resumeObjective(id, userApprovedRetry)
+                } else {
+                    _state.update { it.copy(error = result.message.take(260)) }
+                }
+            }
+            return
+        }
         if (s.selectedModel.isBlank() || !s.connected || !endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "Connect to an allowed inference endpoint before resuming.") }; return }
         if (!reserveInference()) { _state.update { it.copy(error = "Another inference task is running.") }; return }
         viewModelScope.launch {
@@ -754,6 +798,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             val environment = _state.value.terminalEnvironment
             val alias = _state.value.guestAlias
             val guestVerified = profile.verifiedDistros.any { it.equals(alias, ignoreCase = true) }
+            ollamaManager.configureGuests(profile.verifiedDistros, alias, environment)
             val capabilities = if (environment == TerminalEnvironment.TERMUX_HOST || guestVerified) {
                 withContext(Dispatchers.IO) {
                     runCatching { terminalRepository.probeCapabilities(environment, alias) }.getOrNull()
@@ -775,6 +820,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                     terminalMessage = profile.detail ?: if (profile.hostAvailable) "Termux host is ready." else "Termux is unavailable.",
                 )
             }
+            withContext(Dispatchers.IO) { runCatching { ollamaManager.refresh() } }
         }
     }
 
@@ -809,6 +855,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (!HostShell.isSafeAlias(alias)) return
         prefs.edit().putString("terminal_guest_alias", alias).apply()
         _state.update { it.copy(guestAlias = alias, environmentCapabilities = null, workspaceCheck = null) }
+        ollamaManager.configureGuests(
+            _state.value.terminalProfile?.verifiedDistros.orEmpty(),
+            alias,
+            TerminalEnvironment.DEBIAN_PROOT,
+        )
     }
 
     /**
@@ -879,6 +930,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun setTerminalEnvironment(environment: TerminalEnvironment) {
         prefs.edit().putString("terminal_environment", environment.name).apply()
         _state.update { it.copy(terminalEnvironment = environment) }
+        ollamaManager.configureGuests(
+            _state.value.terminalProfile?.verifiedDistros.orEmpty(),
+            _state.value.guestAlias,
+            environment,
+        )
     }
 
     private fun executeTerminal(command: String, approved: Boolean) {
@@ -985,15 +1041,19 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshOllamaServer() {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { ollamaManager.refresh() }
+            val result = runCatching { ollamaManager.refresh() }
                 .onFailure { error -> _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama refresh failed.")) } }
+                .getOrNull()
+            if (result?.isRunning == true) refreshModels()
         }
     }
 
     fun detectOllamaServer() {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { ollamaManager.detect() }
+            val result = runCatching { ollamaManager.detect() }
                 .onFailure { error -> _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama detection failed.")) } }
+                .getOrNull()
+            if (result?.isRunning == true) refreshModels()
         }
     }
 
@@ -1321,7 +1381,24 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Creates a verified project workspace without requiring the user to run mkdir. */
-    fun createWorkspace(projectName: String) {
+    fun createWorkspace(projectName: String) = createWorkspaceInternal(projectName, approvedByUser = false)
+
+    /** Runs the exact pending project creation after a Manual or Smart approval prompt. */
+    fun approveWorkspaceCreation() {
+        val pending = _state.value.pendingWorkspaceCreation ?: return
+        createWorkspaceInternal(pending, approvedByUser = true)
+    }
+
+    fun dismissWorkspaceCreation() {
+        _state.update {
+            it.copy(
+                pendingWorkspaceCreation = null,
+                policyMessage = "Workspace creation cancelled. Nothing was created.",
+            )
+        }
+    }
+
+    private fun createWorkspaceInternal(projectName: String, approvedByUser: Boolean) {
         val s = _state.value
         if (s.autonomyStopped) {
             _state.update { it.copy(policyMessage = "Emergency stop is active; workspace creation is blocked.") }
@@ -1340,18 +1417,39 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val decision = AutonomyRuntime.authorize(
             app,
             ActionRequest(
-                kind = ActionKind.WRITE_WORKSPACE,
+                kind = ActionKind.CREATE_WORKSPACE,
                 target = base,
                 environmentId = policyEnvironmentId(),
                 insideAuthorizedWorkspace = true,
             ),
         )
-        if (!decision.allowed && !decision.requiresApproval) {
-            _state.update { it.copy(policyMessage = "Workspace creation was denied: ${decision.reason}") }
+        if (!decision.allowed && decision.requiresApproval && !approvedByUser) {
+            _state.update {
+                it.copy(
+                    pendingWorkspaceCreation = projectName.take(40),
+                    policyMessage = "Approval required: create “${projectName.take(40)}” under $base. " +
+                        "Only the new project folder will be created; existing folders are never reused.",
+                )
+            }
+            return
+        }
+        if (!decision.allowed && !(decision.requiresApproval && approvedByUser)) {
+            _state.update {
+                it.copy(
+                    pendingWorkspaceCreation = null,
+                    policyMessage = workspacePolicyMessage(decision.reason),
+                )
+            }
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(workspaceProvisioning = true, policyMessage = "Creating $target…") }
+            _state.update {
+                it.copy(
+                    workspaceProvisioning = true,
+                    pendingWorkspaceCreation = null,
+                    policyMessage = "Creating $target…",
+                )
+            }
             val result = withContext(Dispatchers.IO) {
                 WorkspaceProvisioner.provision(
                     repository = terminalRepository,
@@ -1372,6 +1470,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update {
                         it.copy(
                             workspaceProvisioning = false,
+                            pendingWorkspaceCreation = null,
                             terminalWorkspace = result.path,
                             workspaceCheck = WorkspaceCheck.Valid(result.path),
                             policyMessage = "Workspace ready: ${result.path}",
@@ -1381,10 +1480,30 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 is WorkspaceProvisionResult.Failed -> _state.update {
-                    it.copy(workspaceProvisioning = false, policyMessage = result.message, error = result.message)
+                    it.copy(
+                        workspaceProvisioning = false,
+                        pendingWorkspaceCreation = null,
+                        policyMessage = result.message,
+                        error = result.message,
+                    )
                 }
             }
         }
+    }
+
+    /** Turns stable policy reasons into a user action instead of exposing internal codes. */
+    private fun workspacePolicyMessage(reason: String): String = when (reason) {
+        "manual_requires_approval", "manual_granted_requires_approval" ->
+            "Manual mode needs your approval before NYX creates a project folder."
+        "smart_high_requires_approval" ->
+            "Smart mode needs approval for this workspace operation."
+        "full_elevated_grant_required" ->
+            "Full autonomy has no grant for this workspace root. Select the verified workspace again, then retry."
+        "emergency_stop" ->
+            "Emergency Stop is active. Resume autonomy before creating a workspace."
+        "full_critical_denied", "smart_critical_denied", "manual_critical_denied" ->
+            "This workspace operation is blocked by the current safety policy."
+        else -> "Workspace creation was not authorized. Check the selected environment and workspace root."
     }
 
     private fun formatTerminalResult(result: TerminalCommandResult): String = buildString {

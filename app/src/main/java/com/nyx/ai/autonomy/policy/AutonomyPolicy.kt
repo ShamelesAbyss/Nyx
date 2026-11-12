@@ -10,6 +10,7 @@ enum class AutonomyMode { MANUAL, SMART, FULL }
 
 /** A single side effect NYX can attempt on a device or workspace. */
 enum class ActionKind {
+    CREATE_WORKSPACE,
     READ_WORKSPACE,
     WRITE_WORKSPACE,
     DELETE_WORKSPACE,
@@ -117,6 +118,7 @@ data class AuthorizationEntry(
 
 /** Capability token required for an [ActionKind]. */
 internal fun capabilityFor(kind: ActionKind): String = when (kind) {
+    ActionKind.CREATE_WORKSPACE -> "workspace.create"
     ActionKind.READ_WORKSPACE -> "workspace.read"
     ActionKind.WRITE_WORKSPACE -> "workspace.write"
     ActionKind.DELETE_WORKSPACE -> "workspace.delete"
@@ -167,7 +169,7 @@ private fun RiskLevel.escalate(): RiskLevel = when (this) {
 
 /** Baseline risk of every action kind, before contextual escalation. */
 private fun baseRiskOf(kind: ActionKind): RiskLevel = when (kind) {
-    ActionKind.READ_WORKSPACE, ActionKind.NETWORK_READ -> RiskLevel.ROUTINE
+    ActionKind.CREATE_WORKSPACE, ActionKind.READ_WORKSPACE, ActionKind.NETWORK_READ -> RiskLevel.ROUTINE
 
     ActionKind.WRITE_WORKSPACE, ActionKind.RUN_READONLY_COMMAND, ActionKind.RUN_MUTATING_COMMAND,
     ActionKind.NETWORK_DOWNLOAD, ActionKind.GIT_COMMIT, ActionKind.DELEGATE -> RiskLevel.ELEVATED

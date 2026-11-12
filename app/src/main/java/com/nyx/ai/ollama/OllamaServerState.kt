@@ -21,6 +21,12 @@ enum class OllamaServerStatus {
 
     /** The last operation failed; [OllamaServerState.message] and `logTail` say why. */
     ERROR,
+
+    /** A binary exists but cannot execute or does not identify as Ollama. */
+    INCOMPATIBLE,
+
+    /** The installation is present but the API did not answer. */
+    UNREACHABLE,
 }
 
 /**
@@ -40,6 +46,10 @@ data class OllamaServerState(
     val uptimeMillis: Long? = null,
     val startedByNyx: Boolean = false,
     val lastCheckedAt: Long = 0L,
+    val target: OllamaTarget = OllamaTarget.HOST,
+    val installations: List<OllamaInstallation> = emptyList(),
+    val architecture: String = "",
+    val version: String = "",
 ) {
     val isRunning: Boolean get() = status == OllamaServerStatus.RUNNING
 
@@ -50,5 +60,8 @@ data class OllamaServerState(
     val canStop: Boolean get() = startedByNyx && pid != null && status in setOf(
         OllamaServerStatus.RUNNING,
         OllamaServerStatus.STARTING,
+        OllamaServerStatus.UNREACHABLE,
     )
+
+    val targetLabel: String get() = target.label
 }

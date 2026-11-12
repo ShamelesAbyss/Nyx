@@ -90,6 +90,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -220,7 +221,10 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                 }
                 Column(Modifier.weight(1f).fillMaxSize().background(Obsidian)) {
                     AppHeader(tab = destinations[tab], connected = state.connected, model = state.selectedModel, endpoint = state.endpoint)
-                    if (state.error.isNotBlank()) ErrorBanner(state.error, vm::clearError)
+                    LaunchedEffect(tab) {
+                        if (tab !in setOf(0, 1, 3, 7)) vm.clearError()
+                    }
+                    if (state.error.isNotBlank() && tab in setOf(0, 1, 3, 7)) ErrorBanner(state.error, vm::clearError)
                     when (tab) {
                         0 -> ChatScreen(state, vm)
                         1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
@@ -491,6 +495,24 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                         enabled = state.environmentCapabilities != null && !state.terminalDiscovering,
                         modifier = Modifier.weight(1f)
                     ) { Text("Prepare Kotlin env", fontSize = 11.sp) }
+                }
+                state.pendingWorkspaceCreation?.let { pending ->
+                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2233)), shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("WORKSPACE APPROVAL REQUIRED", color = Color(0xFFF2C879), fontSize = 10.sp, letterSpacing = 1.sp)
+                            Text(
+                                "Create a new, write-verified project folder for “$pending”? Existing folders are never adopted.",
+                                color = TextMain, fontSize = 11.sp,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = vm::approveWorkspaceCreation,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian),
+                                ) { Text("Approve creation") }
+                                OutlinedButton(onClick = vm::dismissWorkspaceCreation) { Text("Cancel") }
+                            }
+                        }
+                    }
                 }
                 state.dependencyPlan?.let { plan ->
                     Text(
@@ -897,7 +919,7 @@ private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
     val server = state.ollamaServer
     val accent = when (server.status) {
         OllamaServerStatus.RUNNING -> Green
-        OllamaServerStatus.ERROR -> Red
+        OllamaServerStatus.ERROR, OllamaServerStatus.INCOMPATIBLE, OllamaServerStatus.UNREACHABLE -> Red
         OllamaServerStatus.STARTING, OllamaServerStatus.STOPPING -> Color(0xFFF2C879)
         else -> TextMuted
     }
@@ -905,23 +927,39 @@ private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("MANAGED OLLAMA · TERMUX HOST", color = VioletSoft, fontSize = 9.sp, letterSpacing = 1.sp)
+                    Text("MANAGED OLLAMA · ${server.targetLabel.uppercase()}", color = VioletSoft, fontSize = 9.sp, letterSpacing = 1.sp)
                     Text(server.status.name.replace('_', ' '), color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 }
                 if (server.status == OllamaServerStatus.RUNNING) Text("${server.models.size} models", color = TextMuted, fontSize = 10.sp)
             }
             Text(server.endpoint, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            if (server.version.isNotBlank() || server.architecture.isNotBlank()) {
+                Text(
+                    listOfNotNull(
+                        server.version.takeIf { it.isNotBlank() }?.let { "v$it" },
+                        server.architecture.takeIf { it.isNotBlank() },
+                    ).joinToString(" · "),
+                    color = TextMuted, fontSize = 10.sp,
+                )
+            }
+            if (server.installations.size > 1) {
+                Text(
+                    "Probed: " + server.installations.joinToString { "${it.target.label}${if (it.detection.installed) "" else " (none)"}" },
+                    color = TextMuted, fontSize = 9.sp, lineHeight = 13.sp,
+                )
+            }
             if (server.message.isNotBlank()) Text(server.message, color = TextMuted, fontSize = 11.sp, lineHeight = 15.sp)
             if (server.pid != null) Text("PID ${server.pid} · ${if (server.startedByNyx) "started by NYX (verified ownership)" else "adopted external process"} · RSS ${server.rssKb?.div(1024) ?: "?"} MB", color = TextMuted, fontSize = 10.sp)
             if (server.logTail.isNotBlank()) Text(server.logTail.takeLast(500), color = TextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, maxLines = 5)
             Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(onClick = vm::detectOllamaServer) { Text("Detect", fontSize = 11.sp) }
                 OutlinedButton(onClick = vm::refreshOllamaServer) { Text("Refresh", fontSize = 11.sp) }
-                if (server.status == OllamaServerStatus.RUNNING && server.canStop) OutlinedButton(onClick = vm::stopOllamaServer) { Text("Stop", fontSize = 11.sp) }
+                if (server.canStop) OutlinedButton(onClick = vm::stopOllamaServer) { Text("Stop", fontSize = 11.sp) }
                 if (!server.isRunning && !server.isBusy) Button(onClick = vm::startOllamaServer) { Text("Start", fontSize = 11.sp) }
                 if (server.isRunning && server.startedByNyx) OutlinedButton(onClick = vm::restartOllamaServer) { Text("Restart", fontSize = 11.sp) }
             }
-            if (server.status == OllamaServerStatus.NOT_INSTALLED) Text("Install Ollama inside Termux first: pkg install ollama. NYX never runs root and never kills an adopted server.", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+            if (server.status == OllamaServerStatus.NOT_INSTALLED) Text("Ollama was not found in the selected host or verified guests. Install it in Termux or the guest, then Detect again. NYX never runs root and never kills an adopted server.", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+            if (server.status == OllamaServerStatus.INCOMPATIBLE) Text("A binary exists but is not executable on this architecture. Reinstall Ollama for ${server.architecture.ifBlank { "this device" }}.", color = Color(0xFFF2C879), fontSize = 10.sp, lineHeight = 14.sp)
         }
     }
 }

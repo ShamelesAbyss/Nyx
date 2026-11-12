@@ -33,6 +33,7 @@ class RiskClassifierTest {
     @Test
     fun baselineRiskMatchesThePolicyTable() {
         val expected = mapOf(
+            ActionKind.CREATE_WORKSPACE to RiskLevel.ROUTINE,
             ActionKind.READ_WORKSPACE to RiskLevel.ROUTINE,
             ActionKind.NETWORK_READ to RiskLevel.ROUTINE,
             ActionKind.WRITE_WORKSPACE to RiskLevel.ELEVATED,
