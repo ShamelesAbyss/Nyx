@@ -1,6 +1,20 @@
-# NYX User Guide — 0.7.7
+# NYX User Guide — 0.7.9
 
-> 0.7.7 “Project Liberation” is the latest published release. It is a debug-signed development build; physical-device execution of Debian Ollama, Termux IPC, Keystore, and gateway flows is still pending.
+> 0.7.9 “Persistent Guest Runtime” is the latest published release. Physical-device execution of Debian Ollama, Termux IPC, Keystore, and gateway flows is still pending.
+
+## What changed in 0.7.9 — Persistent Guest Runtime
+
+**Guest Ollama now has a durable owner.** When the selected environment is Debian/PRoot, **Start**, **Stop**, and **Restart** run through a non-exported `dataSync` foreground service. Android shows a low-priority “NYX · Managed Ollama” notification while the managed server is active. It reports Starting, Ready, Recovering, Stopped, or Error and includes **View Activity**, **Stop Worker**, and, when Termux is installed, **Open Termux** actions. This keeps the NYX process from being frozen while it waits for a PRoot session to create the guest server. Host-mode Ollama still uses the direct lifecycle path.
+
+**One session, one server.** NYX probes the installed `proot-distro` for `login --detach`, `ps`, and `kill`. If all three are present, it creates one detached PRoot session and records the session PID plus its kernel start-time token. If the installed version lacks any of those commands, NYX keeps one foreground PRoot login alive instead. It does not claim to have detached when it has not. The guest server itself always runs in the foreground of that session, so PRoot’s normal `--kill-on-exit` behavior cannot silently remove it.
+
+**Stop is verified, not optimistic.** Stop first terminates the verified guest Ollama PID, then asks `proot-distro` to end the recorded session and re-checks `/proc/<pid>`. If the session survives, the card shows an error and keeps **Stop** available instead of claiming the server stopped. An orphaned detached session also shows Stop even if the guest PID record is missing. A server that NYX did not start is still adopted read-only and never killed. The notification’s **Stop Worker** action uses the same verified stop path.
+
+**Startup states are specific.** The card distinguishes a dead process, a live guest process that has not opened its API, a guest API that Android cannot reach, a port conflict, and READY. If a verified session is already alive, Start refuses to create a second one. Check the bounded log before restarting; a port conflict is never resolved by killing an unknown process.
+
+**Chat can start the runtime.** If the selected endpoint is loopback and Chat is disconnected, sending a message starts the managed runtime, waits for readiness, refreshes the model inventory, and then continues the original request. A failed startup leaves the message unsent and shows the bounded reason.
+
+**Limits.** This build is device-untested. Actual `proot-distro ps` output, Android 14+ `dataSync` behavior, Termux `RUN_COMMAND` lifetime, and guest-to-Android API reachability must be validated on a physical device. If Android kills the NYX process during the foreground fallback, the guest PID record may remain until the next verified stop or refresh.
 
 ## What changed in 0.7.7 — Project Liberation
 

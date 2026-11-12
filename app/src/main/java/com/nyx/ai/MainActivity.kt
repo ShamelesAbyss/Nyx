@@ -929,6 +929,7 @@ private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
                 Column(Modifier.weight(1f)) {
                     Text("MANAGED OLLAMA · ${server.targetLabel.uppercase()}", color = VioletSoft, fontSize = 9.sp, letterSpacing = 1.sp)
                     Text(server.status.name.replace('_', ' '), color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(server.sessionLabel, color = TextMuted, fontSize = 9.sp)
                 }
                 if (server.status == OllamaServerStatus.RUNNING) Text("${server.models.size} models", color = TextMuted, fontSize = 10.sp)
             }
@@ -950,14 +951,16 @@ private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
             }
             if (server.message.isNotBlank()) Text(server.message, color = TextMuted, fontSize = 11.sp, lineHeight = 15.sp)
             if (server.pid != null) Text("PID ${server.pid} · ${if (server.startedByNyx) "started by NYX (verified ownership)" else "adopted external process"} · RSS ${server.rssKb?.div(1024) ?: "?"} MB", color = TextMuted, fontSize = 10.sp)
+            if (server.sessionPid != null) Text("PRoot session PID ${server.sessionPid} · ${server.launchMode?.name?.lowercase()?.replace('_', ' ') ?: "managed"}", color = TextMuted, fontSize = 10.sp)
             if (server.logTail.isNotBlank()) Text(server.logTail.takeLast(500), color = TextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, maxLines = 5)
             Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedButton(onClick = vm::detectOllamaServer) { Text("Detect", fontSize = 11.sp) }
-                OutlinedButton(onClick = vm::refreshOllamaServer) { Text("Refresh", fontSize = 11.sp) }
-                if (server.canStop) OutlinedButton(onClick = vm::stopOllamaServer) { Text("Stop", fontSize = 11.sp) }
-                if (!server.isRunning && !server.isBusy) Button(onClick = vm::startOllamaServer) { Text("Start", fontSize = 11.sp) }
-                if (server.isRunning && server.startedByNyx) OutlinedButton(onClick = vm::restartOllamaServer) { Text("Restart", fontSize = 11.sp) }
+                OutlinedButton(onClick = vm::detectOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Detect", fontSize = 11.sp) }
+                OutlinedButton(onClick = vm::refreshOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Refresh", fontSize = 11.sp) }
+                if (server.canStop || server.canStopSession) OutlinedButton(onClick = vm::stopOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Stop", fontSize = 11.sp) }
+                if (!server.isRunning && !server.isBusy && !state.ollamaOperationRunning) Button(onClick = vm::startOllamaServer) { Text("Start", fontSize = 11.sp) }
+                if (server.isRunning && server.startedByNyx) OutlinedButton(onClick = vm::restartOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Restart", fontSize = 11.sp) }
             }
+            if (state.ollamaOperationRunning) Text("A foreground service is holding the PRoot session open. Progress is also shown in the notification; the controls return when it finishes.", color = Color(0xFFF2C879), fontSize = 10.sp, lineHeight = 14.sp)
             if (server.status == OllamaServerStatus.NOT_INSTALLED) Text("Ollama was not found in the selected host or verified guests. Install it in Termux or the guest, then Detect again. NYX never runs root and never kills an adopted server.", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
             if (server.status == OllamaServerStatus.INCOMPATIBLE) Text("A binary exists but is not executable on this architecture. Reinstall Ollama for ${server.architecture.ifBlank { "this device" }}.", color = Color(0xFFF2C879), fontSize = 10.sp, lineHeight = 14.sp)
         }

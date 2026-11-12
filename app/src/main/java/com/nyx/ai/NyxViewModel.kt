@@ -17,6 +17,7 @@ import com.nyx.ai.autonomy.Preflight
 import com.nyx.ai.autonomy.PreflightInput
 import com.nyx.ai.autonomy.PreflightResult
 import com.nyx.ai.service.ObjectiveExecutionService
+import com.nyx.ai.service.OllamaHostService
 import com.nyx.ai.terminal.CommandPolicy
 import com.nyx.ai.terminal.CapabilityState
 import com.nyx.ai.terminal.EnvironmentCapabilities
@@ -160,6 +161,7 @@ data class NyxState(
     val gatewayMessage: String = "",
     val gatewayOutput: String = "",
     val ollamaServer: OllamaServerState = OllamaServerState(),
+    val ollamaOperationRunning: Boolean = false,
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
@@ -179,9 +181,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         root = File(application.filesDir, "gateways"),
         tokenProvider = { reference -> runCatching { credentialVault.read(reference) }.getOrNull() },
     )
+    private val terminalBridge = com.nyx.ai.terminal.TerminalBridge(application)
     private val ollamaManager = OllamaServerManager(
         context = application,
-        bridge = com.nyx.ai.terminal.TerminalBridge(application),
+        bridge = terminalBridge,
     )
     private val _state = MutableStateFlow(
         NyxState(
@@ -198,7 +201,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     val state: StateFlow<NyxState> = _state.asStateFlow()
-    private val terminalRepository = TerminalRepository(application, db)
+    private val terminalRepository = TerminalRepository(application, db, terminalBridge)
     private var generationJob: Job? = null
     private var agentJob: Job? = null
     private var workflowJob: Job? = null
@@ -505,7 +508,21 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         generationJob = viewModelScope.launch {
-            val s = _state.value
+            var s = _state.value
+            if (!s.connected && !s.nativeMode && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
+                _state.update { it.copy(error = "Starting the local Ollama runtime…") }
+                val started = runCatching { startManagedOllamaForInference() }.getOrElse { error ->
+                    _state.update { it.copy(error = "Local Ollama could not start: ${error.message?.take(220) ?: "unknown error"}") }
+                    return@launch
+                }
+                if (!started.isRunning || !refreshModelsNow()) {
+                    _state.update {
+                        it.copy(error = started.message.ifBlank { "Ollama started, but Chat could not reconnect to its models." }.take(260))
+                    }
+                    return@launch
+                }
+                s = _state.value
+            }
             if (!s.connected || s.selectedModel.isBlank()) { _state.update { it.copy(error = "Select an available inference provider and model first.") }; return@launch }
             if (!endpointAllowed(s.endpoint)) { _state.update { it.copy(error = "External endpoint consent is required.") }; return@launch }
             val conversation = if (s.activeConversationId == null) ConversationEntity(title = prompt.take(48))
@@ -630,6 +647,37 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun setWorkflowTask(value: String) { _state.update { it.copy(workflowTask = value) } }
     fun toggleWorkflowAgent(id: String) { _state.update { old -> old.copy(workflowAgentIds = if (id in old.workflowAgentIds) old.workflowAgentIds - id else old.workflowAgentIds + id) } }
 
+    private suspend fun startManagedOllamaForInference(): OllamaServerState {
+        val snapshot = _state.value
+        if (snapshot.terminalEnvironment != TerminalEnvironment.DEBIAN_PROOT) {
+            return ollamaManager.start()
+        }
+        val verified = snapshot.terminalProfile?.verifiedDistros.orEmpty()
+        if (snapshot.guestAlias !in verified) {
+            return snapshot.ollamaServer.copy(
+                status = OllamaServerStatus.ERROR,
+                message = "Verify the ${snapshot.guestAlias} guest before starting a managed server.",
+            )
+        }
+        try {
+            OllamaHostService.start(app, verified, snapshot.guestAlias, snapshot.terminalEnvironment)
+        } catch (e: Exception) {
+            return snapshot.ollamaServer.copy(
+                status = OllamaServerStatus.ERROR,
+                message = "Android rejected the foreground Ollama service: ${e.message?.take(180) ?: e.javaClass.simpleName}",
+            )
+        }
+        var last = snapshot.ollamaServer
+        repeat(60) {
+            delay(3_000L)
+            last = runCatching { ollamaManager.detect() }.getOrDefault(last)
+            if (last.isRunning || last.status == OllamaServerStatus.ERROR || last.status == OllamaServerStatus.UNREACHABLE) {
+                return last
+            }
+        }
+        return last
+    }
+
     /** Creates and executes a durable objective independently of a chat turn. */
     fun createObjective(goal: String, development: Boolean = false) {
         val clean = goal.trim().take(8_000)
@@ -650,7 +698,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
             _state.update { it.copy(error = "Starting the local Ollama server and reconnecting…") }
             viewModelScope.launch(Dispatchers.IO) {
-                val result = runCatching { ollamaManager.start() }.getOrElse { error ->
+                val result = runCatching { startManagedOllamaForInference() }.getOrElse { error ->
                     _state.update { it.copy(error = "Local Ollama could not start: ${error.message?.take(220) ?: "unknown error"}") }
                     return@launch
                 }
@@ -715,7 +763,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
             _state.update { it.copy(error = "Reconnecting the local Ollama server before resume…") }
             viewModelScope.launch(Dispatchers.IO) {
-                val result = runCatching { ollamaManager.start() }.getOrElse { error ->
+                val result = runCatching { startManagedOllamaForInference() }.getOrElse { error ->
                     _state.update { it.copy(error = "Local Ollama could not start: ${error.message?.take(220) ?: "unknown error"}") }
                     return@launch
                 }
@@ -1062,6 +1110,23 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Emergency stop is active; server start is blocked.")) }
             return
         }
+        val snapshot = _state.value
+        if (snapshot.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
+            val verified = snapshot.terminalProfile?.verifiedDistros.orEmpty()
+            if (snapshot.guestAlias !in verified) {
+                _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Verify the ${snapshot.guestAlias} guest before starting its Ollama server.")) }
+                return
+            }
+            _state.update {
+                it.copy(
+                    ollamaOperationRunning = true,
+                    ollamaServer = it.ollamaServer.copy(message = "Starting Ollama in the verified guest through NYX's foreground service…"),
+                )
+            }
+            OllamaHostService.start(app, verified, snapshot.guestAlias, snapshot.terminalEnvironment)
+            pollManagedOllama()
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching { ollamaManager.start() }.getOrElse { error ->
                 _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama could not start.")) }
@@ -1078,6 +1143,18 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopOllamaServer() {
+        val snapshot = _state.value
+        if (snapshot.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
+            _state.update {
+                it.copy(
+                    ollamaOperationRunning = true,
+                    ollamaServer = it.ollamaServer.copy(message = "Stopping the managed guest Ollama session…"),
+                )
+            }
+            OllamaHostService.stop(app)
+            pollManagedOllama()
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { ollamaManager.stop() }
                 .onFailure { error -> _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama could not stop.")) } }
@@ -1089,12 +1166,57 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Emergency stop is active; server restart is blocked.")) }
             return
         }
+        val snapshot = _state.value
+        if (snapshot.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
+            val verified = snapshot.terminalProfile?.verifiedDistros.orEmpty()
+            if (snapshot.guestAlias !in verified) {
+                _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Verify the ${snapshot.guestAlias} guest before restarting its Ollama server.")) }
+                return
+            }
+            _state.update {
+                it.copy(
+                    ollamaOperationRunning = true,
+                    ollamaServer = it.ollamaServer.copy(message = "Restarting the managed guest Ollama session…"),
+                )
+            }
+            OllamaHostService.restart(app, verified, snapshot.guestAlias, snapshot.terminalEnvironment)
+            pollManagedOllama()
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching { ollamaManager.restart() }.getOrElse { error ->
                 _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = error.message?.take(240) ?: "Ollama could not restart.")) }
                 return@launch
             }
             if (result.isRunning) refreshModels()
+        }
+    }
+
+    /** The service owns its own manager instance, so reconcile the visible state from persisted evidence. */
+    private fun pollManagedOllama() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repeat(60) { attempt ->
+                    delay(3_000L)
+                    val result = runCatching { ollamaManager.detect() }.getOrNull() ?: return@repeat
+                    val terminal = result.status == OllamaServerStatus.ERROR ||
+                        result.status == OllamaServerStatus.UNREACHABLE ||
+                        result.status == OllamaServerStatus.STOPPED ||
+                        result.status == OllamaServerStatus.NOT_INSTALLED
+                    if (result.isRunning) {
+                        refreshModels()
+                        _state.update { it.copy(ollamaOperationRunning = false) }
+                        return@launch
+                    }
+                    // Ignore a transient STOPPED while the service is still creating the session.
+                    if (terminal && attempt >= 6) {
+                        _state.update { it.copy(ollamaOperationRunning = false) }
+                        return@launch
+                    }
+                }
+            } finally {
+                _state.update { it.copy(ollamaOperationRunning = false) }
+            }
         }
     }
 
@@ -1296,18 +1418,23 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.terminalEnvironment == TerminalEnvironment.TERMUX_HOST) "termux_host"
         else "proot:${_state.value.guestAlias}"
 
-    /** Builds a real dependency plan from the last capability probe; never guesses tool availability. */
+    /**
+     * Builds a dependency plan from the last capability probe. On the Termux host the plan is
+     * immediate. Inside Debian, the JDK package is resolved from the guest's own APT candidates
+     * first; a missing candidate becomes a diagnostic instead of a blind `openjdk-17` install.
+     */
     fun prepareEnvironment(projectKind: ProjectKind = ProjectKind.KOTLIN_JVM) {
-        if (_state.value.autonomyStopped) {
+        val snapshot = _state.value
+        if (snapshot.autonomyStopped) {
             _state.update { it.copy(policyMessage = "Emergency stop is active; environment work is blocked.") }
             return
         }
-        val capabilities = _state.value.environmentCapabilities
+        val capabilities = snapshot.environmentCapabilities
         if (capabilities == null) {
             _state.update { it.copy(policyMessage = "Run Detect environment before preparing the toolchain.") }
             return
         }
-        val host = _state.value.terminalEnvironment == TerminalEnvironment.TERMUX_HOST
+        val host = snapshot.terminalEnvironment == TerminalEnvironment.TERMUX_HOST
         val tools = capabilities.tools.mapValues { (_, tool) ->
             ToolState(
                 present = tool.state != CapabilityState.MISSING && tool.state != CapabilityState.NOT_CHECKED,
@@ -1317,7 +1444,43 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 version = tool.version,
             )
         }
-        val plan = DependencyPlanner.plan(projectKind, policyEnvironmentId(), tools)
+        val environmentId = policyEnvironmentId()
+        if (host) {
+            applyDependencyPlan(
+                projectKind,
+                DependencyPlanner.plan(projectKind, environmentId, tools),
+            )
+            return
+        }
+
+        val guestAlias = snapshot.guestAlias
+        viewModelScope.launch {
+            _state.update {
+                it.copy(policyMessage = "Resolving JDK package candidates inside Debian ($guestAlias)…")
+            }
+            val resolution = withContext(Dispatchers.IO) {
+                terminalRepository.resolveGuestJdk(guestAlias)
+            }
+            // The user may have switched environments while the read-only probe was running.
+            if (_state.value.terminalEnvironment != TerminalEnvironment.DEBIAN_PROOT ||
+                _state.value.guestAlias != guestAlias
+            ) {
+                return@launch
+            }
+            applyDependencyPlan(
+                projectKind,
+                DependencyPlanner.plan(
+                    projectKind,
+                    environmentId,
+                    tools,
+                    guestJdkPackage = resolution.packageName,
+                    jdkDiagnostic = resolution.diagnostic,
+                ),
+            )
+        }
+    }
+
+    private fun applyDependencyPlan(projectKind: ProjectKind, plan: DependencyPlan) {
         _state.update {
             it.copy(
                 dependencyPlan = plan,

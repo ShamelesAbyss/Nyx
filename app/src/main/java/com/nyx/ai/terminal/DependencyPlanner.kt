@@ -104,6 +104,8 @@ object DependencyPlanner {
     private const val MAX_BLOCKERS = 16
     private const val MAX_TOOL_NAME_CHARS = 32
     private const val MAX_ENVIRONMENT_CHARS = 64
+    private const val MAX_PACKAGE_CHARS = 64
+    private val SAFE_PACKAGE_NAME = Regex("[a-z0-9][a-z0-9+.-]{0,63}")
 
     /** Install manager used inside a PRoot guest. */
     const val GUEST_MANAGER = "apt"
@@ -117,6 +119,10 @@ object DependencyPlanner {
 
     /** Reported when a guest plan needs an install but `apt` itself is not a usable guest tool. */
     const val APT_BLOCKER = "The guest package manager (apt) is unavailable."
+
+    /** Reported when a guest needs a JDK but APT candidates were not resolved from the guest. */
+    const val JDK_UNRESOLVED_BLOCKER =
+        "JDK package availability has not been resolved from the guest's APT repositories."
 
     private const val GUEST_NOTE = "official distribution repository"
     private const val HOST_NOTE = "Termux official repository"
@@ -134,8 +140,6 @@ object DependencyPlanner {
 
     /** Guest packages that provide each tool. `sh` is intentionally absent: it is base system. */
     private val GUEST_PACKAGES: Map<String, String> = mapOf(
-        "java" to "openjdk-17-jdk-headless",
-        "javac" to "openjdk-17-jdk-headless",
         "gradle" to "gradle",
         "kotlinc" to "kotlin",
         "clang" to "clang",
@@ -185,10 +189,20 @@ object DependencyPlanner {
      * that has no trusted source. [DependencyPlan.canProceed] is true only when no blocker remains
      * and every missing tool is covered by a candidate.
      */
-    fun plan(projectKind: ProjectKind, environmentKind: String, tools: Map<String, ToolState>): DependencyPlan {
+    fun plan(
+        projectKind: ProjectKind,
+        environmentKind: String,
+        tools: Map<String, ToolState>,
+        guestJdkPackage: String? = null,
+        jdkDiagnostic: String? = null,
+    ): DependencyPlan {
         val environment = environmentKind.trim().take(MAX_ENVIRONMENT_CHARS)
         val guest = ExecutableClassifier.isGuestEnvironment(environment)
         val host = !guest && ExecutableClassifier.isHostEnvironment(environment)
+        val resolvedJdk = guestJdkPackage
+            ?.trim()
+            ?.take(MAX_PACKAGE_CHARS)
+            ?.takeIf { SAFE_PACKAGE_NAME.matches(it) }
         val requirements = mergeRequirements(requiredTools(projectKind))
         val satisfied = LinkedHashSet<String>()
         val missing = ArrayList<ToolRequirement>()
@@ -216,6 +230,13 @@ object DependencyPlanner {
         if (guest && missing.isNotEmpty() && !isUsable("apt", tools, guest)) {
             addBlocker(blockers, APT_BLOCKER)
         }
+        val jdkMissing = missing.any { it.tool == "java" || it.tool == "javac" }
+        if (guest && jdkMissing && resolvedJdk == null) {
+            addBlocker(
+                blockers,
+                jdkDiagnostic?.trim()?.take(600)?.ifBlank { JDK_UNRESOLVED_BLOCKER } ?: JDK_UNRESOLVED_BLOCKER,
+            )
+        }
 
         val candidates = ArrayList<PackageCandidate>()
         for (requirement in missing) {
@@ -225,7 +246,7 @@ object DependencyPlanner {
                 addBlocker(blockers, blocked)
                 continue
             }
-            val packageName = packageFor(tool, guest, host)
+            val packageName = packageFor(tool, guest, host, resolvedJdk)
             if (packageName == null) {
                 addBlocker(blockers, missingToolBlocker(tool, environment))
                 continue
@@ -238,7 +259,7 @@ object DependencyPlanner {
             if (candidates.none { it.command == candidate.command }) candidates += candidate
         }
 
-        val covered = missing.all { covers(it.tool, candidates, guest, host) }
+        val covered = missing.all { covers(it.tool, candidates, guest, host, resolvedJdk) }
         return DependencyPlan(
             projectKind = projectKind,
             requirements = requirements,
@@ -370,7 +391,13 @@ object DependencyPlanner {
     }
 
     /** Resolves the package that provides [tool], or null when the environment has no source. */
-    private fun packageFor(tool: String, guest: Boolean, host: Boolean): String? = when {
+    private fun packageFor(
+        tool: String,
+        guest: Boolean,
+        host: Boolean,
+        guestJdkPackage: String?,
+    ): String? = when {
+        guest && (tool == "java" || tool == "javac") -> guestJdkPackage
         guest -> GUEST_PACKAGES[tool]
         host -> HOST_PACKAGES[tool]
         else -> null
@@ -404,8 +431,14 @@ object DependencyPlanner {
     }
 
     /** True when [candidates] contain the package that provides [tool]. */
-    private fun covers(tool: String, candidates: List<PackageCandidate>, guest: Boolean, host: Boolean): Boolean {
-        val packageName = packageFor(tool, guest, host) ?: return false
+    private fun covers(
+        tool: String,
+        candidates: List<PackageCandidate>,
+        guest: Boolean,
+        host: Boolean,
+        guestJdkPackage: String?,
+    ): Boolean {
+        val packageName = packageFor(tool, guest, host, guestJdkPackage) ?: return false
         return candidates.any { it.packageName == packageName }
     }
 

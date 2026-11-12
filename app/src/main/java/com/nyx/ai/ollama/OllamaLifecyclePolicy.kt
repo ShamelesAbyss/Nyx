@@ -173,9 +173,12 @@ object OllamaLifecyclePolicy {
      * A verified NYX process can be alive while the API still refuses connections. That is normal
      * during warm-up and becomes an error once the startup grace period has clearly passed.
      */
-    fun statusForOwnedButNotReady(uptimeMillis: Long?): OllamaServerStatus {
+    fun statusForOwnedButNotReady(
+        uptimeMillis: Long?,
+        graceMillis: Long = OllamaReadiness.STARTUP_GRACE_MILLIS,
+    ): OllamaServerStatus {
         val uptime = uptimeMillis ?: return OllamaServerStatus.STARTING
-        return if (uptime < OllamaReadiness.STARTUP_GRACE_MILLIS) {
+        return if (uptime < graceMillis.coerceAtLeast(1L)) {
             OllamaServerStatus.STARTING
         } else {
             OllamaServerStatus.ERROR
@@ -237,11 +240,14 @@ object OllamaLifecyclePolicy {
  */
 object OllamaReadiness {
     const val DEFAULT_TIMEOUT_MILLIS = 45_000L
+    /** Guest startup includes PRoot and may load a model before the loopback port is usable. */
+    const val GUEST_TIMEOUT_MILLIS = OllamaGuestRuntime.DEFAULT_GUEST_START_TIMEOUT_MILLIS
     const val INITIAL_INTERVAL_MILLIS = 250L
     const val MAX_INTERVAL_MILLIS = 2_000L
 
     /** After this long, a live-but-unreachable NYX-owned process is reported as ERROR, not STARTING. */
     const val STARTUP_GRACE_MILLIS = 60_000L
+    const val GUEST_STARTUP_GRACE_MILLIS = OllamaGuestRuntime.GUEST_STARTUP_GRACE_MILLIS
 
     /** 250 ms, 500 ms, 1 s, 2 s, 2 s, ... — bounded so polling cannot hot-loop or drift. */
     fun pollIntervalMillis(attempt: Int): Long {
@@ -263,9 +269,13 @@ object OllamaReadiness {
         attempts: Int,
         detail: String = "",
         logTail: String = "",
+        stage: OllamaStartupStage? = null,
     ): String {
         val seconds = (timeoutMillis / 1_000L).coerceAtLeast(1L)
         val builder = StringBuilder("Ollama did not become ready within $seconds s after $attempts API probe(s).")
+        if (stage != null && stage != OllamaStartupStage.READY) {
+            builder.append(' ').append(OllamaGuestRuntime.stageMessage(stage, null))
+        }
         if (detail.isNotBlank()) builder.append(' ').append(detail.trim().take(OllamaProcess.MAX_ERROR_CHARS))
         val tail = OllamaProcess.sanitizeLogTail(logTail)
         if (tail.isNotBlank()) {

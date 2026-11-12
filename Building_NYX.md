@@ -1,5 +1,5 @@
-# Building NYX v0.7.7
+# Building NYX v0.7.9
 
 This legacy filename is retained for compatibility with existing repository links. The canonical build guide is [BUILD.md](BUILD.md); it documents SDK/JDK requirements, the pinned AGP 9.1.1 / Gradle 9.3.1 / KSP 2.3.6 / Room 2.8.5 toolchain, reproducible build and test commands, the arm64-v8a native build, instrumentation-test limits, the release-integrity checker, and debug-signing constraints.
 
-The current app is versionCode 10 / versionName 0.7.7, targeting API 37 with a minimum of API 26. Its installable APK is distributed from the [official v0.7.7 release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.7). It is debug-signed, not production or store-signed.
+The current app is versionCode 12 / versionName 0.7.9, targeting API 37 with a minimum of API 26. Its installable APK is distributed from the [official v0.7.9 release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.9). It is debug-signed, not production or store-signed.

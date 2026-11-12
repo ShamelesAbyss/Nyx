@@ -76,6 +76,7 @@ class DependencyPlannerTest {
             ProjectKind.KOTLIN_JVM,
             debian,
             mapOf("sh" to guestTool(), "apt" to guestTool()),
+            guestJdkPackage = "openjdk-17-jdk-headless",
         )
         assertEquals(listOf("openjdk-17-jdk-headless", "gradle"), plan.candidates.map { it.packageName })
         assertTrue(plan.candidates.all { it.manager == "apt" })
@@ -99,7 +100,12 @@ class DependencyPlannerTest {
 
     @Test
     fun `kotlin jvm guest with only java missing plans the headless jdk`() {
-        val plan = DependencyPlanner.plan(ProjectKind.KOTLIN_JVM, debian, guestTools("sh", "javac", "gradle", "git"))
+        val plan = DependencyPlanner.plan(
+            ProjectKind.KOTLIN_JVM,
+            debian,
+            guestTools("sh", "javac", "gradle", "git"),
+            guestJdkPackage = "openjdk-17-jdk-headless",
+        )
         assertEquals(listOf("java"), plan.missing.map { it.tool })
         assertEquals("openjdk-17-jdk-headless", plan.candidates.single().packageName)
         assertTrue(plan.satisfied.containsAll(listOf("sh", "javac", "gradle", "git")))
@@ -267,5 +273,34 @@ class DependencyPlannerTest {
         assertEquals(listOf("sh", "node", "npm", "git"), plan.satisfied)
         assertTrue(plan.candidates.isEmpty())
         assertTrue(plan.canProceed)
+    }
+
+    @Test
+    fun `trixie plan uses the resolved openjdk 21 package instead of hardcoded 17`() {
+        val plan = DependencyPlanner.plan(
+            ProjectKind.KOTLIN_JVM,
+            debian,
+            guestTools("sh", "git"),
+            guestJdkPackage = "openjdk-21-jdk-headless",
+            jdkDiagnostic = "Resolved openjdk-21-jdk-headless for debian/13/trixie.",
+        )
+        assertEquals(listOf("openjdk-21-jdk-headless", "gradle"), plan.candidates.map { it.packageName })
+        assertTrue(plan.candidates.all { it.manager == "apt" })
+        assertTrue(plan.blockers.isEmpty())
+        assertTrue(plan.canProceed)
+    }
+
+    @Test
+    fun `unresolved guest jdk is blocked instead of blindly installing 17`() {
+        val plan = DependencyPlanner.plan(
+            ProjectKind.KOTLIN_JVM,
+            debian,
+            guestTools("sh", "git"),
+            jdkDiagnostic = "No installable JDK package was found. The APT sources may be stale.",
+        )
+        assertTrue(plan.candidates.none { it.packageName.startsWith("openjdk-") })
+        assertTrue(plan.candidates.any { it.packageName == "gradle" })
+        assertTrue(plan.blockers.any { it.contains("No installable JDK") })
+        assertFalse(plan.canProceed)
     }
 }

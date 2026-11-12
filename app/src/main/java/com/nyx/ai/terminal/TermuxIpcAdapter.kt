@@ -159,6 +159,64 @@ class TermuxIpcAdapter(
         return TerminalCommandHandle(requestId) { result -> complete(requestId, result) }
     }
 
+    /**
+     * Starts a command without a result callback. This is used only for a deliberately long-lived
+     * PRoot session whose lifetime is the server's lifetime. Termux's documented callback arrives
+     * only when the command exits, so installing a timeout here would incorrectly cancel the wait
+     * while leaving the server running.
+     */
+    fun dispatchPersistent(request: TerminalCommandRequest): TerminalCommandResult {
+        if (!request.authorized) {
+            return TerminalCommandResult(null, TerminalResultKind.DENIED, message = "Explicit authorization is required")
+        }
+        val validation = TerminalRequestValidator.validate(request)
+        if (validation.isNotEmpty()) {
+            return TerminalCommandResult(
+                null,
+                TerminalResultKind.INVALID_REQUEST,
+                message = validation.joinToString("; ") { "${it.field}: ${it.message}" },
+            )
+        }
+        val readiness = readiness()
+        if (!readiness.installed) {
+            return TerminalCommandResult(null, TerminalResultKind.TERMUX_NOT_INSTALLED, message = readiness.detail)
+        }
+        if (!readiness.runCommandPermissionGranted) {
+            return TerminalCommandResult(null, TerminalResultKind.PERMISSION_REQUIRED, message = readiness.detail)
+        }
+        val prootPath = if (request.environment == TerminalEnvironment.DEBIAN_PROOT) {
+            runCatching { prootDistroProbe.probeAvailableExecutablePath() }.getOrNull()
+                ?: return TerminalCommandResult(
+                    null,
+                    TerminalResultKind.PROOT_DISTRO_UNAVAILABLE,
+                    message = "proot-distro path probe did not find an available executable",
+                )
+        } else {
+            null
+        }
+        val descriptor = TerminalCommandDescriptors.create(request, prootPath)
+            ?: return TerminalCommandResult(null, TerminalResultKind.INVALID_REQUEST, message = "Could not construct a safe command descriptor")
+        val intent = Intent(TermuxProtocol.ACTION_RUN_COMMAND).apply {
+            component = ComponentName(TermuxProtocol.PACKAGE, TermuxProtocol.SERVICE_CLASS)
+            putExtra(TermuxProtocol.EXTRA_COMMAND_PATH, descriptor.executablePath)
+            putExtra(TermuxProtocol.EXTRA_ARGUMENTS, descriptor.arguments.toTypedArray())
+            descriptor.stdin?.let { putExtra(TermuxProtocol.EXTRA_STDIN, it) }
+            descriptor.workingDirectory?.let { putExtra(TermuxProtocol.EXTRA_WORKDIR, it) }
+            putExtra(TermuxProtocol.EXTRA_BACKGROUND, true)
+        }
+        return try {
+            if (appContext.startService(intent) == null) {
+                TerminalCommandResult(null, TerminalResultKind.DISPATCH_ERROR, message = "Android did not resolve the Termux RunCommandService")
+            } else {
+                TerminalCommandResult(null, TerminalResultKind.SUCCEEDED, message = "Long-lived Termux command dispatched")
+            }
+        } catch (e: SecurityException) {
+            TerminalCommandResult(null, TerminalResultKind.DISPATCH_ERROR, message = e.message ?: "Android denied Termux service dispatch")
+        } catch (e: RuntimeException) {
+            TerminalCommandResult(null, TerminalResultKind.DISPATCH_ERROR, message = e.message ?: "Termux service dispatch failed")
+        }
+    }
+
     private fun complete(requestId: String, result: TerminalCommandResult) {
         val completion = pending.remove(requestId) ?: return
         if (!completion.finished.compareAndSet(false, true)) return

@@ -3,6 +3,7 @@
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <queries>
@@ -31,6 +32,10 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-started on-device model inference and bounded authorized project analysis/repair with visible progress, pause and cancel. No indefinite execution; 30-minute application budget. Requires Play review before store distribution." />
         </service>
+        <service
+            android:name=".service.OllamaHostService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <receiver
             android:name=".terminal.TermuxResultReceiver"
             android:exported="false" />

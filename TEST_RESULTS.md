@@ -1,73 +1,74 @@
-# NYX 0.7.7 Test Results
+# NYX 0.7.9 Test Results
 
-## Final automated build
+## Clean build
 
 Executed on 2026-11-12 UTC from `/home/ubuntu/nyx`:
 
 ```bash
 ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" \
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
-./gradlew --no-daemon clean testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin
+./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
 ```
 
-The instrumentation APK was then assembled with:
+Result: `BUILD SUCCESSFUL in 1m 17s`.
 
-```bash
-./gradlew --no-daemon assembleDebugAndroidTest
-```
+Only two pre-existing Kotlin warnings remain (`Divider` deprecation in `MainActivity.kt` and Room migration parameter-name warnings). No compile errors.
 
-Result: **BUILD SUCCESSFUL**.
+## JVM tests
 
-- **609 JVM tests** executed: **0 failures, 0 errors, 0 skipped**.
-- New v0.7.7 coverage includes `OllamaDiscoveryTest` (guest-only selection, preferred guest, host fallback, incompatible binary, missing installation, target identity), `OllamaProcessTest` (guest-origin/architecture/compatibility parsing, portable `nohup` startup, detection markers), and `AutonomyPolicyEngineTest` (repeated routine workspace creation in Full, approval in Manual).
-- SDK policy check passed: compileSdk/targetSdk 37, minSdk 26.
-- Debug APK assembled: `app/build/outputs/apk/debug/app-debug.apk`.
-- Instrumentation-test APK assembled: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`.
+- Total: **632**
+- Failures: **0**
+- Errors: **0**
+- Skipped: **0**
+
+New focused coverage:
+
+| Class | Tests |
+| --- | ---: |
+| `OllamaGuestRuntimeTest` | 9 |
+| `OllamaDiscoveryTest` | 6 |
+| `OllamaLifecyclePolicyTest` | 30 |
+| `OllamaProcessTest` | 26 |
+
+`OllamaGuestRuntimeTest` covers `proot-distro ps` row parsing, malformed rows, new-session selection, capability markers, session start-token parsing, startup-stage classification, safe script construction, and token validation.
 
 ## APK identity
 
-| Property | Verified value |
-| :--- | :--- |
-| Package | `com.nyx.ai` |
-| Version | `versionName 0.7.7`, `versionCode 10` |
-| Compile / target SDK | 37 / 37 |
-| Minimum SDK | 26 |
-| Native ABI | `arm64-v8a` only |
-| Debug certificate SHA-256 | `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` |
-| Debug certificate DN | `C=US, O=Android, CN=Android Debug` |
+- Package: `com.nyx.ai`
+- versionCode: **12**
+- versionName: **0.7.9**
+- minSdk: 26
+- compileSdk / targetSdk: 37
+- Native ABI: `arm64-v8a`
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`
+- The signer digest is identical to the delivered v0.7.7 and v0.7.8 APKs, so this build installs as an update.
 
-The signing certificate matches the previously delivered v0.7.5 debug APK, so an in-place upgrade is possible when the same certificate is trusted. The APK is still debug-signed and is not a production artifact.
-
-## Artifact digests
+Artifact digests from this clean build:
 
 | Artifact | SHA-256 |
-| :--- | :--- |
-| `NYX-v0.7.7.apk` | `e8e6e7d1fbe3aa8d680322adaa2894540c33133916aea6a3f552721940668e5f` |
-| `NYX-v0.7.7-androidTest.apk` | `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3` |
+| --- | --- |
+| `NYX-v0.7.9.apk` | `48b0f1ef929f815dd5fb18380355fade65736c72039538bc131a07f2f881f3a6` |
+| `NYX-v0.7.9-androidTest.apk` | `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3` |
 
-The source archive and checksum manifest are produced by the packaging script after the documentation is finalized; their digests are recorded in the delivered `NYX-v0.7.7-SHA256SUMS.txt`.
+## Manifest and lifecycle checks
 
-## What is actually tested
+- Merged manifest contains `android.permission.FOREGROUND_SERVICE_DATA_SYNC`.
+- `com.nyx.ai.service.OllamaHostService` is declared `android:exported="false"` with `android:foregroundServiceType="dataSync"`.
+- The service is started only for a verified `DEBIAN_PROOT` guest; `TERMUX_HOST` keeps the direct lifecycle path.
+- `OllamaGuestRuntime` probes `login --detach`, `ps`, and `kill` before choosing detached mode; the fallback keeps one foreground PRoot login alive.
+- Stop verifies the guest PID, kills the recorded session, and re-inspects `/proc/<pid>` before reporting STOPPED.
 
-- JVM-only policy tests prove that `CREATE_WORKSPACE` is routine, that Full mode can create another project inside the authorized root without an elevated per-project grant, and that Manual mode still requires approval.
-- JVM-only discovery tests prove deterministic host/guest selection from synthetic detection results, including Debian-only installations and incompatible binaries.
-- JVM-only process tests prove the detection parser preserves target, architecture, and compatibility, and that the portable startup path uses `nohup` with duplicate protection.
-- Existing 609-test suite covers command policy, ownership verification, lifecycle state transitions, workspace provisioning, terminal result mapping, verification, memory, skills, gateways, and autonomy concurrency.
+## Not executed
 
-## What is not device-verified
+No physical Android device was attached. The following remain device checks, not automated claims:
 
-No physical Android device was attached to this build environment. The following are compiled and unit-tested but **not claimed as real-device success**:
+- actual `proot-distro ps` column output and detached-session lifetime;
+- Termux `RUN_COMMAND` behavior while the NYX activity is backgrounded;
+- Android 14+ `dataSync` foreground-service acceptance, persistent notification states, and View Activity/Stop Worker/Open Termux actions;
+- guest `ollama serve` startup, model enumeration, and Android-to-guest API reachability;
+- Chat's automatic loopback runtime startup and model refresh;
+- Stop removing both the guest Ollama process and the PRoot session;
+- the foreground fallback on a `proot-distro` release without `--detach`;
+- adopted-server protection against a user-started Ollama process.
 
-- Termux `RUN_COMMAND` IPC and the actual Debian PRoot guest login.
-- A real Debian-only `/usr/local/bin/ollama` process: start, `setsid`/`nohup` detachment, API readiness, model listing, Chat reconnect, stop, and restart.
-- Android Keystore encryption/decryption, notifications, foreground-service lifecycle, process-death recovery, and Room migration on device.
-- Real MCP/GitHub network calls, Arsenal tool execution, symbol-index prompt use, and Live Worker Console delivery.
-- Fold/unfold layout and thermal/memory behavior.
-
-## Known limitations
-
-- The v0.7.7 APK, instrumentation APK, source archive, and checksum manifest are published in the v0.7.7 GitHub release.
-- Guest detection probes at most four verified PRoot aliases to keep IPC bounded.
-- The managed Ollama lifecycle does not install Ollama automatically; installation remains a user/provisioning decision.
-- A model's prose is never accepted as evidence; verification still depends on real command/file outcomes.
-- The global error banner is now limited to Chat, Models, Autonomy, and Settings; errors raised elsewhere may be cleared when navigating away.
+The JVM tests prove the parsers, state policy, and command construction. They do not replace an on-device run.

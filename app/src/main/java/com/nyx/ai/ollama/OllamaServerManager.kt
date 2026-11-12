@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 
 /**
  * Owns the lifecycle of an Ollama server running on the Termux host.
@@ -76,6 +77,17 @@ class OllamaServerManager(
     @Volatile
     private var preferredEnvironment: TerminalEnvironment = target.environment
 
+    /** Cached, read-only capabilities of the installed proot-distro for the current guest target. */
+    @Volatile
+    private var sessionCapabilities: ProotSessionCapabilities? = null
+
+    /** The exact PRoot session and guest binary last launched by NYX. */
+    @Volatile
+    private var savedSession: SavedOllamaSession? = readSavedSession()
+
+    @Volatile
+    private var lastBinaryPath: String? = null
+
     /** Manager-owned scope for the optional startup reconciliation only. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -113,6 +125,7 @@ class OllamaServerManager(
         guestAliases = safe
         preferredGuestAlias = selectedAlias?.takeIf { it in safe }
         preferredEnvironment = environment
+        sessionCapabilities = null
         if (!target.isHost && target.guestAlias !in safe) {
             // The saved guest disappeared. Keep the selection for diagnostics, but force discovery
             // before any lifecycle command can use a stale target.
@@ -131,6 +144,7 @@ class OllamaServerManager(
             saveTarget(target)
             targetResolved = true
         }
+        savedSession = readSavedSession()
         val snapshot = readSnapshot()
         val owned = snapshot.ownership == OllamaOwnership.OWNED && readStartedByNyxFlag()
         applyDiscovery(plan, probeApi(), snapshot, owned)
@@ -209,6 +223,10 @@ class OllamaServerManager(
                 targetResolved = true
             }
         }
+        savedSession = readSavedSession()
+        if (!target.isHost && savedSession?.mode == OllamaLaunchMode.PROOT_DETACHED && !verifySavedSession()) {
+            clearSession()
+        }
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val owned = snapshot.ownership == OllamaOwnership.OWNED && readStartedByNyxFlag()
@@ -244,7 +262,7 @@ class OllamaServerManager(
             return state.value
         }
         if (owned && saved != null) {
-            val status = OllamaLifecyclePolicy.statusForOwnedButNotReady(snapshot.uptimeMillis)
+            val status = ownedNotReadyStatus(snapshot.uptimeMillis)
             update {
                 it.copy(
                     status = status,
@@ -270,7 +288,15 @@ class OllamaServerManager(
             saveTarget(target)
             targetResolved = true
         }
+        val verifiedDetachedSession = !target.isHost &&
+            savedSession?.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            verifySavedSession()
         val status = when {
+            verifiedDetachedSession -> if (ownedNotReadyStatus(snapshot.uptimeMillis) == OllamaServerStatus.ERROR) {
+                OllamaServerStatus.UNREACHABLE
+            } else {
+                OllamaServerStatus.STARTING
+            }
             selected == null -> OllamaLifecyclePolicy.nextState(
                 OllamaServerStatus.STOPPED,
                 OllamaLifecycleEvent.DETECTED_MISSING,
@@ -287,7 +313,11 @@ class OllamaServerManager(
                 pid = null,
                 models = emptyList(),
                 startedByNyx = false,
-                message = discovery.detail,
+                message = if (verifiedDetachedSession) {
+                    "A verified PRoot session is alive, but its guest Ollama API is not ready yet. NYX will not start a second server."
+                } else {
+                    discovery.detail
+                },
                 logTail = snapshot.logTail,
                 rssKb = null,
                 uptimeMillis = null,
@@ -311,9 +341,24 @@ class OllamaServerManager(
             saveTarget(target)
             targetResolved = true
         }
+        savedSession = readSavedSession()
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val apiHealthy = probeApi()
+        if (!target.isHost && !apiHealthy && savedSession?.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            verifySavedSession()
+        ) {
+            update {
+                it.copy(
+                    status = OllamaServerStatus.STARTING,
+                    pid = saved?.pid,
+                    startedByNyx = true,
+                    message = "A verified PRoot session is already alive; NYX will not start a second server. Use Stop to end it or Refresh to adopt it.",
+                    logTail = snapshot.logTail,
+                )
+            }
+            return state.value
+        }
         val detection = selected?.detection ?: OllamaDetection(
             installed = false,
             error = discovery.detail,
@@ -330,7 +375,7 @@ class OllamaServerManager(
             OllamaStartDecision.USE_RUNNING_SERVER -> adopt(apiHealthy = true, snapshot = snapshot)
 
             OllamaStartDecision.REFUSE_DUPLICATE -> {
-                val status = OllamaLifecyclePolicy.statusForOwnedButNotReady(snapshot.uptimeMillis)
+                val status = ownedNotReadyStatus(snapshot.uptimeMillis)
                 update {
                     it.copy(
                         status = status,
@@ -421,6 +466,7 @@ class OllamaServerManager(
                 version = detection.version,
             )
         }
+        if (!target.isHost) return launchGuest(detection, snapshot)
         var result = host(OllamaProcess.startScript(binary, useSetsid = true), START_TIMEOUT_SECONDS)
         var outcome = OllamaProcess.parseStartOutcome(result.stdout)
         if (!outcome.started && !outcome.duplicate) {
@@ -437,7 +483,7 @@ class OllamaServerManager(
             if (existingPid != null && existingStart != null) {
                 saveRecord(SavedOllamaProcess(existingPid, existingStart, System.currentTimeMillis()), startedByNyx = true)
                 update { it.copy(status = OllamaServerStatus.STARTING, pid = existingPid, startedByNyx = true, message = outcome.error) }
-                return awaitReady(existingPid)
+                return awaitReady(existingPid, detection.path)
             }
             return fail(outcome.error.ifBlank { "A verified Ollama process is already running." }, snapshot.logTail)
         }
@@ -459,27 +505,210 @@ class OllamaServerManager(
                 message = "Started Ollama with PID $pid; waiting for the API.",
             )
         }
-        return awaitReady(pid)
+        savedSession = SavedOllamaSession(
+            token = "host-${pid}",
+            mode = OllamaLaunchMode.HOST_DETACHED,
+            container = "",
+        )
+        saveSession(savedSession!!)
+        return awaitReady(pid, binary)
     }
 
-    private suspend fun awaitReady(pid: Int): OllamaServerState {
+    /**
+     * Starts a guest server in a session that outlives the Termux RUN_COMMAND call. Newer
+     * proot-distro versions daemonize the whole PRoot process with `--detach`; older versions get
+     * one long-lived foreground login whose child is the server. A `setsid` child inside a
+     * short-lived login is never used because PRoot's `--kill-on-exit` tears it down.
+     */
+    private suspend fun launchGuest(detection: OllamaDetection, snapshot: OllamaHostSnapshot): OllamaServerState {
+        val binary = detection.path
+            ?: return fail("The ollama binary path could not be resolved in ${target.label}.", snapshot.logTail)
+        val alias = target.guestAlias
+            ?: return fail("The selected PRoot guest has no valid distribution alias.", snapshot.logTail)
+        val prootPath = bridge.prootExecutablePath()
+            ?: return fail("proot-distro is not available. Run Detect after granting Termux access.", snapshot.logTail)
+        lastBinaryPath = binary
+        val capabilities = ensureSessionCapabilities(prootPath)
+        val before = if (capabilities.ps) readSessions(prootPath) else emptyList()
+        val token = "nyx-" + UUID.randomUUID().toString().replace("-", "").take(16)
+        val script = OllamaGuestRuntime.guestStartScript(binary, token)
+        var mode = OllamaLaunchMode.PROOT_FOREGROUND
+        var launched: TerminalCommandResult
+        if (capabilities.supportsDetachedSession) {
+            val detached = bridge.runProotDetached(alias, script, timeoutSeconds = SESSION_TIMEOUT_SECONDS)
+            if (detached.isSuccess) {
+                mode = OllamaLaunchMode.PROOT_DETACHED
+                launched = detached
+            } else {
+                val detail = failureDetail(detached)
+                val unsupported = detail.contains("unrecognized", ignoreCase = true) ||
+                    detail.contains("unknown option", ignoreCase = true) ||
+                    detail.contains("invalid option", ignoreCase = true)
+                if (!unsupported) {
+                    return fail("The PRoot session could not be started: $detail", readSnapshot().logTail)
+                }
+                // The capability probe was optimistic; the foreground fallback is still safe because
+                // no session was created and the start script refuses a live NYX PID record.
+                launched = bridge.dispatchPersistentProot(alias, script)
+            }
+        } else {
+            launched = bridge.dispatchPersistentProot(alias, script)
+        }
+        if (launched.kind != TerminalResultKind.SUCCEEDED) {
+            return fail("The PRoot session could not be dispatched: ${failureDetail(launched)}", readSnapshot().logTail)
+        }
+        var sessionPid: Int? = null
+        var sessionStart: Long? = null
+        if (mode == OllamaLaunchMode.PROOT_DETACHED && capabilities.ps) {
+            val after = readSessions(prootPath)
+            val session = OllamaGuestRuntime.newSession(before, after, alias)
+            if (session != null) {
+                val identity = hostIsolated(OllamaGuestRuntime.sessionStateScript(session.pid), STATE_TIMEOUT_SECONDS)
+                if (OllamaGuestRuntime.parseSessionAlive(identity.stdout)) {
+                    sessionPid = session.pid
+                    sessionStart = OllamaGuestRuntime.parseSessionStartTicks(identity.stdout)
+                }
+            }
+        }
+        savedSession = SavedOllamaSession(
+            token = token,
+            mode = mode,
+            sessionPid = sessionPid,
+            sessionStartTicks = sessionStart,
+            container = alias,
+        )
+        saveSession(savedSession!!)
+        update {
+            it.copy(
+                status = OllamaServerStatus.STARTING,
+                pid = null,
+                startedByNyx = true,
+                message = when (mode) {
+                    OllamaLaunchMode.PROOT_DETACHED -> "Started a detached PRoot session; waiting for the guest API."
+                    else -> "Started one foreground PRoot session; waiting for the guest API."
+                },
+            )
+        }
+        if (mode == OllamaLaunchMode.PROOT_DETACHED && sessionPid == null && capabilities.ps) {
+            val late = OllamaGuestRuntime.newSession(before, readSessions(prootPath), alias)
+            if (late != null) {
+                val identity = hostIsolated(OllamaGuestRuntime.sessionStateScript(late.pid), STATE_TIMEOUT_SECONDS)
+                if (OllamaGuestRuntime.parseSessionAlive(identity.stdout)) {
+                    sessionPid = late.pid
+                    sessionStart = OllamaGuestRuntime.parseSessionStartTicks(identity.stdout)
+                    savedSession = SavedOllamaSession(token, mode, sessionPid, sessionStart, alias)
+                    saveSession(savedSession!!)
+                }
+            }
+        }
+        val record = waitForGuestPid()
+        if (record == null) {
+            val cleaned = stopOwnedSessionIfPossible()
+            if (cleaned) clearSession()
+            return fail(
+                if (cleaned) {
+                    "The PRoot session was created, but the guest Ollama PID record did not appear. " +
+                        "The managed session was stopped; check the guest log."
+                } else {
+                    "The PRoot session was created, but the guest Ollama PID record did not appear and the session could not be stopped. " +
+                        "Use Stop to retry; the session remains visible."
+                },
+                readSnapshot().logTail,
+            )
+        }
+        saveRecord(record, startedByNyx = true)
+        update {
+            it.copy(
+                status = OllamaServerStatus.STARTING,
+                pid = record.pid,
+                startedByNyx = true,
+                message = "Started Ollama in ${target.label} with PID ${record.pid}; waiting for the API.",
+            )
+        }
+        return awaitReady(record.pid, binary)
+    }
+
+    private suspend fun waitForGuestPid(): SavedOllamaProcess? {
+        val deadline = System.currentTimeMillis() + GUEST_PID_TIMEOUT_MILLIS
+        var last: OllamaHostSnapshot? = null
+        while (System.currentTimeMillis() < deadline) {
+            currentCoroutineContext().ensureActive()
+            last = readSnapshot()
+            val record = last.record
+            if (record != null && last.ownership == OllamaOwnership.OWNED) return record
+            delay(750L)
+        }
+        return last?.record?.takeIf { last.ownership == OllamaOwnership.OWNED }
+    }
+
+    private suspend fun ensureSessionCapabilities(prootPath: String): ProotSessionCapabilities {
+        sessionCapabilities?.let { return it }
+        val result = hostIsolated(OllamaGuestRuntime.sessionCapabilityScript(prootPath), STATE_TIMEOUT_SECONDS)
+        val capabilities = OllamaGuestRuntime.parseSessionCapabilities(result.stdout)
+        sessionCapabilities = capabilities
+        return capabilities
+    }
+
+    private suspend fun readSessions(prootPath: String): List<ProotSession> {
+        val result = hostIsolated(OllamaGuestRuntime.sessionListScript(prootPath), STATE_TIMEOUT_SECONDS)
+        return OllamaGuestRuntime.parseSessionList(result.stdout)
+    }
+
+    private data class GuestProbe(val ready: Boolean?, val listen: String?)
+
+    private suspend fun probeGuestApi(binary: String?): GuestProbe? {
+        if (target.isHost || binary.isNullOrBlank()) return null
+        return try {
+            val result = execute(target, OllamaGuestRuntime.guestApiProbeScript(binary), GUEST_API_TIMEOUT_SECONDS)
+            GuestProbe(
+                ready = OllamaGuestRuntime.parseGuestApi(result.stdout),
+                listen = OllamaGuestRuntime.parseGuestListen(result.stdout),
+            )
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun awaitReady(pid: Int, binary: String? = null): OllamaServerState {
         val startedAt = System.currentTimeMillis()
         var attempts = 0
         var lastDetail = ""
+        var lastSnapshot = readSnapshot()
+        var lastGuestReady: Boolean? = null
+        var lastGuestListen = ""
+        var lastStage = OllamaStartupStage.API_WAITING
+        val timeout = if (target.isHost) OllamaReadiness.DEFAULT_TIMEOUT_MILLIS else OllamaReadiness.GUEST_TIMEOUT_MILLIS
         while (true) {
             currentCoroutineContext().ensureActive()
             attempts++
-            if (probeApi()) {
+            if (attempts == 1 || attempts % SNAPSHOT_EVERY_ATTEMPTS == 0) lastSnapshot = readSnapshot()
+            val androidReady = probeApi()
+            val processOwned = lastSnapshot.ownership == OllamaOwnership.OWNED
+            val owned = processOwned || androidReady
+            val guestReady = if (target.isHost) null else if (attempts == 1 || attempts % GUEST_PROBE_EVERY_ATTEMPTS == 0) {
+                probeGuestApi(binary).also { probe ->
+                    lastGuestReady = probe?.ready
+                    lastGuestListen = probe?.listen.orEmpty()
+                }?.ready
+            } else {
+                lastGuestReady
+            }
+            lastStage = OllamaGuestRuntime.startupStage(owned, guestReady, androidReady, lastSnapshot.logTail)
+            if (lastStage == OllamaStartupStage.READY) {
                 val models = fetchModels()
-                val snapshot = readSnapshot()
+                val snapshot = lastSnapshot
                 update {
                     it.copy(
                         status = OllamaLifecyclePolicy.nextState(it.status, OllamaLifecycleEvent.START_SUCCEEDED),
-                        pid = pid,
+                        pid = if (processOwned) pid else null,
                         models = models,
-                        startedByNyx = true,
-                        message = OllamaReadiness.successMessage(adopted = false, pid = pid).let { base ->
-                            if (models.isEmpty()) "$base No models are installed yet." else base
+                        startedByNyx = processOwned,
+                        message = OllamaReadiness.successMessage(adopted = !processOwned, pid = pid.takeIf { processOwned }).let { base ->
+                            val session = savedSession?.let { " Session: ${it.mode.name.lowercase().replace('_', ' ')}${it.sessionPid?.let { p -> " PID $p" } ?: ""}." }.orEmpty()
+                            val noModels = if (models.isEmpty()) " No models are installed yet." else ""
+                            base + session + noModels
                         },
                         logTail = snapshot.logTail,
                         rssKb = snapshot.rssKb,
@@ -488,31 +717,50 @@ class OllamaServerManager(
                 }
                 return state.value
             }
+            if (lastStage == OllamaStartupStage.PROCESS_GONE) break
+            if (lastStage == OllamaStartupStage.PORT_CONFLICT && attempts >= 2) break
             val elapsed = System.currentTimeMillis() - startedAt
-            if (OllamaReadiness.isTimedOut(elapsed)) break
+            if (OllamaReadiness.isTimedOut(elapsed, timeout)) break
+            update {
+                it.copy(
+                    status = OllamaServerStatus.STARTING,
+                    pid = if (owned) pid else null,
+                    startedByNyx = owned,
+                    message = OllamaGuestRuntime.stageMessage(lastStage, pid),
+                    logTail = lastSnapshot.logTail.ifBlank { it.logTail },
+                    rssKb = lastSnapshot.rssKb ?: it.rssKb,
+                    uptimeMillis = lastSnapshot.uptimeMillis ?: it.uptimeMillis,
+                )
+            }
             delay(OllamaReadiness.pollIntervalMillis(attempts))
         }
-        // Startup failed. Only the verified PID is stopped, so a partially initialized server does
-        // not linger; the log tail is carried into the error state.
-        lastDetail = failureDetailFromLog()
+        lastDetail = failureDetailFromLog().let { detail ->
+            if (lastGuestListen.isBlank()) detail else "$detail Guest listener: $lastGuestListen."
+        }
         val snapshot = readSnapshot()
-        val stoppedNote = stopVerifiedRecord()
+        val alive = snapshot.ownership == OllamaOwnership.OWNED
+        if (!alive) {
+            clearSaved()
+            stopOwnedSessionIfPossible()
+            clearSession()
+        }
         val message = OllamaReadiness.failureMessage(
-            timeoutMillis = OllamaReadiness.DEFAULT_TIMEOUT_MILLIS,
+            timeoutMillis = timeout,
             attempts = attempts,
             detail = if (lastDetail.isNotBlank()) lastDetail else "The API did not answer on $endpoint.",
             logTail = snapshot.logTail,
-        ) + stoppedNote
+            stage = lastStage,
+        ) + if (alive) " The live process was left running so its log and session remain inspectable; use Stop to end it." else ""
         update {
             it.copy(
-                status = OllamaLifecyclePolicy.nextState(it.status, OllamaLifecycleEvent.START_FAILED),
-                pid = null,
+                status = if (alive) OllamaServerStatus.UNREACHABLE else OllamaServerStatus.ERROR,
+                pid = if (alive) pid else null,
                 models = emptyList(),
-                startedByNyx = false,
+                startedByNyx = alive,
                 message = message,
                 logTail = snapshot.logTail.ifBlank { it.logTail },
-                rssKb = null,
-                uptimeMillis = null,
+                rssKb = snapshot.rssKb,
+                uptimeMillis = snapshot.uptimeMillis,
             )
         }
         return state.value
@@ -521,6 +769,7 @@ class OllamaServerManager(
     // ------------------------------------------------------------------ stop
 
     private suspend fun doStop(): OllamaServerState {
+        savedSession = readSavedSession()
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val ownedRecord = snapshot.ownership == OllamaOwnership.OWNED && readStartedByNyxFlag()
@@ -544,6 +793,12 @@ class OllamaServerManager(
                 val outcome = OllamaProcess.parseStopOutcome(result.stdout)
                 when {
                     outcome.stopped -> {
+                        if (!stopOwnedSessionIfPossible()) {
+                            return fail(
+                                "Ollama stopped, but the verified PRoot session is still alive. Stop it again; NYX will not report a clean stop until the session is gone.",
+                                readSnapshot().logTail,
+                            )
+                        }
                         clearSaved()
                         val apiStillUp = probeApi()
                         update {
@@ -595,6 +850,12 @@ class OllamaServerManager(
             }
 
             OllamaStopDecision.NOT_RUNNING -> {
+                if (!stopOwnedSessionIfPossible()) {
+                    return fail(
+                        "A verified PRoot session is still alive and could not be stopped. Retry Stop; NYX will not report a clean stop until the session is gone.",
+                        snapshot.logTail,
+                    )
+                }
                 clearSaved()
                 update {
                     it.copy(
@@ -641,6 +902,7 @@ class OllamaServerManager(
         val result = host(OllamaProcess.stopScript(record), STOP_TIMEOUT_SECONDS)
         val outcome = OllamaProcess.parseStopOutcome(result.stdout)
         if (outcome.stopped) {
+            stopOwnedSessionIfPossible()
             clearSaved()
             return " The failed startup process was stopped."
         }
@@ -650,6 +912,7 @@ class OllamaServerManager(
     // ------------------------------------------------------------------ restart
 
     private suspend fun doRestart(): OllamaServerState {
+        savedSession = readSavedSession()
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val owned = snapshot.ownership == OllamaOwnership.OWNED && readStartedByNyxFlag()
@@ -682,6 +945,20 @@ class OllamaServerManager(
 
     private suspend fun host(script: String, timeoutSeconds: Long): TerminalCommandResult =
         execute(target, script, timeoutSeconds)
+
+    /** Host-only commands must never be routed through [target], which may be a PRoot guest. */
+    private suspend fun hostIsolated(script: String, timeoutSeconds: Long): TerminalCommandResult =
+        try {
+            bridge.runHostIsolated(script, timeoutSeconds)
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (e: Exception) {
+            TerminalCommandResult(
+                requestId = null,
+                kind = TerminalResultKind.DISPATCH_ERROR,
+                message = e.message?.take(300) ?: "The isolated host command could not be dispatched.",
+            )
+        }
 
     private suspend fun execute(
         at: OllamaTarget,
@@ -766,12 +1043,16 @@ class OllamaServerManager(
             saveTarget(target)
             targetResolved = true
         }
+        val verifiedDetachedSession = !target.isHost &&
+            savedSession?.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            verifySavedSession()
         val status = when {
             apiHealthy -> OllamaServerStatus.RUNNING
+            verifiedDetachedSession -> OllamaServerStatus.STARTING
             selected == null -> OllamaServerStatus.NOT_INSTALLED
             !selected.detection.compatible -> OllamaServerStatus.INCOMPATIBLE
             snapshot?.ownership == OllamaOwnership.OWNED ->
-                if (OllamaLifecyclePolicy.statusForOwnedButNotReady(snapshot.uptimeMillis) == OllamaServerStatus.ERROR) {
+                if (ownedNotReadyStatus(snapshot.uptimeMillis) == OllamaServerStatus.ERROR) {
                     OllamaServerStatus.UNREACHABLE
                 } else {
                     OllamaServerStatus.STARTING
@@ -784,6 +1065,7 @@ class OllamaServerManager(
                 "An Ollama-compatible server is answering on $endpoint, but no local binary was found. It will be adopted and never stopped."
             apiHealthy -> "Ollama is running from ${selected?.target?.label ?: target.label}. " +
                 if (models.isEmpty()) "No models are installed yet." else "Reconnected to ${models.size} model(s)."
+            verifiedDetachedSession -> "A verified PRoot session is alive, but the guest Ollama API is not answering yet. Use Stop to end the session or Refresh after the model has loaded."
             selected == null -> plan.detail
             !selected.detection.compatible -> plan.detail
             status == OllamaServerStatus.UNREACHABLE ->
@@ -864,12 +1146,88 @@ class OllamaServerManager(
         }
     }
 
+    private fun readSavedSession(): SavedOllamaSession? {
+        val mode = prefs.getString(targetKey(KEY_SESSION_MODE), null)?.let {
+            runCatching { OllamaLaunchMode.valueOf(it) }.getOrNull()
+        } ?: return null
+        val token = prefs.getString(targetKey(KEY_SESSION_TOKEN), null)
+            ?.takeIf(OllamaGuestRuntime::isValidToken)
+            ?: return null
+        val pid = prefs.getInt(targetKey(KEY_SESSION_PID), 0)
+            .takeIf { it in 2..OllamaGuestRuntime.MAX_SESSION_PID }
+        val start = prefs.getLong(targetKey(KEY_SESSION_START), -1L).takeIf { it >= 0L }
+        val container = prefs.getString(targetKey(KEY_SESSION_CONTAINER), "").orEmpty()
+        return SavedOllamaSession(token, mode, pid, start, container)
+    }
+
+    private fun saveSession(session: SavedOllamaSession) {
+        prefs.edit()
+            .putString(targetKey(KEY_SESSION_MODE), session.mode.name)
+            .putString(targetKey(KEY_SESSION_TOKEN), session.token)
+            .putInt(targetKey(KEY_SESSION_PID), session.sessionPid ?: 0)
+            .putLong(targetKey(KEY_SESSION_START), session.sessionStartTicks ?: -1L)
+            .putString(targetKey(KEY_SESSION_CONTAINER), session.container)
+            .apply()
+    }
+
+    private fun clearSession() {
+        savedSession = null
+        prefs.edit()
+            .remove(targetKey(KEY_SESSION_MODE))
+            .remove(targetKey(KEY_SESSION_TOKEN))
+            .remove(targetKey(KEY_SESSION_PID))
+            .remove(targetKey(KEY_SESSION_START))
+            .remove(targetKey(KEY_SESSION_CONTAINER))
+            .apply()
+    }
+
+    /** Kills only a detached session whose PID and kernel start token still match. */
+    private suspend fun stopOwnedSessionIfPossible(): Boolean {
+        val session = savedSession ?: return true
+        if (session.mode != OllamaLaunchMode.PROOT_DETACHED) {
+            clearSession()
+            return true
+        }
+        val pid = session.sessionPid ?: run { clearSession(); return true }
+        val expectedStart = session.sessionStartTicks ?: run { clearSession(); return true }
+        val prootPath = bridge.prootExecutablePath() ?: return false
+        val identity = hostIsolated(OllamaGuestRuntime.sessionStateScript(pid), STATE_TIMEOUT_SECONDS)
+        if (!OllamaGuestRuntime.parseSessionAlive(identity.stdout) ||
+            OllamaGuestRuntime.parseSessionStartTicks(identity.stdout) != expectedStart
+        ) {
+            clearSession()
+            return true
+        }
+        hostIsolated(OllamaGuestRuntime.sessionKillScript(prootPath, pid), STOP_TIMEOUT_SECONDS)
+        repeat(4) {
+            delay(500L)
+            val after = hostIsolated(OllamaGuestRuntime.sessionStateScript(pid), STATE_TIMEOUT_SECONDS)
+            if (!OllamaGuestRuntime.parseSessionAlive(after.stdout)) {
+                clearSession()
+                return true
+            }
+        }
+        return false
+    }
+
+    private suspend fun verifySavedSession(): Boolean {
+        val session = savedSession ?: return false
+        if (session.mode != OllamaLaunchMode.PROOT_DETACHED) return true
+        val pid = session.sessionPid ?: return false
+        val expectedStart = session.sessionStartTicks ?: return false
+        val prootPath = bridge.prootExecutablePath() ?: return false
+        val identity = hostIsolated(OllamaGuestRuntime.sessionStateScript(pid), STATE_TIMEOUT_SECONDS)
+        return OllamaGuestRuntime.parseSessionAlive(identity.stdout) &&
+            OllamaGuestRuntime.parseSessionStartTicks(identity.stdout) == expectedStart
+    }
+
     private fun saveTarget(value: OllamaTarget) {
         if (!value.valid) return
         prefs.edit()
             .putString(KEY_TARGET_ENV, if (value.isHost) "host" else "guest")
             .putString(KEY_TARGET_GUEST, value.guestAlias)
             .apply()
+        savedSession = readSavedSession()
     }
 
     private fun targetKey(base: String): String =
@@ -887,6 +1245,12 @@ class OllamaServerManager(
 
     private fun currentOrErrorStatus(): OllamaServerStatus =
         if (_state.value.status == OllamaServerStatus.ERROR) OllamaServerStatus.ERROR else OllamaServerStatus.STOPPED
+
+    private fun ownedNotReadyStatus(uptimeMillis: Long?): OllamaServerStatus =
+        OllamaLifecyclePolicy.statusForOwnedButNotReady(
+            uptimeMillis,
+            if (target.isHost) OllamaReadiness.STARTUP_GRACE_MILLIS else OllamaReadiness.GUEST_STARTUP_GRACE_MILLIS,
+        )
 
     private fun saveRecord(record: SavedOllamaProcess, startedByNyx: Boolean) {
         saveTarget(target)
@@ -944,8 +1308,20 @@ class OllamaServerManager(
 
     private fun update(transform: (OllamaServerState) -> OllamaServerState) {
         _state.update { current ->
-            transform(current).copy(endpoint = endpoint, lastCheckedAt = System.currentTimeMillis())
+            transform(current).withSessionIdentity().copy(endpoint = endpoint, lastCheckedAt = System.currentTimeMillis())
         }
+    }
+
+    private fun OllamaServerState.withSessionIdentity(): OllamaServerState {
+        val session = savedSession?.takeIf {
+            if (target.isHost) it.mode == OllamaLaunchMode.HOST_DETACHED
+            else it.container == target.guestAlias.orEmpty()
+        }
+        return copy(
+            sessionPid = session?.sessionPid,
+            launchMode = session?.mode,
+            sessionToken = session?.token.orEmpty(),
+        )
     }
 
     companion object {
@@ -956,11 +1332,21 @@ class OllamaServerManager(
         const val KEY_ENDPOINT = "endpoint"
         const val KEY_TARGET_ENV = "target_environment"
         const val KEY_TARGET_GUEST = "target_guest"
+        const val KEY_SESSION_MODE = "session_mode"
+        const val KEY_SESSION_TOKEN = "session_token"
+        const val KEY_SESSION_PID = "session_pid"
+        const val KEY_SESSION_START = "session_start_ticks"
+        const val KEY_SESSION_CONTAINER = "session_container"
 
         private const val DETECT_TIMEOUT_SECONDS = 20L
         private const val STATE_TIMEOUT_SECONDS = 20L
         private const val START_TIMEOUT_SECONDS = 30L
         private const val STOP_TIMEOUT_SECONDS = 30L
+        private const val SESSION_TIMEOUT_SECONDS = 30L
+        private const val GUEST_API_TIMEOUT_SECONDS = 15L
+        private const val GUEST_PID_TIMEOUT_MILLIS = 60_000L
+        private const val SNAPSHOT_EVERY_ATTEMPTS = 3
+        private const val GUEST_PROBE_EVERY_ATTEMPTS = 2
         private const val MAX_GUESTS = 4
     }
 }

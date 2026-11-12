@@ -20,17 +20,68 @@ class TerminalBridge(
     private val prootProbe: ProotDistroProbe? = null,
 ) {
     private val app = context.applicationContext
-    @Volatile private var discoveredProotPath: String? = null
-    private val adapter = TermuxIpcAdapter(app, prootProbe ?: ProotDistroProbe { discoveredProotPath })
+    private val adapter = TermuxIpcAdapter(
+        app,
+        prootProbe ?: ProotDistroProbe { ProotExecutableStore.resolve(app) },
+    )
     private val active = ConcurrentHashMap<String, TerminalCommandHandle>()
 
     internal fun configureDiscoveredProot(path: String?) {
-        discoveredProotPath = path?.takeIf { it.startsWith("/") && it.length <= 4096 && '\u0000' !in it }
+        // Persist the verified host path so a manager, service, or bridge created later in this
+        // process (or after an app restart) can dispatch Debian commands without re-discovery.
+        ProotExecutableStore.remember(app, path)
     }
 
     fun readiness(): TermuxReadiness = adapter.readiness()
 
     fun assess(command: String): CommandAssessment = CommandPolicy.assess(command)
+
+    /** The last host-verified proot-distro path, shared by every bridge instance in this process. */
+    fun prootExecutablePath(): String? = ProotExecutableStore.resolve(app)
+
+    /**
+     * Starts a PRoot session with `proot-distro login --detach`, which daemonizes the whole proot
+     * process rather than a child inside it. The command returns after the session is created.
+     */
+    suspend fun runProotDetached(
+        distroAlias: String,
+        guestScript: String,
+        timeoutSeconds: Long = 30,
+    ): TerminalCommandResult {
+        val command = prootHostCommand(distroAlias, guestScript, detach = true)
+            ?: return TerminalCommandResult(null, TerminalResultKind.PROOT_DISTRO_UNAVAILABLE, message = "A verified proot-distro path is required.")
+        return runHostIsolated(command, timeoutSeconds)
+    }
+
+    /**
+     * Starts one long-lived PRoot login without waiting for Termux's result callback. The login
+     * process remains alive because the guest script ends in `exec ollama serve`. This is the
+     * fallback for older proot-distro versions without `--detach`.
+     */
+    fun dispatchPersistentProot(
+        distroAlias: String,
+        guestScript: String,
+    ): TerminalCommandResult {
+        val command = prootHostCommand(distroAlias, guestScript, detach = false)
+            ?: return TerminalCommandResult(null, TerminalResultKind.PROOT_DISTRO_UNAVAILABLE, message = "A verified proot-distro path is required.")
+        val assessment = CommandPolicy.assess(command)
+        if (assessment.blocked) {
+            return TerminalCommandResult(
+                null,
+                TerminalResultKind.POLICY_BLOCKED,
+                message = assessment.reasons.joinToString("; ").ifBlank { "The PRoot session command is blocked by policy." },
+            )
+        }
+        return adapter.dispatchPersistent(HostShell.isolatedRequest(command, timeoutSeconds = 30))
+    }
+
+    private fun prootHostCommand(distroAlias: String, guestScript: String, detach: Boolean): String? {
+        if (!HostShell.isSafeAlias(distroAlias)) return null
+        if (guestScript.isBlank() || '\u0000' in guestScript || guestScript.length > HostShell.MAX_SCRIPT_CHARS) return null
+        val prootPath = ProotExecutableStore.resolve(app) ?: return null
+        val detachArgument = if (detach) " --detach" else ""
+        return "${ShellCommandBuilder.quote(prootPath)} login$detachArgument $distroAlias -- /bin/bash -lc ${ShellCommandBuilder.quote(guestScript)}"
+    }
 
     /**
      * Runs a fixed, read-only probe on the Termux host, bypassing startup profile scripts that can

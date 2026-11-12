@@ -35,6 +35,23 @@ class TerminalRepository(
         EnvironmentDiscovery(bridge).discover(prootPathHint)
 
     /**
+     * Reads the guest's Debian identity, architecture, APT source count, and real `apt-cache policy`
+     * candidates. Read-only: it never runs `apt-get update` or installs anything.
+     */
+    suspend fun resolveGuestJdk(guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS): JdkResolution {
+        val result = bridge.runShell(
+            GuestJdkResolver.probeScript(),
+            environment = TerminalEnvironment.DEBIAN_PROOT,
+            workingDirectory = null,
+            timeoutSeconds = 90,
+            useTimeoutBinary = false,
+            approved = true,
+            guestAlias = guestAlias,
+        )
+        return GuestJdkResolver.parse(result.stdout, result.stderr, result.exitCode ?: -1)
+    }
+
+    /**
      * Bounded, read-only capability probe for the selected execution environment. Results are
      * timestamped so callers can treat stale data as unverified rather than as current proof.
      */

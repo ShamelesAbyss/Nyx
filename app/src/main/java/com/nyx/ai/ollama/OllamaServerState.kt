@@ -50,6 +50,10 @@ data class OllamaServerState(
     val installations: List<OllamaInstallation> = emptyList(),
     val architecture: String = "",
     val version: String = "",
+    /** The PRoot session PID when proot-distro exposes one; never the Ollama PID. */
+    val sessionPid: Int? = null,
+    val launchMode: OllamaLaunchMode? = null,
+    val sessionToken: String = "",
 ) {
     val isRunning: Boolean get() = status == OllamaServerStatus.RUNNING
 
@@ -63,5 +67,17 @@ data class OllamaServerState(
         OllamaServerStatus.UNREACHABLE,
     )
 
+    /** A detached session can be stopped even when the guest PID record is missing. */
+    val canStopSession: Boolean
+        get() = launchMode == OllamaLaunchMode.PROOT_DETACHED && sessionPid != null
+
     val targetLabel: String get() = target.label
+
+    val sessionLabel: String
+        get() = when (launchMode) {
+            OllamaLaunchMode.PROOT_DETACHED -> "PRoot session ${sessionPid ?: "detached"}"
+            OllamaLaunchMode.PROOT_FOREGROUND -> "PRoot foreground session"
+            OllamaLaunchMode.HOST_DETACHED -> "Termux host"
+            null -> if (target.isHost) "Termux host" else "PRoot guest"
+        }
 }

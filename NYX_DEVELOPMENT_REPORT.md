@@ -1,5 +1,31 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.7.9 — Persistent Guest Runtime (published)
+
+NYX 0.7.9 is versionCode 12 / versionName 0.7.9. It is a focused fix for the failure mode where a Debian-hosted Ollama server started successfully but did not stay alive, or stayed alive without a reliable owner. It is published as GitHub release v0.7.9; no physical-device claim is made.
+
+| Directive area | Status | What changed |
+| :--- | :--- | :--- |
+| Android process lifetime | Implemented, device-untested | Added non-exported `OllamaHostService`, declared `dataSync` with `FOREGROUND_SERVICE_DATA_SYNC`. Guest start/stop/restart run inside this service; the notification exposes an explicit Stop action. Host-mode lifecycle stays direct. |
+| PRoot session ownership | Implemented, device-untested | `OllamaGuestRuntime` probes `login --detach`, `ps`, and `kill` together. Supported installations get one detached session with a persisted session PID and kernel start-time token; unsupported installations keep one foreground PRoot login alive. |
+| Server survival | Implemented | The server always runs in the foreground of the session (`exec ollama serve`), not as a detached child. This avoids PRoot `--kill-on-exit` removing the server when the login shell exits. Duplicate starts are refused while a verified session is alive. |
+| Stop and cleanup | Implemented, device-untested | Stop terminates the verified guest PID, calls `proot-distro kill` for the verified session, then re-inspects `/proc/<pid>`. A surviving session produces a retryable error, not a false STOPPED. Orphaned sessions remain visible with Stop available. |
+| Refresh and adoption | Implemented | Refresh re-reads the persisted session, verifies its start token, adopts a live process, and clears only an unverifiable record. A live API without a verified process is not claimed as NYX-owned. |
+| Startup diagnostics | Implemented | `OllamaGuestRuntime.startupStage` distinguishes PROCESS_GONE, GUEST_API_WAITING, ANDROID_REACHABILITY_WAITING, API_WAITING, PORT_CONFLICT, and READY. The existing port-conflict path leaves the process running. |
+| Chat/objective reconnect | Implemented | The shared `startManagedOllamaForInference` path routes guest startup through the service, polls discovery, and refreshes models only after readiness. Objective creation and resume use it. |
+| Tests | Implemented | `OllamaGuestRuntimeTest` adds 9 focused JVM tests for session parsing, ownership matching, readiness stages, capability parsing, and safe scripts. Full suite: 632 tests, 0 failures/errors/skips. |
+
+### Honest limits and remaining device checks
+
+- No physical device was attached. Actual `proot-distro ps` column output, `login --detach` lifetime, Android 14+ `dataSync` behavior, Termux `RUN_COMMAND` callback lifetime, and guest API reachability remain device checks.
+- The foreground fallback cannot survive Android killing the NYX process; the guest PID record may remain until a verified stop or refresh.
+- A user-started server that NYX did not launch is never killed; it remains adopted read-only.
+- Debug signing is retained; this is not a Play Store artifact.
+
+### Verification
+
+JVM tests and APK/instrumentation compilation are recorded in `TEST_RESULTS.md`. No device-executed Ollama or PRoot result is claimed.
+
 ## v0.7.7 — Project Liberation (published)
 
 NYX 0.7.7 is versionCode 10 / versionName 0.7.7, debug-signed with the v0.7.5 certificate, and published for physical-device validation. The Debian/Ollama and repeated-workspace acceptance tests still need to be run on the owner's device.

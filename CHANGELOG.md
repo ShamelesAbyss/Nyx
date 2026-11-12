@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.7.9 — Persistent Guest Runtime (published)
+
+Package metadata: versionCode 12 / versionName 0.7.9, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the existing certificate. This is a focused runtime fix, not a feature expansion.
+
+### Durable PRoot session for guest Ollama
+
+`OllamaHostService` is a non-exported `dataSync` foreground service that owns guest start, stop, and restart while the NYX activity is backgrounded. It declares `FOREGROUND_SERVICE_DATA_SYNC`, keeps a user-visible notification while the managed server is active, reports Starting/Ready · Running/Recovering/Stopped/Error, and exposes View Activity, Stop Worker, and (when installed) Open Termux actions. It polls the verified manager every 20 seconds and stops supervising when the server is gone or adopted. Host-mode lifecycle remains direct and unchanged.
+
+`OllamaGuestRuntime` probes the installed `proot-distro` for `login --detach`, `ps`, and `kill` together. When all three are present, NYX starts one detached `proot-distro login --detach` session and records its session PID plus kernel start-time token. On older releases it keeps one foreground PRoot login alive instead of pretending to detach. The server itself always runs in the foreground of that session with `exec ollama serve`, so PRoot's `--kill-on-exit` cannot silently tear it down.
+
+### Verified ownership and cleanup
+
+Stop sends the existing verified single-PID TERM to the guest Ollama process, then calls `proot-distro kill` for the recorded session and re-inspects `/proc/<pid>` before reporting a clean stop. A session that survives is left visible with a retryable error instead of a false STOPPED state. Refresh re-reads the session record, verifies its start token, adopts a live process, and never leaves a stale RUNNING card. An orphaned detached session exposes Stop even when the guest PID record is missing.
+
+### Startup hardening
+
+Startup distinguishes a dead process, a live guest API that Android cannot reach, a live process that has not opened its API, a port conflict, and READY. Duplicate starts are refused while a verified detached session is alive; the start script also refuses a second live NYX-owned PID. The existing port-conflict path still leaves the process running for inspection. Chat now starts a stopped loopback runtime and refreshes its model inventory before generating; objective creation/resume uses the same service-owned guest path and rediscovers the selected target afterward.
+
+### Honest limits
+
+Physical-device validation of `proot-distro ps` output, Android 14+ `dataSync` behavior, Termux `RUN_COMMAND` lifetime, and guest API reachability is still required. The foreground fallback cannot survive Android killing the NYX process; in that case the guest PID record may remain until the next verified stop or refresh. A user-started server that NYX did not launch is still never killed.
+
+## 0.7.8 — Device Hotfix (unpublished)
+
+Package metadata: versionCode 11 / versionName 0.7.8, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the existing certificate. No feature expansion.
+
+### Shared verified PRoot executable
+
+`ProotExecutableStore` now carries the host-verified `proot-distro` path across all `TerminalBridge` instances and app restarts. `NyxViewModel` shares one bridge between `TerminalRepository` and `OllamaServerManager`; discovery stores the path and a manager created earlier or later resolves it at command time. This fixes the Debian-only Ollama failure where the manager's bridge returned `proot-distro path probe did not find an available executable`.
+
+### Real Debian JDK candidate resolution
+
+`GuestJdkResolver` reads the guest's `/etc/os-release`, architecture, APT source count, and `apt-cache policy` candidates. Debian Trixie prefers `openjdk-21-jdk-headless` or `default-jdk-headless`; Bookworm prefers `openjdk-17-jdk-headless`. `DependencyPlanner` no longer hardcodes a guest JDK: unresolved candidates produce a diagnostic blocker instead of a blind install. Gradle is still checked separately, and installation success still requires `java`/`javac` to execute as verified guest-native tools.
+
 ## 0.7.7 — Project Liberation (published)
 
 Package metadata: versionCode 10 / versionName 0.7.7, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the same certificate as v0.7.5; published as v0.7.7 with all four assets.

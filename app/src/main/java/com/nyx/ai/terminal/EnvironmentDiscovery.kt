@@ -119,8 +119,8 @@ class EnvironmentDiscovery(private val bridge: TerminalBridge) {
 
         val probe = bridge.runHostIsolated(HOST_PROBE, timeoutSeconds = 30)
         val parsed = EnvironmentProbeParser.parseHost(probe.stdout)
-        val hinted = prootPathHint?.takeIf { it.startsWith('/') && '\u0000' !in it && it.length <= 4_096 }
-        val prootPath = parsed.tools["proot-distro"] ?: hinted
+        val hinted = ProotPathResolver.sanitize(prootPathHint)
+        val prootPath = ProotPathResolver.choose(parsed.tools["proot-distro"], hinted)
         bridge.configureDiscoveredProot(prootPath)
 
         var listError: String? = null
