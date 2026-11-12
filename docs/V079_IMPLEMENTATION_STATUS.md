@@ -1,4 +1,4 @@
-# NYX v0.7.9 — Persistent Guest Runtime
+# NYX v0.7.9 — Project Persistence
 
 Status: implemented in source, JVM-tested, debug-built, and **published as GitHub v0.7.9**; **not device-verified**.
 

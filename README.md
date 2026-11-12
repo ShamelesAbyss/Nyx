@@ -8,7 +8,7 @@
 
 **A free and open-source, local-first Android AI workstation** — on-device language models, autonomous objectives, real execution tools, and persistent agent workflows in one application.
 
-> **NYX v0.7.9 “Persistent Guest Runtime” is the latest published release.** This focused update makes Debian-hosted Ollama survive the launch command, gives the runtime a foreground owner, and verifies cleanup instead of assuming it. See the release note below.
+> **NYX v0.7.9 “Project Persistence” is the latest published release.** This focused update makes Debian-hosted Ollama survive the launch command, gives the runtime a foreground owner, and verifies cleanup instead of assuming it. See the release note below.
 
 [![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.9)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#requirements)
@@ -24,9 +24,9 @@
 ---
 
 > [!NOTE]
-> **NYX v0.7.9 “Persistent Guest Runtime” is the latest published release.** It fixes the Debian Ollama lifetime and ownership failure: guest startup now uses a durable PRoot session or an explicit foreground fallback, Android holds a foreground-service owner, readiness separates guest-local API from Android reachability, and Stop verifies the process and session before claiming success. It is versionCode 12 / versionName 0.7.9, debug-signed, and passes 632 JVM tests. Physical-device validation of the Debian/Ollama path remains pending.
+> **NYX v0.7.9 “Project Persistence” is the latest published release.** It fixes the Debian Ollama lifetime and ownership failure: guest startup now uses a durable PRoot session or an explicit foreground fallback, Android holds a foreground-service owner, readiness separates guest-local API from Android reachability, and Stop verifies the process and session before claiming success. It is versionCode 12 / versionName 0.7.9, debug-signed, and passes 632 JVM tests. Physical-device validation of the Debian/Ollama path remains pending.
 
-## ⬇️ Download NYX v0.7.9 — Persistent Guest Runtime
+## ⬇️ Download NYX v0.7.9 — Project Persistence
 
 <div align="center">
 
@@ -47,7 +47,7 @@
 > Existing **v0.7.5** and **v0.7.7** installations can update **in place** when the signing certificate matches — the v0.7.9 APK uses the same debug certificate as v0.7.5 and v0.7.7. Do not uninstall a data-bearing installation just to test an upgrade; back up anything important first.
 
 > [!NOTE]
-> **v0.7.9 “Persistent Guest Runtime” makes the Debian Ollama path durable:** guest startup uses a verified PRoot session or a foreground fallback, a `dataSync` foreground service owns the lifecycle, readiness distinguishes guest-local API from Android reachability, and Stop verifies both the guest process and session. Existing Debian-aware discovery, repeatable Full-Autonomy workspaces, Arsenal skills, MCP/GitHub gateways, project memory, symbol indexing, the Live Worker Console, and autonomy modes are preserved. Physical-device execution of the Debian/Ollama path is still pending.
+> **v0.7.9 “Project Persistence” makes the Debian Ollama path durable:** guest startup uses a verified PRoot session or a foreground fallback, a `dataSync` foreground service owns the lifecycle, readiness distinguishes guest-local API from Android reachability, and Stop verifies both the guest process and session. Existing Debian-aware discovery, repeatable Full-Autonomy workspaces, Arsenal skills, MCP/GitHub gateways, project memory, symbol indexing, the Live Worker Console, and autonomy modes are preserved. Physical-device execution of the Debian/Ollama path is still pending.
 
 ---
 
@@ -372,6 +372,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.7.9 — Persistent Guest Runtime · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.7.9 — Project Persistence · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

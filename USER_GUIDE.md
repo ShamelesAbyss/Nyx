@@ -1,8 +1,8 @@
 # NYX User Guide — 0.7.9
 
-> 0.7.9 “Persistent Guest Runtime” is the latest published release. Physical-device execution of Debian Ollama, Termux IPC, Keystore, and gateway flows is still pending.
+> 0.7.9 “Project Persistence” is the latest published release. Physical-device execution of Debian Ollama, Termux IPC, Keystore, and gateway flows is still pending.
 
-## What changed in 0.7.9 — Persistent Guest Runtime
+## What changed in 0.7.9 — Project Persistence
 
 **Guest Ollama now has a durable owner.** When the selected environment is Debian/PRoot, **Start**, **Stop**, and **Restart** run through a non-exported `dataSync` foreground service. Android shows a low-priority “NYX · Managed Ollama” notification while the managed server is active. It reports Starting, Ready, Recovering, Stopped, or Error and includes **View Activity**, **Stop Worker**, and, when Termux is installed, **Open Termux** actions. This keeps the NYX process from being frozen while it waits for a PRoot session to create the guest server. Host-mode Ollama still uses the direct lifecycle path.
 

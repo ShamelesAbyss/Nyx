@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.9 — Persistent Guest Runtime (published)
+## 0.7.9 — Project Persistence (published)
 
 Package metadata: versionCode 12 / versionName 0.7.9, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the existing certificate. This is a focused runtime fix, not a feature expansion.
 

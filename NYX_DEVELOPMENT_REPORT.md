@@ -1,6 +1,6 @@
 # NYX Eclipse AI — Development Reports
 
-## v0.7.9 — Persistent Guest Runtime (published)
+## v0.7.9 — Project Persistence (published)
 
 NYX 0.7.9 is versionCode 12 / versionName 0.7.9. It is a focused fix for the failure mode where a Debian-hosted Ollama server started successfully but did not stay alive, or stayed alive without a reliable owner. It is published as GitHub release v0.7.9; no physical-device claim is made.
 

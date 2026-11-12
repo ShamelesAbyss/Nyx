@@ -1,4 +1,4 @@
-# NYX v0.7.9 — Persistent Guest Runtime
+# NYX v0.7.9 — Project Persistence
 
 > **A focused reliability release for the Debian Ollama path — and the point where NYX stops treating “started” as “still running.”**
 
