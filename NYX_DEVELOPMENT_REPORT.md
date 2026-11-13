@@ -1,5 +1,27 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.2 — Project Unshackle (published)
+
+NYX 0.8.2 is versionCode 15/versionName 0.8.2, debug-signed with the established certificate, and published as the GitHub release `v0.8.2`. This focused autonomy reliability release fixes false toolchain classification and moves dependency preparation behind task planning, while preserving the persisted task graph and the same gate on resume.
+
+| Area | Status | What changed |
+| :--- | :--- | :--- |
+| Project-kind inference | Implemented, JVM-tested | Nearby negation is respected while positive Android, Kotlin/JVM, C/C++, Node, and Python project needs remain recognized. |
+| Dependency timing | Implemented, JVM-tested | The persisted task graph is checked immediately before executable terminal/development tasks, rather than probing against broad objective text before planning. |
+| Shell-objective blockers | Implemented, JVM-tested | Shell-only, inference-only, verification-only, and negated toolchain tasks bypass unrelated development dependency checks. |
+| Resume behavior | Implemented, JVM-tested | Resumed task graphs use the same dependency gate before task-state reset/continuation; a block preserves tasks/checkpoints and returns to `needs_attention`. |
+| Android projects | Implemented, JVM-tested | Affirmative Android app/APK work still selects the Android toolchain and retains package authorization and verification. |
+| GitHub language stats | Implemented | `.gitattributes` marks bundled llama.cpp as vendored; no llama.cpp source changes were made. |
+| Verification | Build-tested | 702 JVM tests passed; ARM64 debug APK and instrumentation APK assembled. Instrumentation was not run. |
+
+### Physical-device limits
+
+No Android device was attached for this build. Actual Termux/PRoot package installation, dependency continuation, and resumed objective execution remain device-validation items. A green JVM suite and built APK do not establish successful physical-device autonomy. The APK is a debug-signed development build, not a Google Play release. See `TEST_RESULTS.md` and `V082_IMPLEMENTATION_REPORT.md` for precise evidence and limitations.
+
+### Release artifacts
+
+The official `v0.8.2` GitHub release includes the ARM64 APK, compiled instrumentation APK, clean source archive, and checksum manifest. No AAB or Play submission was produced.
+
 ## v0.8.1 — Project Clear Signal (published)
 
 NYX 0.8.1 is versionCode 14 / versionName 0.8.1, debug-signed with the established certificate, and published as GitHub release v0.8.1. It is a focused observability and planning-reliability release, not a new autonomy claim. The established NYX identity, README layout, history, license, and prior releases are preserved.

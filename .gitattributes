@@ -1,0 +1,2 @@
+# Keep NYX's first-party application language/profile centered on Kotlin.
+app/src/main/cpp/llama.cpp/** linguist-vendored

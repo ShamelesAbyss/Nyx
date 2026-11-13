@@ -279,24 +279,41 @@ object DependencyPlanner {
      * CMake or C++. Text with no known keyword is [ProjectKind.GENERIC].
      */
     fun inferProjectKind(goal: String): ProjectKind {
-        val text = goal.lowercase()
-        if (text.isBlank()) return ProjectKind.GENERIC
-        if (text.contains("android") && (text.contains("app") || text.contains("apk"))) {
+        if (goal.isBlank()) return ProjectKind.GENERIC
+        val android = hasPositiveMention(goal, "android")
+        val app = hasPositiveMention(goal, "app(?:lication)?|apk")
+        if (android && app) {
             return ProjectKind.ANDROID_APP
         }
-        if (text.contains("kotlin") || text.contains("gradle") || text.contains("jvm")) {
+        if (listOf("kotlin", "gradle", "jvm").any { hasPositiveMention(goal, it) }) {
             return ProjectKind.KOTLIN_JVM
         }
-        if (text.contains("c++") || text.contains("cmake") || text.contains("c project") || text.contains("qt")) {
+        if (listOf("c\\+\\+", "cmake", "c project", "qt").any { hasPositiveMention(goal, it) }) {
             return ProjectKind.C_CPP
         }
-        if (text.contains("node") || text.contains("npm") || text.contains("typescript") || text.contains("react")) {
+        if (listOf("node(?:\\.js)?", "npm", "typescript", "react").any { hasPositiveMention(goal, it) }) {
             return ProjectKind.NODE
         }
-        if (text.contains("python") || text.contains("django") || text.contains("flask")) {
+        if (listOf("python", "django", "flask").any { hasPositiveMention(goal, it) }) {
             return ProjectKind.PYTHON
         }
         return ProjectKind.GENERIC
+    }
+
+    /** A keyword is positive only when a nearby, same-clause instruction does not negate it. */
+    private fun hasPositiveMention(text: String, expression: String): Boolean {
+        val keyword = Regex("(?i)(?<![a-z0-9_])(?:$expression)(?![a-z0-9_])")
+        val negation = Regex(
+            "(?i)\\b(?:do\\s+not|don't|dont|never|without|avoid|skip|exclude|no|not|should\\s+not|shouldn't|must\\s+not|need\\s+not|does\\s+not|doesn't)\\b(?:\\W+\\w+){0,8}\\W*$",
+        )
+        return keyword.findAll(text).any { match ->
+            val clauseStart = (text.lastIndexOfAny(charArrayOf('.', '!', '?', ';', '\n', '\r'), match.range.first) + 1)
+                .coerceAtMost(match.range.first)
+            val prefix = text.substring(clauseStart, match.range.first)
+            val negated = negation.containsMatchIn(prefix) &&
+                !Regex("(?i)\\bnot\\s+only\\b").containsMatchIn(prefix)
+            !negated
+        }
     }
 
     /**
@@ -308,7 +325,7 @@ object DependencyPlanner {
      * install. Keeping one canonical package (clang) avoids proposing two compilers for the same
      * requirement and keeps the install plan deterministic.
      *
-     * `git` is optional for Kotlin/JVM builds because a local build can proceed without cloning.
+     * `git` is optional for every project kind: local execution can proceed without cloning or version-control operations unless a task explicitly requests them.
      * `sh` has no package candidate: it is base system in both environments, so its absence is a
      * broken environment rather than an installable gap.
      */
@@ -336,26 +353,26 @@ object DependencyPlanner {
             ToolRequirement("gcc", "Alternative compiler accepted when clang is unavailable.", required = false),
             ToolRequirement("make", "Runs Makefile-based build steps."),
             ToolRequirement("cmake", "Generates the native build system."),
-            ToolRequirement("git", "Fetches and versions project sources."),
+            ToolRequirement("git", "Fetches and versions project sources.", required = false),
         )
 
         ProjectKind.NODE -> listOf(
             ToolRequirement("sh", "Runs build scripts and shell steps."),
             ToolRequirement("node", "Runs the Node.js runtime."),
             ToolRequirement("npm", "Installs JavaScript dependencies."),
-            ToolRequirement("git", "Fetches and versions project sources."),
+            ToolRequirement("git", "Fetches and versions project sources.", required = false),
         )
 
         ProjectKind.PYTHON -> listOf(
             ToolRequirement("sh", "Runs build scripts and shell steps."),
             ToolRequirement("python3", "Runs Python build and test steps."),
             ToolRequirement("pip3", "Installs Python dependencies."),
-            ToolRequirement("git", "Fetches and versions project sources."),
+            ToolRequirement("git", "Fetches and versions project sources.", required = false),
         )
 
         ProjectKind.GENERIC -> listOf(
             ToolRequirement("sh", "Runs build scripts and shell steps."),
-            ToolRequirement("git", "Fetches and versions project sources."),
+            ToolRequirement("git", "Fetches and versions project sources.", required = false),
         )
     }
 

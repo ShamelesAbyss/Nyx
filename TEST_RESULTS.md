@@ -1,5 +1,25 @@
 # NYX Test Results
 
+## 0.8.2 — Project Unshackle (published build)
+
+Executed on 2026-11-13 UTC from `/home/ubuntu/nyx`:
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+
+Result: `BUILD SUCCESSFUL in 1m 32s`.
+
+- JVM tests: **702**, failures **0**, errors **0**, skipped **0** across 67 classes.
+- Focused classes: `DependencyPlannerTest` (22), `ObjectiveDependencyScopeTest` (5), and `DependencyBootstrapTest` (9). Regressions cover ordinary shell automation, negated toolchain instructions, affirmative Android development, callback bypass for shell tasks, resumed planned Kotlin work, non-JVM JDK-probe avoidance, and existing installation authorization/verification behavior.
+- Debug APK identity: package `com.nyx.ai`, versionCode **15**, versionName **0.8.2**, minSdk 26, compile/target SDK 37, `arm64-v8a` only.
+- Debug APK SHA-256: `7ba36f16390d96df4d622f4264b0852a23fd61216859a497a5988af0bb13c0f8`.
+- Instrumentation APK SHA-256: `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3` (compiled, not executed).
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`, matching the established v0.8.1 identity.
+- APK 16 KB ZIP alignment check passed (`zipalign -c -P 16 -v 4`). The build emitted only the existing Compose `Divider` deprecation and Room migration parameter-name warnings.
+
+No physical Android device was attached. Debian/Termux package installation and objective resumption were not exercised on device; the JVM suite and APK build do not establish on-device autonomy. The APK, compiled-but-not-executed instrumentation APK, source archive, and checksum manifest are published in GitHub release v0.8.2. No AAB or Play submission was produced.
+
 ## 0.8.1 — Project Clear Signal (published build)
 
 Executed on 2026-11-12 UTC from `/home/ubuntu/nyx` for v0.8.1:

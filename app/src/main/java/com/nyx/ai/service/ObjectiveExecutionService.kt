@@ -41,9 +41,7 @@ import com.nyx.ai.terminal.AutonomyModelCommandGate
 import com.nyx.ai.terminal.BootstrapRequest
 import com.nyx.ai.terminal.BootstrapStatus
 import com.nyx.ai.terminal.DependencyBootstrap
-import com.nyx.ai.terminal.DependencyPlanner
 import com.nyx.ai.terminal.EnvironmentConsistency
-import com.nyx.ai.terminal.ProjectKind
 import com.nyx.ai.terminal.TerminalDependencyGateway
 import com.nyx.ai.terminal.TerminalRepository
 import com.nyx.ai.autonomy.policy.ActionKind
@@ -251,12 +249,15 @@ class ObjectiveExecutionService : Service() {
             val snapshot = dao.observeEvents(objectiveId).first().lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
                 ?: error("No approved execution settings for this objective.")
             val tasks = dao.getTasks(objectiveId)
+            val environment = runCatching { TerminalEnvironment.valueOf(snapshot.optString("environment", "TERMUX_HOST")) }
+                .getOrDefault(TerminalEnvironment.TERMUX_HOST)
+            val guestAlias = snapshot.optString("guestAlias", "debian")
+            val workspace = snapshot.optString("workspace")
+            val environmentId = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
             terminalTools = null
             if (terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
                 val environmentProfile = EnvironmentDiscovery(bridge).discover()
                 require(environmentProfile.hostAvailable) { environmentProfile.detail ?: "Termux setup is incomplete." }
-                val environment = runCatching { TerminalEnvironment.valueOf(snapshot.optString("environment", "TERMUX_HOST")) }.getOrDefault(TerminalEnvironment.TERMUX_HOST)
-                val guestAlias = snapshot.optString("guestAlias", "debian")
                 require(com.nyx.ai.terminal.HostShell.isSafeAlias(guestAlias)) { "The selected PRoot distribution alias is invalid." }
                 val environmentState = EnvironmentConsistency.evaluate(
                     profile = environmentProfile,
@@ -272,55 +273,7 @@ class ObjectiveExecutionService : Service() {
                 if (environmentState.stalePreviousError) {
                     recordEvent(objectiveId, "environment_refreshed", "Current environment probe succeeded; the historical error was stale.")
                 }
-                val workspace = snapshot.optString("workspace")
                 require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspace)) { "Select an absolute normalized authorized workspace." }
-                val environmentId = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
-                val projectKind = DependencyPlanner.inferProjectKind(
-                    buildString {
-                        append(objective.goal)
-                        tasks.forEach { append(' ').append(it.title).append(' ').append(it.instructions) }
-                    },
-                )
-                if (tasks.any { it.workerKind == "development" } || projectKind != ProjectKind.GENERIC) {
-                    val terminalRepository = TerminalRepository(this, database, bridge)
-                    val bootstrap = DependencyBootstrap.prepare(
-                        request = BootstrapRequest(
-                            objectiveId = objectiveId,
-                            projectKind = projectKind,
-                            environment = environment,
-                            guestAlias = guestAlias,
-                            workspace = workspace,
-                            environmentId = environmentId,
-                        ),
-                        gateway = TerminalDependencyGateway(terminalRepository),
-                        authorize = { candidate ->
-                            AutonomyRuntime.authorize(
-                                this,
-                                ActionRequest(
-                                    kind = ActionKind.INSTALL_PACKAGE,
-                                    target = "$workspace/.nyx/package/${candidate.packageName}",
-                                    environmentId = environmentId,
-                                    insideAuthorizedWorkspace = true,
-                                    trustedSource = candidate.trusted,
-                                ),
-                            ).allowed
-                        },
-                        onProgress = { kind, detail -> recordEvent(objectiveId, kind, detail) },
-                    )
-                    when (bootstrap.status) {
-                        BootstrapStatus.READY, BootstrapStatus.INSTALLED -> {
-                            recordEvent(objectiveId, "dependency_ready", bootstrap.message)
-                        }
-
-                        BootstrapStatus.APPROVAL_REQUIRED,
-                        BootstrapStatus.BLOCKED,
-                        BootstrapStatus.FAILED -> {
-                            markNeedsAttention(objectiveId, bootstrap.message)
-                            recordEvent(objectiveId, "dependency_blocked", bootstrap.message)
-                            return "needs_attention"
-                        }
-                    }
-                }
                 terminalTools = TerminalAgentTools(
                     bridge, workspace, environment,
                     useTimeoutBinary = environmentProfile.timeoutAvailable,
@@ -328,6 +281,68 @@ class ObjectiveExecutionService : Service() {
                     guestAlias = guestAlias,
                     modelCommandGate = AutonomyModelCommandGate(this, environmentId, workspace, environment),
                 )
+            }
+            val beforeTasksExecute: suspend (List<com.nyx.ai.data.ObjectiveTaskEntity>) -> Boolean = { plannedTasks ->
+                if (terminalTools == null) {
+                    true
+                } else {
+                    val dependencyTasks = plannedTasks.map { task ->
+                        com.nyx.ai.terminal.PlannedDependencyTask(
+                            workerKind = task.workerKind,
+                            title = task.title,
+                            instructions = task.instructions,
+                            verification = task.verification.orEmpty(),
+                        )
+                    }
+                    com.nyx.ai.terminal.ObjectiveDependencyScope.beforeExecution(dependencyTasks) { projectKind ->
+                        try {
+                            val bootstrap = DependencyBootstrap.prepare(
+                                request = BootstrapRequest(
+                                    objectiveId = objectiveId,
+                                    projectKind = projectKind,
+                                    environment = environment,
+                                    guestAlias = guestAlias,
+                                    workspace = workspace,
+                                    environmentId = environmentId,
+                                ),
+                                gateway = TerminalDependencyGateway(TerminalRepository(this, database, bridge)),
+                                authorize = { candidate ->
+                                    AutonomyRuntime.authorize(
+                                        this,
+                                        ActionRequest(
+                                            kind = ActionKind.INSTALL_PACKAGE,
+                                            target = "$workspace/.nyx/package/${candidate.packageName}",
+                                            environmentId = environmentId,
+                                            insideAuthorizedWorkspace = true,
+                                            trustedSource = candidate.trusted,
+                                        ),
+                                    ).allowed
+                                },
+                                onProgress = { kind, detail -> recordEvent(objectiveId, kind, detail) },
+                            )
+                            when (bootstrap.status) {
+                                BootstrapStatus.READY, BootstrapStatus.INSTALLED -> {
+                                    recordEvent(objectiveId, "dependency_ready", bootstrap.message)
+                                    true
+                                }
+                                BootstrapStatus.APPROVAL_REQUIRED,
+                                BootstrapStatus.BLOCKED,
+                                BootstrapStatus.FAILED -> {
+                                    markNeedsAttention(objectiveId, bootstrap.message)
+                                    recordEvent(objectiveId, "dependency_blocked", bootstrap.message)
+                                    false
+                                }
+                            }
+                        } catch (cancel: CancellationException) {
+                            throw cancel
+                        } catch (e: Exception) {
+                            val message = "Dependency preparation failed: ${(e.message ?: e.javaClass.simpleName).replace(Regex("(?i)(bearer\\s+)[^\\s]+"), "\$1[redacted]").take(350)}"
+                            markNeedsAttention(objectiveId, message)
+                            recordEvent(objectiveId, "dependency_blocked", message)
+                            false
+                        }
+                    }
+                }
             }
             val gatewayExtra = runCatching {
                 val vault = com.nyx.ai.settings.CredentialVault(this)
@@ -368,6 +383,7 @@ class ObjectiveExecutionService : Service() {
                 fileProbe = terminalTools,
                 contextStore = contextStore,
                 suppliedRunId = currentRunId,
+                beforeTasksExecute = beforeTasksExecute,
             )
             val result = if (tasks.isEmpty()) {
                 engine.planAndExecute(objectiveId, agent, resourceProfile.policy, executionControl)

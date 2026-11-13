@@ -69,6 +69,7 @@ class ObjectiveExecutionEngine(
     private val contextStore: ContextStore,
     private val onToken: (String) -> Unit = {},
     private val suppliedRunId: String? = null,
+    private val beforeTasksExecute: suspend (List<ObjectiveTaskEntity>) -> Boolean = { true },
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
@@ -112,6 +113,10 @@ class ObjectiveExecutionEngine(
                     finishedAt = null,
                 )
             })
+            val plannedTasks = dao.getTasks(objectiveId)
+            if (!beforeTasksExecute(plannedTasks)) {
+                return requireNotNull(dao.getObjective(objectiveId))
+            }
             saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "running", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
             event(objectiveId, null, "plan_created", "Validated ${parsed.size} tasks (limit ${ObjectivePlanValidator.MAX_TASKS}); execution is dependency-aware and resource-bounded.", status = "completed")
             execute(objectiveId, agent, session, policy, control)
@@ -217,6 +222,9 @@ class ObjectiveExecutionEngine(
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
         val session = sessions.create(objective, agent)
         val tasks = dao.getTasks(objectiveId)
+        if (!beforeTasksExecute(tasks)) {
+            return requireNotNull(dao.getObjective(objectiveId))
+        }
         val uncertain = tasks.filter { it.status == "needs_review" || it.status == "failed" }
         require(uncertain.all { it.attemptCount < it.maxAttempts }) { "A task reached its retry limit; create a new objective instead." }
         uncertain.forEach { task ->

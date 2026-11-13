@@ -1,6 +1,6 @@
-# Building NYX 0.8.1
+# Building NYX 0.8.2
 
-Package identity: `com.nyx.ai`, versionCode **14**, versionName **0.8.1**. The verified clean command is `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`; it produces 695 passing JVM tests, a debug APK, and a compiled instrumentation-test APK. No physical device is required for that command, but real console rendering, Termux/Ollama/Keystore/gateway behavior, and planning-provider behavior still require one.
+Package identity: `com.nyx.ai`, versionCode **15**, versionName **0.8.2**. The verified clean command is `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`; it produces 702 passing JVM tests, a debug APK, and a compiled instrumentation-test APK. This is the published GitHub release build; it remains a debug-signed development artifact, not a production Play build. No physical device is required for the build, but real Termux/PRoot installation and objective resumption still require one.
 
 ## Requirements
 
@@ -38,19 +38,18 @@ python3 tools/check_sdk_policy.py --self-test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package identity: `com.nyx.ai`; versionCode 14/versionName 0.8.1; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
+Package identity: `com.nyx.ai`; versionCode 15/versionName 0.8.2; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
 
 Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, settings, and imported GGUF copies; preserve the prior key and back up user data first. `assembleRelease` alone is not a production-signed release. Keep all signing secrets outside source archives.
 
 ## Automated checks and current verification boundary
 
-- The coordinating integrated Gradle run reported **BUILD SUCCESSFUL**, with **212 JVM tests, zero failures, zero errors, and zero skips**, plus assembled debug app and instrumentation-test APKs. This is the observed integrated run, not an assertion that final clean source-rebuild/archive verification has finished. No build/test was run by this documentation-only update.
-- `testDebugUnitTest` runs JVM tests for the engine, providers/actions, terminal confinement, development repair, native metadata parsing, context/skills, and retained behavior. The old 98-test figure belongs to 0.5.0, not this release; do not add separately run focused suites to the 212-test integrated total.
-- `assembleDebugAndroidTest` compiled instrumentation tests, including Room migration/legacy preservation, Keystore, native repository, and opt-in real-model tests. Compilation is not execution.
-- To execute instrumentation on a connected supported ARM64 Android runtime, explicitly run `./gradlew --no-daemon connectedDebugAndroidTest`. The real-model test assumption-skips without an app-readable model path; a skip is not an inference pass.
-- A genuine **host x86_64 JNI** run loaded the Apache-2.0 SmolLM2-135M-Instruct-Q4_K_M and produced `The capital of France is Paris.` in **7 selected output tokens**. Cancellation, session reuse, callback exception propagation, and double unload were checked. [Native reproduction](docs/NATIVE_INFERENCE.md#reproducible-verification) records the model revision, hash, commands, and focused tests.
-- Standalone **ARM64 cross-compilation passed** with API 26, NDK 28.2.13676358, and CMake 3.22.1. This verifies compilation/linkage, not Android execution.
-- No Android-runtime or physical-device inference, Termux/PRoot, permission, migration, foreground lifecycle, Fold/GrapheneOS, thermal, or memory-pressure execution is claimed here. Native true token/load/generation measurements are distinct from global chunk/character metrics and are not an Android-throughput guarantee. See [TEST_RESULTS.md](TEST_RESULTS.md) for exact coordinating results and final source/archive checks when recorded.
+- The final clean Gradle run completed with `BUILD SUCCESSFUL in 1m 32s`: **702 JVM tests, zero failures, zero errors, and zero skips** across 67 classes. Focused v0.8.2 suites were `DependencyPlannerTest` (22), `ObjectiveDependencyScopeTest` (5), and `DependencyBootstrapTest` (9).
+- The new regression coverage checks shell-only objectives, negated toolchain instructions, affirmative Android development tasks, dependency-gate bypass for shell automation, pre-execution dependency preparation on a resumed task graph, and skipping guest JDK resolution for non-JVM projects.
+- The debug APK is `com.nyx.ai`, versionCode 15/versionName 0.8.2, min API 26, compile/target API 37, `arm64-v8a` only. Its SHA-256 and the established debug signing certificate are in [TEST_RESULTS.md](TEST_RESULTS.md). APK 16 KB ZIP alignment passed.
+- `assembleDebugAndroidTest` compiled the instrumentation APK; no instrumentation test was executed. No physical Android device was attached, so Termux/PRoot, package installation, and resumed objective behavior remain device checks.
+- The earlier host x86_64 JNI/model run and standalone ARM64 cross-compilation recorded in [TEST_RESULTS.md](TEST_RESULTS.md) are historical host evidence, not an Android runtime pass or proof that this release was tested on a phone.
+- Existing compiler warnings are the Compose `Divider` deprecation and Room migration parameter-name notices; no compile errors occurred.
 
 ## Explicit native device procedure
 
@@ -78,18 +77,16 @@ The configured NDK/linker produces 16 KB ELF alignment, and AGP uses uncompresse
 
 Extract its libraries and inspect each with the NDK `llvm-objdump -p`; `LOAD` alignment must be at least `2**14`. See [16 KB packaging/device guidance](docs/ANDROID_COMPATIBILITY.md#16-kb-native-packaging-and-validation). APK/ELF alignment is not a real 16 KB device-runtime pass.
 
-## Local delivery integrity and source archive
+## v0.8.2 release artifacts and source archive
 
-Pre-build metadata consistency check (does not assert artifact existence):
+The reproducible packaging script in `/home/ubuntu/package_nyx_v082.sh` copies the built ARM64 debug APK and compiled instrumentation APK, creates a clean source ZIP, and writes SHA-256 checksums. Verify with:
 
 ```bash
-python3 tools/check_release_integrity.py --no-apk \
-  --delivery-file NYX-v0.6.0.apk --delivery-file NYX-Source-v0.6.0.zip \
-  --release-doc README.md --release-doc BUILD.md --release-doc CHANGELOG.md
+cd /home/ubuntu
+bash package_nyx_v082.sh
+sha256sum -c NYX-v0.8.2-SHA256SUMS.txt
 ```
 
-After local packaging, replace `--no-apk` with `--apk /path/to/NYX-v0.6.0.apk`. The checker parses the APK's binary manifest and compares package/version metadata, delivery filenames, and current release-document headings. Add `TEST_RESULTS.md` or `NYX_DEVELOPMENT_REPORT.md` only after their current headings/results have been updated; older reports are historical evidence, not current-release passes.
+The source archive must retain the Gradle wrapper, build files, app sources/tests, documentation, `.gitattributes`, `LICENSE`, full vendored llama.cpp source, and upstream/third-party licenses. It excludes model weights, generated build/native/cache directories, local SDK configuration, IDE/temp files, secrets/credentials, and signing keys. `.gitattributes` classifies `app/src/main/cpp/llama.cpp/` as vendored without changing or stripping those sources.
 
-The source ZIP must include the wrapper, build files, application/tests, documentation, **full vendored llama.cpp source**, `LICENSE`, and upstream/third-party licenses. Exclude model weights (`*.gguf` and test downloads), all generated `build`, `.cxx`, `.kotlin`, `.gradle` and cache directories, local SDK configuration (`local.properties`), IDE/temp outputs, private checkpoints, secrets/credentials, and signing keys. Inspect the complete archive inventory before delivery; preserve vendored licenses even where generated files are excluded.
-
-This scope authorizes local artifacts only. No v0.6.0 GitHub publication, self-update, automatic installation, commit/push, or store submission is implied by a filename, build command, or passing test. The current PriorityNine directive ends mid-sentence and grants no additional self-update, installation, or publication authority. The published download remains v0.5.0. The `specialUse` foreground declaration needs Play review and is not an approval guarantee.
+The APK, instrumentation APK, source archive, and checksum manifest are attached to the public v0.8.2 GitHub release. No AAB or Google Play submission was produced. The instrumentation APK was assembled but not executed; physical-device behavior remains unverified.

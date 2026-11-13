@@ -19,7 +19,7 @@ class DependencyPlannerTest {
         names.associateWith { guestTool() } + ("apt" to guestTool())
 
     @Test
-    fun `inherited termux git is missing in a debian guest and resolves to apt git`() {
+    fun `inherited termux git does not block a generic shell objective`() {
         val plan = DependencyPlanner.plan(
             ProjectKind.GENERIC,
             debian,
@@ -30,16 +30,8 @@ class DependencyPlannerTest {
             ),
         )
         assertEquals(listOf("sh"), plan.satisfied)
-        assertEquals(listOf("git"), plan.missing.map { it.tool })
-        assertTrue(plan.missing.single().required)
-        assertEquals(1, plan.candidates.size)
-        val candidate = plan.candidates.single()
-        assertEquals("apt", candidate.manager)
-        assertEquals("git", candidate.packageName)
-        assertEquals("apt-get install -y --no-install-recommends git", candidate.command)
-        assertEquals(debian, candidate.environment)
-        assertEquals("official distribution repository", candidate.note)
-        assertTrue(candidate.trusted)
+        assertTrue(plan.missing.isEmpty())
+        assertTrue(plan.candidates.isEmpty())
         assertTrue(plan.blockers.isEmpty())
         assertTrue(plan.canProceed)
     }
@@ -51,23 +43,23 @@ class DependencyPlannerTest {
             debian,
             mapOf("sh" to guestTool(), "git" to hostTool(), "apt" to guestTool()),
         )
-        assertEquals(listOf("git"), plan.missing.map { it.tool })
+        assertTrue(plan.missing.isEmpty())
         assertFalse(plan.satisfied.contains("git"))
     }
 
     @Test
     fun `present but not executable tools stay missing`() {
         val plan = DependencyPlanner.plan(
-            ProjectKind.GENERIC,
+            ProjectKind.NODE,
             debian,
             mapOf(
                 "sh" to guestTool(),
-                "git" to ToolState(present = true, usable = false, origin = ExecutableOrigin.GUEST_NATIVE),
+                "node" to ToolState(present = true, usable = false, origin = ExecutableOrigin.GUEST_NATIVE),
                 "apt" to guestTool(),
             ),
         )
-        assertEquals(listOf("git"), plan.missing.map { it.tool })
-        assertTrue(plan.candidates.single().command.contains("git"))
+        assertEquals(listOf("node", "npm"), plan.missing.map { it.tool })
+        assertEquals(listOf("nodejs", "npm"), plan.candidates.map { it.packageName })
     }
 
     @Test
@@ -159,26 +151,27 @@ class DependencyPlannerTest {
 
     @Test
     fun `guest without apt is blocked when a tool is missing`() {
-        val plan = DependencyPlanner.plan(ProjectKind.GENERIC, debian, mapOf("sh" to guestTool()))
+        val plan = DependencyPlanner.plan(ProjectKind.NODE, debian, mapOf("sh" to guestTool()))
         assertEquals(listOf("The guest package manager (apt) is unavailable."), plan.blockers)
-        assertEquals(listOf("git"), plan.missing.map { it.tool })
-        assertEquals("apt-get install -y --no-install-recommends git", plan.candidates.single().command)
+        assertEquals(listOf("node", "npm"), plan.missing.map { it.tool })
+        assertEquals(listOf("nodejs", "npm"), plan.candidates.map { it.packageName })
+        assertTrue(plan.candidates.all { it.command.startsWith("apt-get install") })
         assertFalse(plan.canProceed)
     }
 
     @Test
     fun `unknown environment has no trusted package source`() {
         val plan = DependencyPlanner.plan(
-            ProjectKind.GENERIC,
+            ProjectKind.NODE,
             "container:alpine",
             mapOf("sh" to ToolState(present = true, usable = true, origin = ExecutableOrigin.UNKNOWN)),
         )
         assertEquals(listOf("sh"), plan.satisfied)
-        assertEquals(listOf("git"), plan.missing.map { it.tool })
+        assertEquals(listOf("node", "npm"), plan.missing.map { it.tool })
         assertTrue(plan.candidates.isEmpty())
-        assertEquals(1, plan.blockers.size)
-        assertTrue(plan.blockers.single().contains("'git'"))
-        assertTrue(plan.blockers.single().contains("container:alpine"))
+        assertEquals(2, plan.blockers.size)
+        assertTrue(plan.blockers.all { it.contains("container:alpine") })
+        assertTrue(plan.blockers.any { it.contains("'node'") })
         assertFalse(plan.canProceed)
     }
 
@@ -218,13 +211,16 @@ class DependencyPlannerTest {
         )
         assertFalse(DependencyPlanner.requiredTools(ProjectKind.C_CPP).single { it.tool == "gcc" }.required)
         assertFalse(DependencyPlanner.requiredTools(ProjectKind.KOTLIN_JVM).single { it.tool == "git" }.required)
+        assertFalse(DependencyPlanner.requiredTools(ProjectKind.NODE).single { it.tool == "git" }.required)
+        assertFalse(DependencyPlanner.requiredTools(ProjectKind.C_CPP).single { it.tool == "git" }.required)
+        assertFalse(DependencyPlanner.requiredTools(ProjectKind.PYTHON).single { it.tool == "git" }.required)
+        assertFalse(DependencyPlanner.requiredTools(ProjectKind.GENERIC).single { it.tool == "git" }.required)
         assertEquals(
             listOf("sh", "python3", "pip3", "git"),
             DependencyPlanner.requiredTools(ProjectKind.PYTHON).map { it.tool },
         )
         assertTrue(DependencyPlanner.requiredTools(ProjectKind.PYTHON).all { it.reason.isNotBlank() })
-        assertEquals(
-            listOf("sh", "git"),
+        assertEquals(listOf("sh", "git"),
             DependencyPlanner.requiredTools(ProjectKind.GENERIC).map { it.tool },
         )
     }
@@ -232,8 +228,8 @@ class DependencyPlannerTest {
     @Test
     fun `python plan shares the python package across python3 and pip3`() {
         val plan = DependencyPlanner.plan(ProjectKind.PYTHON, host, mapOf("sh" to hostTool()))
-        assertEquals(listOf("python3", "pip3", "git"), plan.missing.map { it.tool })
-        assertEquals(listOf("python", "git"), plan.candidates.map { it.packageName })
+        assertEquals(listOf("python3", "pip3"), plan.missing.map { it.tool })
+        assertEquals(listOf("python"), plan.candidates.map { it.packageName })
         assertEquals(plan.candidates.map { it.command }.distinct(), plan.candidates.map { it.command })
         assertTrue(plan.canProceed)
     }
@@ -263,6 +259,9 @@ class DependencyPlannerTest {
         assertEquals(ProjectKind.PYTHON, DependencyPlanner.inferProjectKind("flask route returns 500"))
         assertEquals(ProjectKind.GENERIC, DependencyPlanner.inferProjectKind("write release notes"))
         assertEquals(ProjectKind.GENERIC, DependencyPlanner.inferProjectKind("   "))
+        assertEquals(ProjectKind.GENERIC, DependencyPlanner.inferProjectKind("Automate shell backups; do not install Gradle or the Android SDK."))
+        assertEquals(ProjectKind.GENERIC, DependencyPlanner.inferProjectKind("Do not build an Android application or use Kotlin; write a shell script only."))
+        assertEquals(ProjectKind.ANDROID_APP, DependencyPlanner.inferProjectKind("Build an Android application; use Kotlin and Gradle."))
     }
 
     @Test

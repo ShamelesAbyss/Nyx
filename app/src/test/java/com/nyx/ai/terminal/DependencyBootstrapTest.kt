@@ -21,6 +21,7 @@ class DependencyBootstrapTest {
         },
     ) : DependencyGateway {
         var installCalls = 0
+        var jdkCalls = 0
         var lastPlan: DependencyPlan? = null
         var lastObjectiveId: String? = null
         override suspend fun probeCapabilities(
@@ -28,7 +29,10 @@ class DependencyBootstrapTest {
             guestAlias: String,
         ): EnvironmentCapabilities = capabilities
 
-        override suspend fun resolveGuestJdk(guestAlias: String): JdkResolution = jdk
+        override suspend fun resolveGuestJdk(guestAlias: String): JdkResolution {
+            jdkCalls++
+            return jdk
+        }
 
         override suspend fun install(
             plan: DependencyPlan,
@@ -99,6 +103,47 @@ class DependencyBootstrapTest {
         assertEquals(setOf("java", "javac"), gateway.lastPlan!!.missing.map { it.tool }.toSet())
         assertEquals("openjdk-21-jdk-headless", gateway.lastPlan!!.candidates.single().packageName)
         assertTrue(outcome.message.contains("original objective can continue"))
+    }
+
+    @Test
+    fun `resumed planned Kotlin build prepares dependencies before continuing`() = runBlocking {
+        val resumedTasks = listOf(
+            PlannedDependencyTask(
+                workerKind = "development",
+                title = "Compile the Kotlin library",
+                instructions = "Run the Gradle build and fix compilation errors.",
+                verification = "Confirm the JVM build passes.",
+            ),
+        )
+        val tools = completeGuest().tools.toMutableMap()
+        tools["gradle"] = capability("gradle", CapabilityState.MISSING)
+        val gateway = FakeGateway(completeGuest().copy(tools = tools))
+        var resumedObjectiveMayContinue = false
+        val mayExecute = ObjectiveDependencyScope.beforeExecution(resumedTasks) { projectKind ->
+            assertEquals(ProjectKind.KOTLIN_JVM, projectKind)
+            val outcome = DependencyBootstrap.prepare(request(projectKind), gateway, authorize = { true })
+            resumedObjectiveMayContinue = outcome.status == BootstrapStatus.INSTALLED || outcome.status == BootstrapStatus.READY
+            resumedObjectiveMayContinue
+        }
+
+        assertTrue(mayExecute)
+        assertTrue(resumedObjectiveMayContinue)
+        assertEquals(1, gateway.installCalls)
+        assertEquals("objective-1", gateway.lastObjectiveId)
+    }
+
+    @Test
+    fun `non JVM project does not resolve an unnecessary guest JDK`() = runBlocking {
+        val tools = completeGuest().tools.toMutableMap().apply {
+            put("node", capability("node", CapabilityState.MISSING))
+            put("npm", capability("npm", CapabilityState.MISSING))
+        }
+        val gateway = FakeGateway(completeGuest().copy(tools = tools))
+        val outcome = DependencyBootstrap.prepare(request(ProjectKind.NODE), gateway, authorize = { true })
+
+        assertEquals(BootstrapStatus.INSTALLED, outcome.status)
+        assertEquals(0, gateway.jdkCalls)
+        assertEquals(listOf("nodejs", "npm"), gateway.lastPlan!!.candidates.map { it.packageName })
     }
 
     @Test

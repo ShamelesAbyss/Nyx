@@ -1,6 +1,14 @@
-# NYX User Guide — 0.8.1
+# NYX User Guide — v0.8.2 “Project Unshackle”
 
-> 0.8.1 “Project Clear Signal” is the latest published release. Physical-device execution of the run-scoped console, history selection, planning recovery, and shell-policy behavior is still pending.
+> v0.8.2 “Project Unshackle” is the latest published release. The release passed its JVM and build checks; physical-device autonomy validation remains pending.
+
+## What changed in v0.8.2 — Project Unshackle
+
+Dependency preparation follows the persisted objective task graph. NYX first validates and stores the planned tasks, then checks the selected toolchain immediately before terminal/development tasks run. The same check happens before a reviewed objective resumes, so a missing approved dependency can be handled without discarding the existing task graph or checkpoints.
+
+Ordinary shell automation, inference-only objectives, verification-only tasks, and explicit negations such as “do not use Gradle or the Android SDK” do not trigger unrelated toolchain installation. Affirmative Android app/APK development tasks still select the Android toolchain and go through the existing package authorization and verification path. Git is optional for local work; Debian JDK discovery is skipped for project kinds that do not need Java.
+
+The release retains application ID `com.nyx.ai`, versionCode 15/versionName 0.8.2, the existing workspace and authorization boundaries, Termux/PRoot environment selection, task checkpoints, and conservative recovery. It does not alter bundled llama.cpp source. See [v0.8.2 release notes](RELEASE_NOTES_v0.8.2.md) and [implementation report](V082_IMPLEMENTATION_REPORT.md). Device execution remains unverified.
 
 ## What changed in 0.8.1 — Project Clear Signal
 

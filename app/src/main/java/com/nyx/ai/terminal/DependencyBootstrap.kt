@@ -107,7 +107,9 @@ object DependencyBootstrap {
 
         val capabilities = gateway.probeCapabilities(request.environment, request.guestAlias)
         val tools = capabilities.toToolStates(request.environmentId)
-        val jdk = if (request.environment == TerminalEnvironment.DEBIAN_PROOT) {
+        val needsJdk = DependencyPlanner.requiredTools(request.projectKind)
+            .any { it.tool == "java" || it.tool == "javac" }
+        val jdk = if (request.environment == TerminalEnvironment.DEBIAN_PROOT && needsJdk) {
             gateway.resolveGuestJdk(request.guestAlias)
         } else {
             null

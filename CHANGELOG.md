@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.2 — Project Unshackle (published)
+
+Package metadata: versionCode 15 / versionName 0.8.2, min API 26, compile/target API 37, ARM64 JNI. This release retains application ID `com.nyx.ai` and the established debug signing certificate. It is published on GitHub with the APK, instrumentation APK, source archive, and checksum manifest. Physical-device validation remains pending.
+
+### Task-scoped dependency preparation
+
+Dependency bootstrap no longer runs before the planner has produced tasks. The persisted task graph now passes through one pre-execution gate on both first execution and resume. Only terminal/development tasks with affirmative project/toolchain requirements select a dependency plan; shell automation, inference-only work, verification-only work, and negated toolchain instructions proceed without unrelated Android SDK, Gradle, JDK, or package checks. Guest JDK resolution runs only for project kinds that require Java, and Git is optional unless a task explicitly invokes repository operations.
+
+Android application/APK development tasks continue to select the Android toolchain. Existing Termux/PRoot selection, environment and workspace validation, installation authorization, trusted package planning, post-install verification, task checkpoints, `needs_attention` handling, and resume semantics are retained. The task graph is saved before preparation; an approval block or failed dependency check keeps that graph available for review and retry.
+
+### Inference and source presentation
+
+Project-kind inference uses bounded, negation-aware keyword matching, so instructions such as “do not use Android SDK or Gradle; use shell only” do not falsely require those toolchains. Affirmative Android, Kotlin/JVM, C/C++, Node, and Python project terms remain recognized. `.gitattributes` marks only the bundled llama.cpp source tree as vendored for GitHub presentation; the vendored source and licenses are unchanged.
+
+See `RELEASE_NOTES_v0.8.2.md` and `V082_IMPLEMENTATION_REPORT.md` for test evidence and open device checks.
+
 ## 0.8.1 — Project Clear Signal (published)
 
 Package metadata: versionCode 14 / versionName 0.8.1, min API 26, compile/target API 37, ARM64 JNI. Debug-signed with the established certificate. Published as GitHub release v0.8.1 with the APK, instrumentation APK, source archive, and checksum manifest. See `RELEASE_NOTES_v0.8.1.md`.
