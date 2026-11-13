@@ -1,5 +1,24 @@
 # NYX Test Results
 
+## 0.8.3 — Project Mission Control (published build)
+
+Executed on 2026-11-13 UTC from `/home/ubuntu/nyx`:
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+
+Result: `BUILD SUCCESSFUL in 1m 29s`.
+
+- JVM tests: **702**, failures **0**, errors **0**, skipped **0** across 67 classes.
+- The ARM64 debug APK is `com.nyx.ai`, versionCode **16**, versionName **0.8.3**, minSdk 26, compile/target SDK 37, `arm64-v8a` only.
+- The instrumentation APK compiled but was not run. This environment has no `adb` binary or connected Android device; UI rendering/touch behavior and Termux/PRoot execution were not tested on hardware.
+- Published APK SHA-256: `bd6e00a4d3dfbd17cfd9dfc15f1b2c83b0f6e3b7b666edc51d8021766e29ea32`.
+- Instrumentation APK SHA-256: `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3`.
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`, matching the established v0.8.2 signing identity.
+- APK 16 KB ZIP alignment check passed (`zipalign -c -P 16 -v 4`). Existing Compose `Divider` deprecation and Room migration parameter-name warnings remain.
+- The APK, instrumentation APK, source ZIP, and checksum manifest are published in GitHub release v0.8.3. No AAB or Play submission was produced.
+
 ## 0.8.2 — Project Unshackle (published build)
 
 Executed on 2026-11-13 UTC from `/home/ubuntu/nyx`:

@@ -284,7 +284,7 @@ fun WorkerConsoleDialog(
                         Spacer(Modifier.weight(1f))
                         IconButton(
                             onClick = { clipboard.setText(AnnotatedString(exportText)) },
-                            modifier = Modifier.size(34.dp),
+                            modifier = Modifier.size(40.dp),
                         ) { Icon(Icons.Rounded.ContentCopy, "Copy diagnostic log", tint = ConsoleViolet, modifier = Modifier.size(16.dp)) }
                         IconButton(
                             onClick = {
@@ -294,7 +294,7 @@ fun WorkerConsoleDialog(
                                 }
                                 context.startActivity(Intent.createChooser(send, "Share NYX worker log"))
                             },
-                            modifier = Modifier.size(34.dp),
+                            modifier = Modifier.size(40.dp),
                         ) { Icon(Icons.Rounded.Share, "Share diagnostic log", tint = ConsoleViolet, modifier = Modifier.size(16.dp)) }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -417,15 +417,15 @@ private fun OperationRow(operation: ConsoleOperation, now: Long, onOpen: () -> U
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
                 Spacer(Modifier.width(7.dp))
-                Text(operation.status.uppercase(), color = accent, fontSize = 8.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold)
+                Text(operation.status.uppercase(), color = accent, fontSize = 9.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                Text(WorkerConsoleModel.formatDuration(WorkerConsoleModel.elapsedMillis(operation, now)), color = ConsoleMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
-                Text(" · ${operation.events.size} events", color = ConsoleMuted, fontSize = 8.sp)
+                Text(WorkerConsoleModel.formatDuration(WorkerConsoleModel.elapsedMillis(operation, now)), color = ConsoleMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                Text(" · ${operation.events.size} events", color = ConsoleMuted, fontSize = 9.sp)
             }
             Spacer(Modifier.height(4.dp))
-            Text(operation.title, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            Text(formatTime(operation.startedAt), color = ConsoleMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 3.dp))
-            Text("Tap for operation details", color = ConsoleViolet, fontSize = 8.sp, modifier = Modifier.padding(top = 5.dp))
+            Text(operation.title, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Text(formatTime(operation.startedAt), color = ConsoleMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 3.dp))
+            Text("Tap for operation details", color = ConsoleViolet, fontSize = 9.sp, modifier = Modifier.padding(top = 5.dp))
         }
     }
 }
@@ -510,28 +510,28 @@ private fun EventCard(activity: WorkerActivity, expanded: Boolean, onToggle: () 
     ) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(activity.kind.name, color = accent, fontSize = 8.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold)
-                if (!activity.status.isNullOrBlank()) Text(" · ${activity.status!!.uppercase()}", color = accent, fontSize = 8.sp)
+                Text(activity.kind.name, color = accent, fontSize = 9.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold)
+                if (!activity.status.isNullOrBlank()) Text(" · ${activity.status!!.uppercase()}", color = accent, fontSize = 9.sp)
                 Spacer(Modifier.weight(1f))
-                Text(formatTime(activity.at), color = ConsoleMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+                Text(formatTime(activity.at), color = ConsoleMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
             }
             Spacer(Modifier.height(3.dp))
-            Text(activity.title.replace('_', ' '), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(activity.title.replace('_', ' '), color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             if (activity.detail.isNotBlank()) {
                 Text(
-                    safe(activity.detail), color = ConsoleMuted, fontSize = 10.sp, lineHeight = 14.sp,
+                    safe(activity.detail), color = ConsoleMuted, fontSize = 11.sp, lineHeight = 16.sp,
                     maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
             if (!activity.toolName.isNullOrBlank()) {
-                Text("tool: ${activity.toolName}", color = ConsoleViolet, fontSize = 9.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 3.dp))
+                Text("tool: ${activity.toolName}", color = ConsoleViolet, fontSize = 10.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 3.dp))
             }
             if (expanded) {
                 DetailBlock("COMMAND / INPUT", activity.toolInput)
                 DetailBlock("OUTPUT / STDERR", activity.toolOutput)
             } else if (!activity.toolInput.isNullOrBlank() || !activity.toolOutput.isNullOrBlank()) {
-                Text("Tap for input/output", color = ConsoleViolet, fontSize = 8.sp, modifier = Modifier.padding(top = 4.dp))
+                Text("Tap for input/output", color = ConsoleViolet, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -541,10 +541,10 @@ private fun EventCard(activity: WorkerActivity, expanded: Boolean, onToggle: () 
 private fun DetailBlock(label: String, text: String?) {
     if (text.isNullOrBlank()) return
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        Text(label, color = ConsoleViolet, fontSize = 8.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = ConsoleViolet, fontSize = 9.sp, letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold)
         SelectionContainer {
             Text(
-                safe(text), color = ConsoleMuted, fontSize = 9.sp, lineHeight = 13.sp, fontFamily = FontFamily.Monospace,
+                safe(text), color = ConsoleMuted, fontSize = 10.sp, lineHeight = 14.sp, fontFamily = FontFamily.Monospace,
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
             )
         }
@@ -563,9 +563,9 @@ private fun safe(text: String): String = WorkerActivityBus.sanitizeTerminalText(
 private fun statusColor(status: String?): Color = when (status?.lowercase()) {
     "completed" -> ConsoleGreen
     "failed", "error" -> ConsoleRed
-    "cancelled", "interrupted" -> Color(0xFFF2C879)
+    "cancelled", "interrupted", "blocked", "needs_attention", "needs_review" -> Color(0xFFF2C879)
     "waiting" -> Color(0xFF7DD3FC)
-    "running" -> ConsoleViolet
+    "running", "verifying", "planning" -> ConsoleViolet
     else -> ConsoleMuted
 }
 

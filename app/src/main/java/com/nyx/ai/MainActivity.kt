@@ -296,8 +296,8 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SectionIntro(
-            "Terminal bridge",
-            "Run real commands through Termux. Nothing is simulated: stdout, stderr, and exit codes come from the Termux RUN_COMMAND callback. Destructive and privileged commands are blocked; every manually entered command requires exact approval. A risk classifier is not a shell sandbox."
+            "Execution environment",
+            "Choose the Termux host or an installed Debian PRoot guest. Manual commands use Termux RUN_COMMAND and require exact approval; destructive and privileged commands are blocked. A risk classifier is not a shell sandbox."
         )
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -307,11 +307,16 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                 Text(
                     when {
                         readiness == null -> "Not checked yet."
-                        readiness.hostAvailable -> "Host reachable${readiness.uname?.let { " · ${it.take(48)}" }.orEmpty()}"
+                        readiness.isolatedHost && readiness.hostAvailable -> "Termux host verified${readiness.uname?.let { " · ${it.take(48)}" }.orEmpty()}"
+                        readiness.hostAvailable -> "Host reachable · isolation not verified${readiness.uname?.let { " · ${it.take(48)}" }.orEmpty()}"
                         readiness.detail != null -> readiness.detail.orEmpty()
                         else -> "Termux is unavailable."
                     },
-                    color = if (readiness?.hostAvailable == true) Green else TextMuted,
+                    color = when {
+                        readiness?.isolatedHost == true && readiness.hostAvailable -> Green
+                        readiness?.hostAvailable == true -> Amber
+                        else -> TextMuted
+                    },
                     fontSize = 12.sp
                 )
                 if (readiness != null) {
@@ -322,14 +327,23 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     Text("timeout binary: ${if (readiness.timeoutAvailable) "available (hard timeouts)" else "missing (waits are bounded, process is not killed)"}", color = TextMuted, fontSize = 11.sp)
                     Text("Tools: ${readiness.tools.keys.sorted().joinToString().ifBlank { "none detected" }}", color = TextMuted, fontSize = 11.sp)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = vm::refreshTerminalEnvironment, enabled = !state.terminalDiscovering) {
-                        Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(4.dp)); Text(if (state.terminalDiscovering) "Checking…" else "Detect environment")
+                Text("SELECT EXECUTION TARGET", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.terminalEnvironment == TerminalEnvironment.TERMUX_HOST) {
+                        Button(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.TERMUX_HOST) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian), shape = RoundedCornerShape(11.dp)) { Text("Termux Host", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                    } else {
+                        OutlinedButton(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.TERMUX_HOST) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp), shape = RoundedCornerShape(11.dp)) { Text("Termux Host", fontSize = 11.sp) }
                     }
-                    OutlinedButton(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.TERMUX_HOST) }) { Text("Host") }
-                    OutlinedButton(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.DEBIAN_PROOT) }) { Text("Debian") }
+                    if (state.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
+                        Button(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.DEBIAN_PROOT) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian), shape = RoundedCornerShape(11.dp)) { Text("Debian PRoot", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                    } else {
+                        OutlinedButton(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.DEBIAN_PROOT) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp), shape = RoundedCornerShape(11.dp)) { Text("Debian PRoot", fontSize = 11.sp) }
+                    }
                 }
-                Text("Selected environment: ${state.terminalEnvironment.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }}", color = VioletSoft, fontSize = 11.sp)
+                OutlinedButton(onClick = vm::refreshTerminalEnvironment, enabled = !state.terminalDiscovering, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(11.dp)) {
+                    Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (state.terminalDiscovering) "Checking environment…" else "Detect environment")
+                }
+                Text("Selected target · ${if (state.terminalEnvironment == TerminalEnvironment.TERMUX_HOST) "Termux Host" else "Debian PRoot · ${state.guestAlias}"}", color = VioletSoft, fontSize = 11.sp)
                 val verifiedGuests = profile?.verifiedDistros.orEmpty()
                 if (verifiedGuests.isNotEmpty()) {
                     Text("VERIFIED GUESTS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
@@ -363,7 +377,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("ENVIRONMENT CAPABILITIES", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                    Text("CHECKED ENVIRONMENT CAPABILITIES", color = TextMuted, fontSize = 10.sp, letterSpacing = .7.sp)
                     TextButton(onClick = vm::refreshEnvironmentCapabilities) { Text("Refresh", color = VioletSoft, fontSize = 11.sp) }
                 }
                 val capabilities = state.environmentCapabilities
@@ -403,7 +417,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         }
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text("COMMAND", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                SectionLabel("MANUAL COMMAND", "Exact-command approval is retained for any requested change")
                 OutlinedTextField(
                     value = command,
                     onValueChange = { command = it.take(8_000) },
@@ -421,7 +435,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                 ) {
                     Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(7.dp)); Text(if (state.terminalRunning) "Running…" else "Run command")
                 }
-                if (state.terminalMessage.isNotBlank()) Text(state.terminalMessage, color = TextMuted, fontSize = 11.sp)
+                if (state.terminalMessage.isNotBlank()) Text(state.terminalMessage, color = if (state.terminalMessage.contains("denied", true) || state.terminalMessage.contains("failed", true) || state.terminalMessage.contains("error", true)) Amber else TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
             }
         }
         if (state.terminalPendingCommand != null) {
@@ -440,7 +454,10 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         if (state.terminalOutput.isNotBlank()) OutputCard("Terminal output", state.terminalOutput)
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("AUTONOMOUS WORKSPACE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { SectionLabel("AUTHORIZED WORKSPACE", "Path is checked in the selected environment") }
+                    Text(if (state.terminalToolsEnabled) "TOOLS ON" else "TOOLS OFF", color = if (state.terminalToolsEnabled) Amber else TextMuted, fontSize = 9.sp, letterSpacing = .7.sp, fontWeight = FontWeight.Bold)
+                }
                 Text("Enabling authorizes bounded source edits and execution of existing build/test scripts for objectives in this workspace. Only approve projects you trust: scripts can access other Termux files or the network. No raw model shell, installs, commits or publishing.", color = TextMuted, fontSize = 11.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = state.terminalToolsEnabled, onCheckedChange = vm::setTerminalToolsEnabled)
@@ -642,23 +659,33 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
 @Composable
 private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
     var goal by rememberSaveable { mutableStateOf("") }
-    var confirmResume by rememberSaveable { mutableStateOf(false) }
     var development by rememberSaveable { mutableStateOf(false) }
     var showConsole by rememberSaveable { mutableStateOf(false) }
+    var showAllMissions by rememberSaveable { mutableStateOf(false) }
+    var confirmResumeFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var expandedTaskIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+
     val selected = state.objectives.firstOrNull { it.id == state.selectedObjectiveId }
     val liveObjective = state.objectives.firstOrNull { it.status == "running" }
         ?: selected
-        ?: state.objectives.firstOrNull { it.status in setOf("planning", "paused", "needs_attention") }
-    val activeTask = state.objectiveTasks.firstOrNull {
-        (liveObjective == null || it.objectiveId == liveObjective.id) && it.status in setOf("running", "verifying")
-    }
+        ?: state.objectives.firstOrNull { it.status in setOf("planning", "paused", "needs_attention", "failed") }
+    val graphLoaded = liveObjective != null && state.selectedObjectiveId == liveObjective.id
+    val missionTasks = if (graphLoaded) {
+        state.objectiveTasks.filter { it.objectiveId == liveObjective?.id }.sortedBy { it.ordinal }
+    } else emptyList()
+    val activeTask = missionTasks.firstOrNull { it.status in setOf("running", "verifying") }
     val activities by WorkerActivityBus.events.collectAsState()
     val consoleRun = liveObjective?.let { WorkerConsoleModel.currentRun(activities, it.id) }
     val consoleActivities = if (liveObjective == null) emptyList() else {
         WorkerConsoleModel.forRun(activities, liveObjective.id, consoleRun?.runId)
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionIntro("Autonomy control center", "Create a goal, let NYX build a bounded dependency graph, and review each real agent/tool result. Execution runs in a foreground service; terminal tools are optional and off by default.")
+
+    Column(
+        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        MissionControlHeader()
+        SystemReadinessCard(state = state, mission = liveObjective)
         WorkerActivityEntry(
             activities = consoleActivities,
             running = state.objectiveRunning,
@@ -667,99 +694,89 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
             status = liveObjective?.status.orEmpty(),
             onOpen = { showConsole = true },
         )
-        Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
-            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text("NEW OBJECTIVE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                OutlinedTextField(value = goal, onValueChange = { goal = it.take(8_000) }, modifier = Modifier.fillMaxWidth(), label = { Text("What should NYX accomplish?") }, minLines = 3, maxLines = 6, shape = RoundedCornerShape(14.dp))
-                Text("Uses the selected agent, current model, and its allowlisted tools. Plans are validated, limited to ${com.nyx.ai.autonomy.ObjectivePlanValidator.MAX_TASKS} tasks, and scheduled by dependency and device resources.", color = TextMuted, fontSize = 11.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = development, onCheckedChange = { development = it }, enabled = state.terminalToolsEnabled)
-                    Text("Use verified project repair loop", color = TextMain, fontSize = 12.sp)
-                }
-                if (development) Text("Uses the saved trusted workspace/environment, detected existing build/test commands and configured repair limits. Baseline passing does not implement a new feature. No model shell, installs or publishing.", color = TextMuted, fontSize = 11.sp)
-                if (development) {
-                    OutlinedButton(onClick = { vm.preflightDevelopment() }) { Text("Run preflight") }
-                    state.preflight?.let { pre ->
-                        Text(
-                            if (pre.ready) "Preflight ready." else "Preflight blocked (${pre.blockers.size}).",
-                            color = if (pre.ready) Green else Color(0xFFF2C879),
-                            fontSize = 11.sp
-                        )
-                        pre.blockers.take(4).forEach { blocker ->
-                            Text("${blocker.code}: ${blocker.message} ${blocker.action}", color = TextMuted, fontSize = 10.sp)
-                        }
-                    }
-                }
-                Button(onClick = { vm.createObjective(goal, development); goal = "" }, enabled = goal.isNotBlank() && !state.objectiveRunning, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) {
-                    Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(7.dp)); Text(if (state.objectiveRunning) "Objective running" else "Plan and execute")
-                }
+        ActiveMissionCard(
+            mission = liveObjective,
+            tasks = missionTasks,
+            taskGraphLoaded = graphLoaded,
+            phase = if (state.objectiveRunning && liveObjective?.status == "running") state.objectivePhase else liveObjective?.status.orEmpty(),
+            activeTask = activeTask?.title,
+            isRunning = state.objectiveRunning && liveObjective?.status == "running",
+            onPause = vm::pauseObjective,
+            onCancel = { liveObjective?.let { vm.cancelObjective(it.id) } },
+            onReviewResume = { liveObjective?.let { confirmResumeFor = it.id } },
+            onLoadTaskGraph = { liveObjective?.let { vm.selectObjective(it.id) } },
+        )
+        if (state.error.isNotBlank()) {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1D27)), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Red.copy(alpha = .35f))) {
+                Text(state.error, color = Color(0xFFFFB3BC), fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.fillMaxWidth().padding(13.dp))
             }
         }
+        NewObjectiveCard(
+            goal = goal,
+            onGoalChange = { goal = it.take(8_000) },
+            development = development,
+            onDevelopmentChange = { development = it },
+            state = state,
+            onPreflight = vm::preflightDevelopment,
+            onCreate = { vm.createObjective(goal, development); goal = "" },
+        )
         if (state.objectives.isNotEmpty()) {
-            Text("OBJECTIVES", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-            state.objectives.forEach { item ->
-                val selectedCard = item.id == selected?.id
-                Card(onClick = { vm.selectObjective(item.id) }, colors = CardDefaults.cardColors(containerColor = if (selectedCard) Surface2 else Surface1), shape = RoundedCornerShape(14.dp), border = if (selectedCard) BorderStroke(1.dp, Violet.copy(alpha = .55f)) else null) {
-                    Column(Modifier.fillMaxWidth().padding(13.dp)) {
-                        Text(item.title, color = TextMain, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${item.status.replace('_', ' ').uppercase(Locale.ROOT)} · ${item.modelId}", color = if (item.status == "completed") Green else TextMuted, fontSize = 10.sp)
-                        if (!item.error.isNullOrBlank()) Text(item.error.orEmpty(), color = Color(0xFFF2C879), fontSize = 11.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("MISSIONS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.1.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                if (state.objectives.size > 4) TextButton(onClick = { showAllMissions = !showAllMissions }) {
+                    Text(if (showAllMissions) "Show recent" else "All ${state.objectives.size}", color = VioletSoft, fontSize = 11.sp)
+                }
+            }
+            state.objectives.take(if (showAllMissions) state.objectives.size else 4).forEach { item ->
+                MissionHistoryRow(
+                    item = item,
+                    selected = item.id == state.selectedObjectiveId,
+                    onClick = { vm.selectObjective(item.id) },
+                )
+            }
+        }
+        TaskTimeline(
+            mission = liveObjective,
+            tasks = missionTasks,
+            taskGraphLoaded = graphLoaded,
+            expandedTaskIds = expandedTaskIds,
+            onToggle = { id -> expandedTaskIds = if (id in expandedTaskIds) expandedTaskIds - id else expandedTaskIds + id },
+            onLoadTaskGraph = { liveObjective?.let { vm.selectObjective(it.id) } },
+        )
+        if (liveObjective != null && state.objectiveStreaming.isNotBlank()) OutputCard("Live model output", state.objectiveStreaming)
+        if (liveObjective != null && graphLoaded && state.objectiveArtifacts.isNotEmpty()) {
+            SectionLabel("VERIFIED ARTIFACTS", "Outputs recorded for this objective")
+            state.objectiveArtifacts.forEach { artifact -> OutputCard(artifact.name, artifact.content) }
+        }
+        if (liveObjective != null && graphLoaded && state.objectiveEvents.isNotEmpty()) {
+            SectionLabel("EXECUTION TRACE", "Persisted events · expand in Live Activity for full tool details")
+            Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    state.objectiveEvents.takeLast(12).forEach { event ->
+                        Text(
+                            "${event.kind.replace('_', ' ').uppercase(Locale.ROOT)}  ·  ${event.detail}",
+                            color = if (event.kind.contains("failed") || event.kind.contains("error")) Red else TextMuted,
+                            fontSize = 11.sp, lineHeight = 15.sp,
+                        )
                     }
                 }
             }
         }
-        if (selected != null) {
-            Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${selected.status.replace('_', ' ').uppercase(Locale.ROOT)} · ${state.objectiveTasks.count { it.status == "completed" }}/${state.objectiveTasks.size} tasks", color = VioletSoft, fontSize = 11.sp, letterSpacing = .5.sp)
-                    Text(selected.goal, color = TextMain, fontSize = 13.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (state.objectiveRunning) OutlinedButton(onClick = vm::pauseObjective) { Icon(Icons.Rounded.Stop, null); Spacer(Modifier.width(4.dp)); Text("Pause") }
-                        if (selected.status in setOf("paused", "needs_attention", "failed")) OutlinedButton(onClick = { confirmResume = true }, enabled = !state.objectiveRunning) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Review & resume") }
-                        if (selected.status !in setOf("completed", "cancelled")) OutlinedButton(onClick = { vm.cancelObjective(selected.id) }) { Text("Cancel") }
-                    }
-                    if (state.objectiveRunning) Text("Running in a foreground service (${state.objectivePhase}). Android may still stop background work; checkpoints remain on-device and uncertain tasks are never replayed automatically.", color = TextMuted, fontSize = 11.sp)
-                }
-            }
-            if (state.objectiveStreaming.isNotBlank()) OutputCard("Live model output", state.objectiveStreaming)
-            if (state.objectiveTasks.isNotEmpty()) {
-                Text("TASK GRAPH · DEPENDENCY-AWARE SCHEDULER", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                state.objectiveTasks.sortedBy { it.ordinal }.forEach { task ->
-                    val deps = runCatching { org.json.JSONArray(task.dependsOnJson).let { array -> (0 until array.length()).joinToString { array.optString(it).take(8) } } }.getOrDefault("")
-                    Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(14.dp)) {
-                        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("${task.ordinal + 1}. ${task.title}", color = TextMain, fontWeight = FontWeight.Medium)
-                            Text("${task.status.replace('_', ' ').uppercase(Locale.ROOT)} · ${task.workerKind} · attempt ${task.attemptCount}/${task.maxAttempts}${if (deps.isNotBlank()) " · needs $deps" else " · no prerequisites"}", color = if (task.status == "completed") Green else if (task.status in setOf("failed", "needs_review", "blocked")) Color(0xFFF2C879) else TextMuted, fontSize = 10.sp)
-                            Text(task.instructions, color = TextMuted, fontSize = 11.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                            if (!task.error.isNullOrBlank()) Text(task.error.orEmpty(), color = Color(0xFFF2C879), fontSize = 11.sp)
-                            if (!task.outcome.isNullOrBlank()) Text(task.outcome.orEmpty(), color = TextMain, fontSize = 12.sp, maxLines = 10, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-            if (state.objectiveArtifacts.isNotEmpty()) {
-                Text("ARTIFACTS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                state.objectiveArtifacts.forEach { artifact -> OutputCard(artifact.name, artifact.content) }
-            }
-            if (state.objectiveEvents.isNotEmpty()) {
-                Text("PERSISTED EXECUTION TRACE", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(14.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        state.objectiveEvents.takeLast(30).forEach { event ->
-                            Text("${event.kind.uppercase(Locale.ROOT)} · ${event.detail}", color = if (event.kind.contains("failed") || event.kind.contains("error")) Color(0xFFF2C879) else TextMuted, fontSize = 10.sp)
-                        }
-                    }
-                }
-            }
-            Text("Completion requires locally checked evidence: exit codes, expected output, file existence/content, or checksums. Inference-only tasks establish output existence, not semantic correctness; prose never proves tool completion. Failed or interrupted actions require explicit review before retry.", color = TextMuted, fontSize = 10.sp)
-        }
+        if (liveObjective != null) Text(
+            "Completion requires locally checked evidence—exit codes, expected output, file existence/content, or checksums. Failed or interrupted actions require explicit review before retry.",
+            color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp,
+        )
+        Spacer(Modifier.height(8.dp))
     }
-    if (confirmResume && selected != null) AlertDialog(
-        onDismissRequest = { confirmResume = false },
+
+    val resumeTarget = confirmResumeFor?.let { id -> state.objectives.firstOrNull { it.id == id } }
+    if (resumeTarget != null) AlertDialog(
+        onDismissRequest = { confirmResumeFor = null },
         title = { Text("Review before resuming") },
-        text = { Text("A failed or interrupted task may already have changed local memory or workspace files. NYX will not automatically retry it. Proceed only after reviewing its trace and deciding a repeat is safe.") },
-        confirmButton = { TextButton(onClick = { confirmResume = false; vm.resumeObjective(selected.id, userApprovedRetry = true) }) { Text("I reviewed · resume") } },
-        dismissButton = { TextButton(onClick = { confirmResume = false }) { Text("Not now") } }
+        text = { Text("A failed or interrupted task may already have changed local memory or workspace files. NYX will not automatically retry it. Review the trace and decide whether repeating the work is safe.") },
+        confirmButton = { TextButton(onClick = { confirmResumeFor = null; vm.resumeObjective(resumeTarget.id, userApprovedRetry = true) }) { Text("I reviewed · resume") } },
+        dismissButton = { TextButton(onClick = { confirmResumeFor = null }) { Text("Not now") } },
     )
     if (showConsole) WorkerConsoleDialog(
         activities = consoleActivities,
@@ -784,6 +801,339 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
             )
         },
     )
+}
+
+@Composable
+private fun MissionControlHeader() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Surface1),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, Violet.copy(alpha = .24f)),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("NYX  /  MISSION CONTROL", color = VioletSoft, fontSize = 10.sp, letterSpacing = 1.25.sp, fontWeight = FontWeight.SemiBold)
+            Text("Autonomy", color = TextMain, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Plan bounded work, follow the real execution state, and review evidence before resuming uncertain tasks.", color = TextMuted, fontSize = 12.sp, lineHeight = 17.sp)
+        }
+    }
+}
+
+@Composable
+private fun SystemReadinessCard(state: NyxState, mission: com.nyx.ai.data.ObjectiveEntity?) {
+    val profile = state.terminalProfile
+    val environment = when (state.terminalEnvironment) {
+        TerminalEnvironment.TERMUX_HOST -> when {
+            profile == null -> "Not checked"
+            profile.isolatedHost && profile.hostAvailable -> "Termux host verified"
+            profile.hostAvailable -> "Host reachable · nested session"
+            else -> "Host not detected"
+        }
+        TerminalEnvironment.DEBIAN_PROOT -> when {
+            profile == null -> "Not checked"
+            profile.verifiedDistros.any { it.equals(state.guestAlias, true) } -> "${state.guestAlias} guest verified"
+            profile.debianListed -> "Debian listed · guest not verified"
+            else -> "${state.guestAlias} not verified"
+        }
+    }
+    val envColor = when {
+        environment.contains("verified", true) -> Green
+        environment.contains("listed", true) || environment.contains("nested", true) -> Amber
+        else -> TextMuted
+    }
+    val inferenceState = when {
+        state.nativeMode && state.nativeStatus.loaded -> if (state.nativeStatus.phase.name == "GENERATING") "Generating" else "Model loaded"
+        state.nativeMode && state.nativeStatus.phase.name == "LOADING" -> "Loading model"
+        state.nativeMode && state.nativeStatus.phase.name == "ERROR" -> "Load error"
+        state.nativeMode -> "Model not loaded"
+        state.connected -> if (state.isGenerating) "Generating" else "Connected"
+        else -> "Disconnected"
+    }
+    val inferenceModel = if (state.nativeMode) {
+        state.nativeStatus.modelName ?: state.nativeStatus.modelPath?.substringAfterLast('/') ?: state.selectedModel.substringAfterLast('/').ifBlank { "No model selected" }
+    } else state.selectedModel.ifBlank { "No model selected" }
+    val inferenceColor = when {
+        inferenceState == "Connected" || inferenceState == "Model loaded" || inferenceState == "Generating" -> Green
+        inferenceState == "Load error" -> Red
+        else -> Amber
+    }
+    val workspaceLine = when (val check = state.workspaceCheck) {
+        is WorkspaceCheck.Valid -> if (state.terminalToolsEnabled) "Authorized · ${check.normalizedPath}" else "Verified · tools disabled"
+        is WorkspaceCheck.Invalid -> "Needs attention · ${check.code}"
+        null -> if (state.terminalWorkspace.isBlank()) "Not configured" else "Not verified"
+    }
+    val workspaceColor = when {
+        state.workspaceCheck is WorkspaceCheck.Valid && state.terminalToolsEnabled -> Green
+        state.workspaceCheck is WorkspaceCheck.Valid -> VioletSoft
+        state.workspaceCheck is WorkspaceCheck.Invalid -> Amber
+        else -> TextMuted
+    }
+    val objectiveLine = when {
+        state.objectiveRunning -> "Running · ${state.objectivePhase.ifBlank { "phase unavailable" }}"
+        mission != null -> mission.status.replace('_', ' ').replaceFirstChar { it.uppercase() }
+        else -> "Idle · no active objective"
+    }
+    val objectiveColor = if (state.objectiveRunning) VioletSoft else mission?.let { missionStatusColor(it.status) } ?: TextMuted
+
+    Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            SectionLabel("SYSTEM READINESS", "Observed state · no synthetic readiness score")
+            ReadinessRow("Inference", inferenceState, "$inferenceModel · ${if (state.nativeMode) "Native GGUF" else "configured endpoint"}", inferenceColor)
+            ReadinessRow("Environment", environment, state.terminalEnvironment.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }, envColor)
+            ReadinessRow("Workspace", workspaceLine, if (state.terminalToolsEnabled) "Objective terminal tools enabled" else "Objective terminal tools disabled", workspaceColor)
+            ReadinessRow("Objective", objectiveLine, mission?.title ?: "No mission selected", objectiveColor)
+        }
+    }
+}
+
+@Composable
+private fun ReadinessRow(label: String, value: String, detail: String, accent: Color) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
+        Spacer(Modifier.width(9.dp))
+        Text(label, modifier = Modifier.width(78.dp), color = TextMuted, fontSize = 11.sp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(value, color = accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(detail, color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ActiveMissionCard(
+    mission: com.nyx.ai.data.ObjectiveEntity?,
+    tasks: List<com.nyx.ai.data.ObjectiveTaskEntity>,
+    taskGraphLoaded: Boolean,
+    phase: String,
+    activeTask: String?,
+    isRunning: Boolean,
+    onPause: () -> Unit,
+    onCancel: () -> Unit,
+    onReviewResume: () -> Unit,
+    onLoadTaskGraph: () -> Unit,
+) {
+    val completed = tasks.count { it.status == "completed" }
+    val progress = if (tasks.isEmpty()) 0f else completed.toFloat() / tasks.size.toFloat()
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Surface2),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, (mission?.let { missionStatusColor(it.status) } ?: Violet).copy(alpha = .38f)),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("ACTIVE MISSION", color = VioletSoft, fontSize = 10.sp, letterSpacing = 1.1.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                MissionStatusPill(if (isRunning) phase.ifBlank { "running" } else mission?.status ?: "idle")
+            }
+            Text(mission?.title ?: "No mission selected", color = TextMain, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (mission == null) {
+                Text("Create an objective below to begin. Mission status and progress appear here only when NYX has persisted them.", color = TextMuted, fontSize = 12.sp, lineHeight = 17.sp)
+            } else {
+                Text(if (isRunning) "Current phase · ${phase.ifBlank { "running" }}" else "Objective state · ${mission.status.replace('_', ' ')}", color = TextMuted, fontSize = 11.sp)
+                if (taskGraphLoaded && tasks.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("$completed of ${tasks.size} tasks complete", color = TextMain, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text("${(progress * 100).toInt()}%", color = VioletSoft, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    }
+                    Box(Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(8.dp)).background(Obsidian)) {
+                        if (progress > 0f) Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxSize().background(Violet))
+                    }
+                    Text("Active task · ${activeTask ?: "No task currently running"}", color = if (activeTask != null) VioletSoft else TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                } else if (!taskGraphLoaded) {
+                    Text("Task graph is persisted; select this mission to load its task details.", color = TextMuted, fontSize = 11.sp, lineHeight = 15.sp)
+                    OutlinedButton(onClick = onLoadTaskGraph, shape = RoundedCornerShape(10.dp)) { Text("Load mission details", fontSize = 11.sp) }
+                } else {
+                    Text(if (mission.status == "planning") "Planning · no persisted task count yet" else "No persisted tasks are available for this mission.", color = TextMuted, fontSize = 11.sp)
+                }
+                if (!mission.goal.isNullOrBlank()) Text(mission.goal, color = TextMuted, fontSize = 11.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    if (isRunning) OutlinedButton(onClick = onPause, shape = RoundedCornerShape(10.dp)) { Icon(Icons.Rounded.Stop, null); Spacer(Modifier.width(4.dp)); Text("Pause") }
+                    if (mission.status in setOf("paused", "needs_attention", "failed")) OutlinedButton(onClick = onReviewResume, shape = RoundedCornerShape(10.dp)) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Review & resume") }
+                    if (mission.status !in setOf("completed", "cancelled")) OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(10.dp)) { Text("Cancel") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewObjectiveCard(
+    goal: String,
+    onGoalChange: (String) -> Unit,
+    development: Boolean,
+    onDevelopmentChange: (Boolean) -> Unit,
+    state: NyxState,
+    onPreflight: () -> Unit,
+    onCreate: () -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            SectionLabel("NEW OBJECTIVE", "Start with one clear goal and a way to check success")
+            OutlinedTextField(
+                value = goal,
+                onValueChange = onGoalChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("What should NYX accomplish?") },
+                supportingText = { Text("Be specific about the result. Keep terminal tools off unless the task requires workspace execution.") },
+                minLines = 3,
+                maxLines = 6,
+                shape = RoundedCornerShape(14.dp),
+            )
+            Text("NYX plans a bounded task graph, validates it, then schedules tasks by dependencies and device resources.", color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = development, onCheckedChange = onDevelopmentChange, enabled = state.terminalToolsEnabled)
+                Column {
+                    Text("Use verified project repair loop", color = TextMain, fontSize = 12.sp)
+                    Text("Only for an authorized, saved workspace", color = TextMuted, fontSize = 10.sp)
+                }
+            }
+            if (development) {
+                Text("Uses detected existing build/test commands and configured repair limits. It does not implement new features, install packages, run raw model shell commands, or publish changes.", color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
+                OutlinedButton(onClick = onPreflight, enabled = !state.terminalDiscovering, shape = RoundedCornerShape(10.dp)) { Text("Run preflight") }
+                state.preflight?.let { pre ->
+                    MissionStatusPill(if (pre.ready) "verified" else "needs_attention")
+                    pre.blockers.take(4).forEach { blocker -> Text("${blocker.code}: ${blocker.message} ${blocker.action}", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp) }
+                }
+            }
+            Button(
+                onClick = onCreate,
+                enabled = goal.isNotBlank() && !state.objectiveRunning,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(7.dp))
+                Text(if (state.objectiveRunning) "An objective is running" else "Plan and execute", fontWeight = FontWeight.SemiBold)
+            }
+            if ((!state.connected || state.selectedModel.isBlank()) && !(state.nativeMode && state.nativeStatus.loaded)) {
+                Text("Connect an inference provider and select a model before starting an objective.", color = Amber, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MissionHistoryRow(item: com.nyx.ai.data.ObjectiveEntity, selected: Boolean, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = if (selected) Surface2 else Surface1),
+        shape = RoundedCornerShape(13.dp),
+        border = if (selected) BorderStroke(1.dp, Violet.copy(alpha = .55f)) else null,
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(missionStatusColor(item.status)))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(item.title, color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("${item.status.replace('_', ' ').uppercase(Locale.ROOT)} · ${item.modelId ?: "model unavailable"}", color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (selected) Text("SELECTED", color = VioletSoft, fontSize = 9.sp, letterSpacing = .7.sp)
+        }
+    }
+}
+
+@Composable
+private fun TaskTimeline(
+    mission: com.nyx.ai.data.ObjectiveEntity?,
+    tasks: List<com.nyx.ai.data.ObjectiveTaskEntity>,
+    taskGraphLoaded: Boolean,
+    expandedTaskIds: Set<String>,
+    onToggle: (String) -> Unit,
+    onLoadTaskGraph: () -> Unit,
+) {
+    SectionLabel("TASK TIMELINE", mission?.let { "Persisted tasks · ${it.status.replace('_', ' ')}" } ?: "Select or create a mission to view tasks")
+    when {
+        mission == null -> Text("No objective task graph to display yet.", color = TextMuted, fontSize = 12.sp)
+        !taskGraphLoaded -> Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("The selected objective is different from the active mission. Load its saved task graph to inspect real progress.", color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
+                OutlinedButton(onClick = onLoadTaskGraph, shape = RoundedCornerShape(10.dp)) { Text("Load active mission tasks") }
+            }
+        }
+        tasks.isEmpty() -> Text(if (mission.status == "planning") "Tasks will appear after planning is persisted." else "No persisted task steps for this mission.", color = TextMuted, fontSize = 11.sp)
+        else -> tasks.forEachIndexed { index, task ->
+            MissionTaskCard(
+                task = task,
+                number = index + 1,
+                expanded = task.id in expandedTaskIds,
+                onToggle = { onToggle(task.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MissionTaskCard(task: com.nyx.ai.data.ObjectiveTaskEntity, number: Int, expanded: Boolean, onToggle: () -> Unit) {
+    val accent = missionStatusColor(task.status)
+    val deps = remember(task.dependsOnJson) {
+        runCatching { org.json.JSONArray(task.dependsOnJson).let { a -> (0 until a.length()).joinToString { a.optString(it).take(8) } } }.getOrDefault("")
+    }
+    Card(
+        onClick = onToggle,
+        colors = CardDefaults.cardColors(containerColor = Surface1),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = .23f)),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(28.dp).clip(CircleShape).background(accent.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+                    Text(number.toString().padStart(2, '0'), color = accent, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(WorkerActivityBus.sanitizeTerminalText(task.title).take(240), color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = if (expanded) 4 else 2, overflow = TextOverflow.Ellipsis)
+                    Text("${task.workerKind} · attempt ${task.attemptCount}/${task.maxAttempts}${if (deps.isNotBlank()) " · needs $deps" else " · no prerequisites"}", color = TextMuted, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.width(6.dp))
+                MissionStatusPill(task.status)
+            }
+            if (!expanded) {
+                val summary = task.error ?: task.outcome ?: task.instructions
+                if (!summary.isNullOrBlank()) Text(WorkerActivityBus.sanitizeTerminalText(summary).take(700), color = if (!task.error.isNullOrBlank()) Red else TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("Tap to expand diagnostics and evidence", color = VioletSoft, fontSize = 10.sp)
+            } else {
+                TaskDetail("INSTRUCTIONS", task.instructions)
+                task.verification?.let { TaskDetail("SUCCESS CHECK", it) }
+                task.error?.let { TaskDetail("DIAGNOSTIC", it, Red) }
+                task.outcome?.let { TaskDetail("OUTCOME", it, TextMain) }
+                task.evidenceJson?.let { TaskDetail("EVIDENCE", it) }
+                Text("Tap to collapse", color = VioletSoft, fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskDetail(label: String, value: String, color: Color = TextMuted) {
+    if (value.isBlank()) return
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, color = VioletSoft, fontSize = 9.sp, letterSpacing = .8.sp, fontWeight = FontWeight.SemiBold)
+        Text(WorkerActivityBus.sanitizeTerminalText(value).take(2_400), color = color, fontSize = 11.sp, lineHeight = 16.sp)
+    }
+}
+
+@Composable
+private fun SectionLabel(title: String, subtitle: String? = null) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, color = VioletSoft, fontSize = 10.sp, letterSpacing = 1.05.sp, fontWeight = FontWeight.SemiBold)
+        if (!subtitle.isNullOrBlank()) Text(subtitle, color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+    }
+}
+
+@Composable
+private fun MissionStatusPill(status: String) {
+    val color = missionStatusColor(status)
+    Box(Modifier.clip(RoundedCornerShape(50)).background(color.copy(alpha = .15f)).padding(horizontal = 9.dp, vertical = 5.dp)) {
+        Text(status.replace('_', ' ').uppercase(Locale.ROOT), color = color, fontSize = 9.sp, letterSpacing = .55.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+private val Amber = Color(0xFFF2C879)
+private fun missionStatusColor(status: String): Color = when (status.lowercase()) {
+    "completed", "verified", "succeeded", "passed" -> Green
+    "running", "verifying", "planning", "generating" -> VioletSoft
+    "failed", "error" -> Red
+    "blocked", "needs_attention", "needs_review", "paused", "cancelled" -> Amber
+    else -> TextMuted
 }
 
 @Composable

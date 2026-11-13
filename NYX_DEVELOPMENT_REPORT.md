@@ -1,5 +1,19 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.3 — Project Mission Control (published)
+
+NYX 0.8.3 is versionCode 16/versionName 0.8.3 for `com.nyx.ai`, published as [GitHub release v0.8.3](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3). It makes existing autonomy state easier to inspect through Mission Control, task details, clearer host/guest selection, and Live Worker Console visual refinements; it does not add a new execution engine or widen permissions. The v0.8.2 task-scoped dependency repairs remain intact.
+
+| Area | Status | Evidence/limit |
+| :--- | :--- | :--- |
+| Autonomy Mission Control | Implemented, build-tested | Displays persisted objective/task progress and existing controls; physical rendering was not tested. |
+| Readiness and task timeline | Implemented, build-tested | Uses actual model, environment, workspace, objective, and task state; no synthetic readiness score is presented. |
+| Terminal and console presentation | Implemented, build-tested | Separates Termux Host/Debian PRoot targets and improves Live Worker Console readability; authorization paths are unchanged. |
+| Verification | Build-tested | 702 JVM tests passed; ARM64 debug and instrumentation APKs assembled. Instrumentation was not run. |
+| Device behavior | Pending | No physical-device visual/touch/inset, fold/unfold, or Termux/PRoot execution check is claimed. |
+
+The published assets include the primary APK, instrumentation APK, source archive, and checksum manifest. The APK is debug-signed, not production/Play-signed.
+
 ## v0.8.2 — Project Unshackle (published)
 
 NYX 0.8.2 is versionCode 15/versionName 0.8.2, debug-signed with the established certificate, and published as the GitHub release `v0.8.2`. This focused autonomy reliability release fixes false toolchain classification and moves dependency preparation behind task planning, while preserving the persisted task graph and the same gate on resume.

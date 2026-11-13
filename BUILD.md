@@ -1,6 +1,10 @@
-# Building NYX 0.8.2
+# Building NYX 0.8.3 — Project Mission Control
 
-Package identity: `com.nyx.ai`, versionCode **15**, versionName **0.8.2**. The verified clean command is `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`; it produces 702 passing JVM tests, a debug APK, and a compiled instrumentation-test APK. This is the published GitHub release build; it remains a debug-signed development artifact, not a production Play build. No physical device is required for the build, but real Termux/PRoot installation and objective resumption still require one.
+Package identity: `com.nyx.ai`, versionCode **16**, versionName **0.8.3**. The published v0.8.3 build passed `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`: 702 JVM tests pass, the ARM64 debug APK builds, and the instrumentation-test APK compiles. **The official v0.8.3 GitHub release is now the latest release.** The APK remains debug-signed, not a production Play build. No physical device was available for rendering/touch validation or Termux/PRoot runtime checks.
+
+## v0.8.3 release artifacts
+
+The official [NYX v0.8.3 — Project Mission Control release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3) includes the ARM64 primary installation APK, compiled instrumentation APK, clean source archive, and SHA-256 manifest. Download the assets from that page and verify the APKs and source archive with `sha256sum -c NYX-v0.8.3-SHA256SUMS.txt`. The APK is debug-signed, not production/Play-signed; instrumentation was compiled but not executed, and physical-device behavior remains unverified. No AAB or Google Play submission was produced.
 
 ## Requirements
 
@@ -38,16 +42,16 @@ python3 tools/check_sdk_policy.py --self-test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package identity: `com.nyx.ai`; versionCode 15/versionName 0.8.2; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
+Package identity: `com.nyx.ai`; versionCode 16/versionName 0.8.3; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
 
 Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, settings, and imported GGUF copies; preserve the prior key and back up user data first. `assembleRelease` alone is not a production-signed release. Keep all signing secrets outside source archives.
 
 ## Automated checks and current verification boundary
 
-- The final clean Gradle run completed with `BUILD SUCCESSFUL in 1m 32s`: **702 JVM tests, zero failures, zero errors, and zero skips** across 67 classes. Focused v0.8.2 suites were `DependencyPlannerTest` (22), `ObjectiveDependencyScopeTest` (5), and `DependencyBootstrapTest` (9).
-- The new regression coverage checks shell-only objectives, negated toolchain instructions, affirmative Android development tasks, dependency-gate bypass for shell automation, pre-execution dependency preparation on a resumed task graph, and skipping guest JDK resolution for non-JVM projects.
-- The debug APK is `com.nyx.ai`, versionCode 15/versionName 0.8.2, min API 26, compile/target API 37, `arm64-v8a` only. Its SHA-256 and the established debug signing certificate are in [TEST_RESULTS.md](TEST_RESULTS.md). APK 16 KB ZIP alignment passed.
-- `assembleDebugAndroidTest` compiled the instrumentation APK; no instrumentation test was executed. No physical Android device was attached, so Termux/PRoot, package installation, and resumed objective behavior remain device checks.
+- The final v0.8.3 clean Gradle run completed with `BUILD SUCCESSFUL in 1m 29s`: **702 JVM tests, zero failures, zero errors, and zero skips** across 67 classes. `assembleDebugAndroidTest` compiled the instrumentation APK; no instrumentation test was executed.
+- v0.8.3's Autonomy/Terminal changes are presentation and binding changes over existing state/actions. No objective policy, workspace grant, command authority, checkpoint, or resume confirmation was removed.
+- The debug APK is `com.nyx.ai`, versionCode 16/versionName 0.8.3, min API 26, compile/target API 37, `arm64-v8a` only. Its SHA-256 and the established debug signing certificate are in [TEST_RESULTS.md](TEST_RESULTS.md). APK 16 KB ZIP alignment passed.
+- No physical Android device was attached and `adb` is unavailable in this environment. Mission Control rendering/touch behavior, Termux/PRoot runtime, package installation, and resumed objective behavior remain device checks.
 - The earlier host x86_64 JNI/model run and standalone ARM64 cross-compilation recorded in [TEST_RESULTS.md](TEST_RESULTS.md) are historical host evidence, not an Android runtime pass or proof that this release was tested on a phone.
 - Existing compiler warnings are the Compose `Divider` deprecation and Room migration parameter-name notices; no compile errors occurred.
 
@@ -77,7 +81,7 @@ The configured NDK/linker produces 16 KB ELF alignment, and AGP uses uncompresse
 
 Extract its libraries and inspect each with the NDK `llvm-objdump -p`; `LOAD` alignment must be at least `2**14`. See [16 KB packaging/device guidance](docs/ANDROID_COMPATIBILITY.md#16-kb-native-packaging-and-validation). APK/ELF alignment is not a real 16 KB device-runtime pass.
 
-## v0.8.2 release artifacts and source archive
+## Historical v0.8.2 release artifacts and source archive
 
 The reproducible packaging script in `/home/ubuntu/package_nyx_v082.sh` copies the built ARM64 debug APK and compiled instrumentation APK, creates a clean source ZIP, and writes SHA-256 checksums. Verify with:
 

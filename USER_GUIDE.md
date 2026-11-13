@@ -1,6 +1,14 @@
-# NYX User Guide — v0.8.2 “Project Unshackle”
+# NYX User Guide — v0.8.3 “Project Mission Control”
 
-> v0.8.2 “Project Unshackle” is the latest published release. The release passed its JVM and build checks; physical-device autonomy validation remains pending.
+> v0.8.3 “Project Mission Control” is the latest published release. The ARM64 debug APK and 702-test JVM/build checks are verified; physical-device visual interaction and Termux/PRoot execution remain unverified.
+
+## v0.8.3 — Project Mission Control (published)
+
+The candidate reorganizes **Autonomy** around the selected/active objective. The mission card shows the stored objective state and, when its task graph is loaded, a completion fraction based only on persisted completed tasks. The current phase and active task appear only when available from execution state. Pause and Cancel use the existing service actions. **Review & resume** opens the existing confirmation explaining why an interrupted or failed action must be inspected before a retry is approved.
+
+The readiness panel reports actual provider/model connection or native model-load state, the selected Termux host or verified Debian/PRoot guest, the current workspace verification/authorization, and objective state. “Not checked,” “not verified,” and “tools disabled” remain explicit states; it does not synthesize a readiness percentage. Selecting an older mission loads its own persisted task graph. Expand a task to inspect prerequisites, instructions, success criteria, result/error, and bounded evidence.
+
+The **Terminal** view uses separate Termux Host and Debian PRoot target controls, followed by the existing environment probe, verified-guest selection, capability evidence, workspace controls, and exact-command approval flow. These are presentation changes; they do not widen command authority or bypass existing checks. The Live Worker Console keeps its history and controls with clearer status text and larger copy/share targets. This release is available from the [official GitHub release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3). Physical-device screen rendering and touch interaction remain unverified. See [release notes](RELEASE_NOTES_v0.8.3.md) and [implementation report](V083_IMPLEMENTATION_REPORT.md).
 
 ## What changed in v0.8.2 — Project Unshackle
 

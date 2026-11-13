@@ -1,8 +1,8 @@
 # Changelog
 
-> **Legacy filename:** this file is retained for existing links. The canonical, maintained release history is [CHANGELOG.md](CHANGELOG.md). Current release: **v0.8.2 — Project Unshackle** (published).
+> **Legacy filename:** this file is retained for existing links. The canonical, maintained release history is [CHANGELOG.md](CHANGELOG.md). Current release: **v0.8.3 — Project Mission Control** ([published](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3)).
 
-> Historical v0.1.0 notes are retained from the initial project publication. The current, canonical release history through v0.8.2 is in [CHANGELOG.md](CHANGELOG.md).
+> Historical v0.1.0 notes are retained from the initial project publication. The current, canonical release history through v0.8.3 is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 0.1.0 — Initial implementation
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.3 — Project Mission Control (published)
+
+The Autonomy screen now summarizes the actual selected/active objective, execution phase, persisted task completion count, active task, and existing objective controls. Its readiness rows are sourced from real inference, environment, workspace, and objective state; an absent probe or model is not presented as ready. Task timeline cards expand to show persisted instructions, prerequisites, verification criteria, outcomes, errors, and bounded evidence. Historical objective selection loads that objective's own task graph.
+
+Terminal target selection now clearly distinguishes Termux Host from Debian PRoot and groups environment detection/capability evidence, workspace authorization, and manually approved commands. The existing terminal permission and exact-command approval paths are unchanged. Live Worker Console status typography and copy/share touch targets are larger while run history, redacted diagnostics, and lifecycle actions remain.
+
+Package metadata is versionCode 16/versionName 0.8.3 for `com.nyx.ai`; the established debug signer is retained. The official GitHub release includes the debug-signed ARM64 APK, compiled instrumentation APK, source archive, and checksum manifest. JVM/build checks passed; the instrumentation APK was not executed, and this release’s UI and Termux/PRoot runtime have not been physically validated. See `RELEASE_NOTES_v0.8.3.md` and `V083_IMPLEMENTATION_REPORT.md`.
+
 ## 0.8.2 — Project Unshackle (published)
 
 Package metadata: versionCode 15 / versionName 0.8.2, min API 26, compile/target API 37, ARM64 JNI. This release retains application ID `com.nyx.ai` and the established debug signing certificate. It is published on GitHub with the APK, instrumentation APK, source archive, and checksum manifest. Physical-device validation remains pending.

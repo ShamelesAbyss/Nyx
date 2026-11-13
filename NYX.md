@@ -1,7 +1,7 @@
-# NYX Eclipse AI — v0.8.2
+# NYX Eclipse AI — v0.8.3
 
-This legacy filename is retained so existing links keep working. The canonical project homepage is [README.md](README.md).
+This legacy filename is retained so existing links keep working. The canonical project homepage is [README.md](README.md), and the current release is [NYX v0.8.3 — Project Mission Control](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3).
 
-NYX v0.8.2 “Project Unshackle” fixes autonomy dependency orchestration: it persists a concrete task graph before selecting relevant toolchains, avoids irrelevant development-dependency blockers for shell automation, and applies the same check before objective resumption. Existing approval, workspace, checkpoint, and recovery boundaries remain intact.
+v0.8.3 improves how existing autonomy state is presented: Mission Control surfaces persisted objectives and task progress, Terminal distinguishes the Termux Host from Debian PRoot, and the Live Worker Console is easier to scan. It adds no new autonomy authority; the v0.8.2 task-scoped dependency checks and resume repairs remain intact.
 
-The complete overview, current downloads, feature status, and limitations are in [README.md](README.md); see [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md), [RELEASE_NOTES_v0.8.2.md](RELEASE_NOTES_v0.8.2.md), [V082_IMPLEMENTATION_REPORT.md](V082_IMPLEMENTATION_REPORT.md), and [TEST_RESULTS.md](TEST_RESULTS.md) for implementation and verification details.
+See [release notes](RELEASE_NOTES_v0.8.3.md), [implementation report](V083_IMPLEMENTATION_REPORT.md), [test results](TEST_RESULTS.md), and [changelog](CHANGELOG.md) for scope and verification. Physical-device UI and Termux/PRoot validation remain outstanding.
