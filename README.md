@@ -1,238 +1,197 @@
 <div align="center">
 
-<img src="brand/nyx_launcher.png" alt="NYX Eclipse AI" width="148" />
+<img src="brand/nyx_launcher.png" alt="NYX Eclipse AI" width="156" />
 
 # NYX ECLIPSE AI
 
 ### Your Intelligence. Your Device. Your Rules.
 
-**A free and open-source, local-first Android AI workstation** — on-device language models, autonomous objectives, real execution tools, and persistent agent workflows in one application.
+**A local-first Android AI workstation for private inference, real device tools, and autonomous work that has to prove itself.**
 
-> **NYX v0.8.3 “Project Mission Control” is the latest release.** It brings the existing autonomy workflow into a clearer mission overview while preserving v0.8.2’s task-scoped dependency repairs.
-
-[![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3)
-[![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#requirements)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#build-from-source)
-[![min API](https://img.shields.io/badge/min%20API-26-8B5CF6?style=for-the-badge)](#requirements)
+[![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4)
+[![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#-build-from-source)
 
 [![License](https://img.shields.io/github/license/ShamelesAbyss/Nyx?style=for-the-badge&color=8B5CF6)](LICENSE)
-[![Open source](https://img.shields.io/badge/open%20source-yes-22C55E?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-arm64--v8a-0EA5E9?style=for-the-badge&logo=android&logoColor=white)](#requirements)
+[![ABI](https://img.shields.io/badge/ABI-arm64--v8a-0EA5E9?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
+[![Local first](https://img.shields.io/badge/local--first-no%20account-22C55E?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](#local-first-not-cloud-first)
 
 </div>
 
 ---
 
-> [!NOTE]
-> **v0.8.3 — Project Mission Control.** Autonomy and Terminal now make persisted mission/task state, observed provider/environment readiness, workspace authorization, and active execution easier to scan. The task-scoped dependency preparation and resume repairs from v0.8.2 remain in place.
+> [!IMPORTANT]
+> **NYX v0.8.4 — Project Endurance is the latest release.** It turns NYX from a local AI workstation into a hardware-aware one: observed device intelligence, four operating modes, adaptive native threading, opt-in calibration, thermal and battery ceilings, and exact-prefix KV reuse. Read the [release notes](RELEASE_NOTES_v0.8.4.md) and [implementation report](V084_IMPLEMENTATION_REPORT.md).
 
-> [!NOTE]
-> **Interface update.** Mission Control surfaces persisted objective progress and task details, while Terminal makes the Termux Host and Debian PRoot target distinction clearer. These are usability improvements, not new autonomy permissions; device interaction remains a validation item. Read the [release notes](RELEASE_NOTES_v0.8.3.md) and [implementation report](V083_IMPLEMENTATION_REPORT.md).
+> [!WARNING]
+> **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device. Existing NYX installations signed with the established debug certificate can update in place; back up anything important before experimenting.
 
-## ⬇️ Download NYX v0.8.3 — Project Mission Control
+## ⬇️ Download NYX v0.8.4 — Project Endurance
 
 <div align="center">
 
-### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3)
+### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4)
 
 | Asset | What it is |
 | :--- | :--- |
-| **[NYX-v0.8.3.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.3/NYX-v0.8.3.apk)** | Primary installation APK. ARM64, debug-signed. |
-| **[NYX-Source-v0.8.3.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.3/NYX-Source-v0.8.3.zip)** | Complete source, tests, docs, licenses, and Gradle wrapper. |
-| **[NYX-v0.8.3-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.3/NYX-v0.8.3-androidTest.apk)** | Instrumentation tests for device verification. |
-| **[NYX-v0.8.3-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.3/NYX-v0.8.3-SHA256SUMS.txt)** | SHA-256 digests for the APKs and source archive. |
+| **[NYX-v0.8.4.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4.apk)** | Primary installation APK. ARM64, debug-signed. |
+| **[NYX-Source-v0.8.4.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-Source-v0.8.4.zip)** | Complete source, tests, docs, licenses, and Gradle wrapper. |
+| **[NYX-v0.8.4-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4-androidTest.apk)** | Instrumentation tests for device verification. |
+| **[NYX-v0.8.4-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4-SHA256SUMS.txt)** | SHA-256 digests for the APKs and source archive. |
 
 </div>
 
-> [!IMPORTANT]
-> **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device.
->
-> Existing NYX installations signed with the established debug certificate can update **in place** — v0.8.3 retains the same signer as the prior public releases. Do not uninstall a data-bearing installation just to test an upgrade; back up anything important first.
-
-> [!NOTE]
-> **Preserved autonomy safeguards.** The v0.8.2 dependency fix still plans and persists the task graph before checking only the relevant toolchain, and applies the same gate on resume. v0.8.3 changes how mission state is presented; approval, workspace, checkpoint, recovery, and review-before-resume rules remain in force.
+No account, subscription, or mandatory cloud service is required. Model weights are not distributed with NYX; bring a compatible GGUF or connect to a local server.
 
 ---
 
-## 🌒 What NYX actually is
+## 🌒 The short version
 
 NYX is not a chat wrapper around a hosted API. It is an Android application that can hold a long-running objective, break it into a dependency graph, run allowlisted tools on your device, and refuse to call the work finished until local evidence says it is.
 
-The v0.8.3 release retains the genuine **llama.cpp CPU runtime**, bounded **inspect → repair → retest** loop, verified Termux/PRoot foundation, and v0.8.2 task-scoped dependency preparation for first execution and resumption. It adds a clearer Mission Control presentation over persisted objectives, tasks, environment evidence, and existing controls. It builds on v0.8.1's run-scoped console and bounded planning recovery, v0.8.0's environment bootstrap and workspace lifecycle, v0.7.9 durable guest-runtime ownership, and earlier managed Ollama, Arsenal, MCP/GitHub, project memory, source index, and autonomy policy. A healthy baseline is still never reported as a completed repair, and a model's prose is still never accepted as proof.
+It is also a private inference workstation. Run a quantized GGUF through the bundled llama.cpp CPU runtime, connect to a managed Ollama server, or point NYX at any OpenAI-compatible endpoint. Chat, agents, workflows, and autonomous objectives all resolve through the same provider layer, so no single cloud vendor is the only path.
 
-What it is *not* yet: a fully autonomous developer, a frontier-model replacement, or a system with unrestricted control of your device. The [current status](#-current-status) section states exactly what has been verified and what has not.
+v0.8.4 adds the missing layer between the model and the phone: **the device itself**. NYX now observes the hardware it is running on, chooses a conservative operating profile, applies native threading at safe boundaries, and exposes the evidence in a dedicated Performance dashboard.
 
----
-
-## ✨ Capabilities
-
-### 🧩 v0.8.3 — Project Mission Control
-
-- **Autonomy mission overview:** presents the persisted mission title and state, current execution phase, task completion count/progress, active task when one is actually running, and the existing pause, cancel, and review-before-resume actions.
-- **Observed readiness, not a score:** inference/model, Termux or verified Debian guest, workspace authorization, and objective state are displayed from application state; missing or unverified evidence is labeled rather than implied ready.
-- **Expandable task timeline:** inspect each persisted step's worker, attempt count, prerequisites, instructions, success criteria, outcome, failure diagnostic, and bounded evidence. Historical objectives can be selected to load their own tasks.
-- **Clearer objective and terminal flows:** separates the goal composer, optional verified repair preflight, environment target selection, checked capabilities, authorized workspace, and manually approved commands without changing their execution or authorization rules.
-- **Console accessibility polish:** larger diagnostic typography and touch targets; run selection, copy/share, pause/cancel, and history controls remain intact.
-- Release metadata: package `com.nyx.ai`, versionCode 16/versionName 0.8.3, ARM64, with the established debug signer. UI rendering on a physical device has not been performed.
-
-### 🧩 v0.8.2 — Project Unshackle
-
-- **Plan first, prepare the actual work:** toolchain dependency checks now run after the objective task DAG is saved and before executable tasks begin; resumed objectives use their persisted tasks through the same gate.
-- **No toolchain false positives for shell work:** affirmative, negation-aware project-kind inference prevents ordinary shell automation and explicit “do not use/install” instructions from selecting Android SDK, Gradle, or unrelated development dependencies.
-- **Android development remains supported:** affirmative Android application/APK tasks still select the Android toolchain and retain package-authorization, environment validation, verified installation, checkpoint, and recovery protections.
-- **Only relevant dependency evidence:** unrelated guest JDK resolution is skipped for non-JVM project kinds, and Git is optional unless a task explicitly needs repository operations.
-- **GitHub language presentation:** `.gitattributes` classifies bundled llama.cpp as vendored without changing its source.
-- Package `com.nyx.ai`, versionCode 15/versionName 0.8.2; the established debug signer is retained. Physical-device execution remains a separate validation requirement; see [implementation report](V082_IMPLEMENTATION_REPORT.md) and [release notes](RELEASE_NOTES_v0.8.2.md).
-
-### 🧩 New in 0.8.1
-
-- **Run-scoped Live Worker Console:** defaults to the selected or currently running objective and its current execution run, with explicit history selection for earlier runs and objectives. Older runs remain available without being merged into the live view.
-- **Operation cards and real duration:** related task, tool, verification, and planning events are grouped into semantic operations. Each card shows observed status, event count, and elapsed time calculated from real event timestamps; tapping it opens a full-height chronological breakdown with command input, output, and status.
-- **Raw-event diagnostic mode:** switch between the readable operation view and the complete timestamped event stream. ANSI and OSC terminal control sequences are stripped before display, and credential-shaped values remain redacted.
-- **Bounded planning recovery:** planning has a hard per-attempt deadline and emits progress events while waiting. A completed response that fails strict JSON/schema validation gets exactly one structured-output repair; transport timeouts, interruption, context exhaustion, and provider failures are classified and surfaced.
-- **No silent planning restarts:** failed planning lands in `needs_attention` with a sanitized diagnostic and a resume path that requires explicit human review. Dependency bootstrap, checkpoints, and task evidence are preserved.
-- **Hardened model-directed shell policy:** model commands cannot use output/input redirection, pipes, command chaining, command substitution, variable expansion, or indirect execution such as `sh -c`, `eval`, `xargs`, or `find -exec`. Quoted metacharacters remain ordinary arguments, and fixed build/test workflows are unchanged.
-- **Guarded history clearing:** clearing diagnostic history requires confirmation, preserves the selected and active runs, and never deletes objective records, task evidence, or workspace files.
-
-### 🧩 Also in 0.8.0
-
-- **Autonomous dependency bootstrap:** the objective foreground service re-discovers the current Termux/PRoot state, resolves a deterministic dependency plan, installs only approved candidates, verifies every required executable, and then continues the original objective with its checkpoints and task graph intact.
-- **Debian 13 and Deb822 intelligence:** `GuestJdkResolver` recognizes both traditional `*.list` repositories and Debian Deb822 `*.sources` stanzas. A stanza counts only when `Types` contains `deb`, `Enabled` is not `no`, and `URIs` and `Suites` are present. Debian Trixie prefers the real `openjdk-21-jdk-headless` candidate instead of reporting a false `APT sources: 0`.
-- **Policy-gated terminal execution:** `terminal_run` is no longer unconditionally denied. A model command must stay inside the verified workspace, pass command-risk classification, avoid credential and private-data paths, respect bounded timeouts, and receive the appropriate `RUN_READONLY_COMMAND` or `RUN_MUTATING_COMMAND` policy decision.
-- **Expandable Live Worker Console:** the persisted activity timeline now carries bounded tool input/output and is available from Chat and from a Live Activity card in Autonomy. It shows objective, phase, active task, status, timestamped events, and expandable detail, with Pause, Resume, Cancel, copy, and bounded redacted export.
-- **Workspace lifecycle:** the saved verified workspace is re-probed and reused on startup instead of silently creating a numbered replacement. Workspace selection, the managed registry, routine policy grants, and the objective snapshot stay synchronized; deletion is explicit, path-listed, and guarded against roots, symlinks, traversal, active objectives, and paths outside the managed parent.
-- **Honest continuation:** a failed or interrupted install still stops with a visible `needs_attention` diagnostic. A model's prose never proves completion, and a successful package install does not by itself prove the objective succeeded.
-
-### 🧩 Also in 0.7.9
-
-- **Durable Debian Ollama session:** probes `proot-distro login --detach`, `ps`, and `kill` together, records the session PID and kernel start-time token, and runs the server in the foreground of its own session so PRoot's `--kill-on-exit` cannot silently remove it.
-- **Foreground runtime ownership:** a non-exported `dataSync` foreground service owns guest start, stop, and restart while NYX is backgrounded, with a persistent notification and **View Activity**, **Stop Worker**, and optional **Open Termux** actions.
-- **Verified readiness:** separates guest-local API readiness from Android reachability, captures listening-port evidence when available, and distinguishes a dead process, API wait, unreachable guest API, port conflict, and ready state.
-- **Verified stop and recovery:** terminates the verified guest PID, kills the recorded session, re-checks `/proc/<pid>`, keeps an unkillable session visible, and exposes Stop for an orphaned detached session.
-- **Chat continuation:** a disconnected loopback Chat now starts the managed runtime, refreshes the model list, and continues the original request instead of failing at the provider check.
-
-### 🧩 Also in 0.7.7
-
-- **Debian-aware Ollama:** probes the Termux host and every verified PRoot guest, recognizes `/usr/local/bin/ollama`, records version/architecture/compatibility, and selects a compatible installation instead of reporting the host alone.
-- **Guest lifecycle safety:** starts, verifies, refreshes, stops, and restarts a Debian-hosted server through the existing PRoot bridge with target-scoped PID/start-token records. Adopted or unverified processes are never signalled.
-- **Repeated Full-Autonomy projects:** project creation is a distinct routine action against the approved root, so multiple independent workspaces can be created without reusing directories or binding grants to temporary project names.
-- **Actionable approvals:** Manual/Smart workspace creation now presents an explicit approval card instead of a raw `full_elevated_grant_required` code.
-- **Automatic objective reconnect:** a loopback Ollama server is started and its model list reloaded before planning or resuming an objective.
-
-### 🧩 Also in 0.7.5
-
-- **Managed local Ollama:** detect, start, inspect, stop, and restart a Termux-hosted server with verified PID ownership; adopted servers are never killed.
-- **Arsenal:** nine versioned offline procedures, relevance-bounded injection, strict untrusted imports, enable/configure/remove controls, and evidence-linked execution logs.
-- **Gateways:** real streamable-HTTP MCP and GitHub tools behind per-server allowlists, per-run budgets, timeouts, redacted logs, and Keystore-only tokens.
-- **Durable project memory:** evidence-hashed verified outcomes and lessons injected into later objective prompts.
-- **Live Worker Console:** a persisted, expandable, evidence-backed timeline of plans, roles, tools, skills, gateways, terminal output, installation, verification, recovery, and errors, with redacted copy/export.
-- **Workspace hardening:** atomic collision-safe creation, no directory reuse, scoped routine grants, and cancellation mapped to `uncertain`.
-
-### 💡 Local AI inference
-
-- **Native GGUF CPU inference** through a bundled llama.cpp runtime and JNI — no Termux and no network required for basic inference.
-- **Ollama integration** for a local server on loopback or your network.
-- **OpenAI-compatible endpoints** for any `/v1` chat-completions server.
-- **Provider-independent architecture**: chat, agents, workflows, and objectives all resolve through one factory, so no provider is hardcoded as the only path.
-- **Local model management**: import a GGUF through the Android file picker, inspect its metadata and a qualified memory estimate, then load, stream, stop, unload, or delete the private copy.
-
-### ⚡ Autonomous objectives
-
-- **Persistent objective and task state** in Room, surviving activity destruction and process restarts.
-- **Dependency-aware scheduling** over a validated task graph, with transitive blocking when a prerequisite fails.
-- **Resource-conscious concurrency** derived from real memory, thermal state, battery, and storage.
-- **Service-owned execution** in a foreground service with leases, heartbeats, and durable checkpoints.
-- **Pause and cancellation** from the notification or the app, with uncertain work marked for review rather than silently replayed.
-
-### 🧠 Autonomy modes and safety
-
-- **Manual, Smart, and Full modes** — from ask-before-consequential-actions to routine and elevated work inside an explicit grant.
-- **Scoped, revocable grants** bound to the selected environment and workspace, with delegation able to narrow scope but never widen it.
-- **Emergency Stop** that denies new actions immediately and remains active across app restarts.
-- **Central risk classification** for terminal commands, file changes, package installs, network access, publishing, credentials, and delegated work.
-- **Local audit journal** of policy decisions, with Full mode still stopping at publishing, APK installation, system changes, private-data transfers, and credential disclosure.
-
-### 🛠️ Real execution tools
-
-- **Termux command bridge** over the documented `RUN_COMMAND` intent, with real stdout, stderr, and exit codes.
-- **Terminal environment discovery** for the Termux host, installed tools, and available PRoot distributions.
-- **Debian PRoot support** using the proot-distro executable actually discovered on the device.
-- **Workspace-scoped file tools** confined to an explicitly approved directory.
-- **Workspace reuse and lifecycle** under the selected host or guest, with startup re-verification, a managed registry, explicit creation, and guarded deletion.
-- **Autonomous dependency bootstrap** from a deterministic, origin-aware plan — real APT evidence, approved packages only, and post-install executable verification.
-- **Project detection** for common build systems, with missing-toolchain reporting instead of blind retries.
-- **Build and test commands** fixed by detected project markers — a model cannot substitute its own shell text.
-
-### 🔍 Evidence-driven verification
-
-- **Exit-code validation** from actual process results.
-- **File existence and content checks**, plus **SHA-256** comparison.
-- **Task evidence records** persisted separately from model prose.
-- **Conservative recovery**: read-only work may retry; anything that may have changed state requires explicit human review.
-
-### 🐧 Environment intelligence
-
-- **Isolated host discovery** — probes run through `$PREFIX/bin/bash --noprofile --norc` with `BASH_ENV`/`ENV` cleared, so a Termux startup profile that auto-enters Debian cannot masquerade as the host.
-- **Strict PRoot-Distro detection** — installed aliases are parsed from real `proot-distro list` output; a failed command is never reported as "none installed".
-- **Real guest verification** — a distribution is available only after a command inside it returns the expected marker, HOME, OS, uid, and tool paths.
-- **Timestamped capability profiles** — per-tool verified, missing, incompatible, or permission-denied state with paths, versions, free storage, and a workspace write check.
-- **Executable origin** — inherited Termux binaries inside Debian are labelled and treated as incompatible, not counted as native guest tools.
-- **Trusted package plans** — `apt` for guests and `pkg` for the host, with Android SDK builds refused inside an ARM64 guest.
-- **Workspace validation** — syntax plus a real existence/write probe, with explicit host-versus-guest path rules.
-- **Development preflight** — stable blocker codes for provider, model, environment, workspace, tools, and memory before an objective may start.
-
-### 🌐 Controlled network access
-
-- **`fetch_url` objective tool** for public documentation and research.
-- **HTTPS-only public requests**, with credentials in URLs refused.
-- **Private-address, link-local, CGNAT, and loopback-pivot blocking**, plus guarded DNS and redirect re-validation.
-- **Bounded text bodies** that enter prompts only inside an explicit untrusted-content block.
-- **Atomic SHA-256 downloads** in the network layer, with partial files removed on cancellation or failure.
-
-### 🤖 Specialist roles and supervision
-
-- **Deterministic worker roles** — planner, research, coder, environment, tester, verifier, and documenter.
-- **Supervisor decisions** — continue, replan, pause, or fail based on task state, repeated failures, and remaining budget.
-- **Bounded replanning** after a failure, with a diagnostic task and a hard attempt ceiling.
-- **Shared evidence trail** across delegated tasks, so a claim cannot outrun local verification.
-
-Delegation is currently **specialized roles within the existing bounded workers** — not separate independently running model processes.
-
-### 💻 Verified Autonomous Developer v2
-
-- **Goal-aware acceptance** — repair, feature, diagnosis, and artifact goals carry different criteria.
-- **Honest baseline handling** — a passing baseline is `BASELINE_HEALTHY`, not a repair.
-- **Feature-completion verification** — a feature needs a changed test and a green suite, or it is `GOAL_NOT_VERIFIED`.
-- **Relevance-ranked retrieval** — failing paths, diagnostics, recency, and size rank the context.
-- **Reliable source transfer** — up to four files and 96 KB per Termux IPC call, with per-file fallback for omitted files.
-- **Independent evidence** — build/test exit codes and original output, kept separate from model prose.
-- **Bounded repair** — configurable iteration, inference-call, time, and file budgets, with exact-hash patches and retained diffs.
-
-### 📱 Android-native experience
-
-- **Kotlin and Jetpack Compose**, with no web wrapper.
-- **Dark violet visual identity** with a branded adaptive launcher icon and native splash.
-- **Phone and foldable layouts** with a bottom bar, an expanded-width navigation rail, and split panes for agents and workflows.
-- **Local-first operation** with no account, no telemetry pipeline, and no mandatory cloud service.
-- **Android API 37 target**, **minimum API 26**, edge-to-edge with correct window insets.
+| | |
+| :--- | :--- |
+| **Package** | `com.nyx.ai` |
+| **Version** | `0.8.4` (versionCode 17) |
+| **Android** | 8.0+ / API 26–37 |
+| **Architecture** | `arm64-v8a` |
+| **Inference** | Native GGUF CPU · Ollama · OpenAI-compatible `/v1` |
+| **License** | Apache-2.0 |
 
 ---
 
-## 💜 Why NYX exists
+## 🧑‍💻 What NYX does for everyday Android users
 
-Useful AI should not require renting intelligence by the token.
+### A private AI that stays useful offline
 
-Most capable assistants live behind a subscription, a credit balance, or a cloud account, and every prompt leaves the device. That model is convenient, but it makes local computation a second-class option and puts a permanent meter on curiosity.
+Import a GGUF model once and use it without sending every prompt to a subscription service. Native inference runs through llama.cpp on the phone's CPU; no Termux setup is required for basic chat. Small quantized models are useful for drafting, summarizing, explaining, extracting, and focused coding help. A phone is not a frontier-model replacement, and NYX does not pretend it is.
 
-NYX takes the opposite position: if you own hardware capable of running a model, you should be able to use that hardware for real work, offline, without asking permission from a billing system. That means:
+### An assistant that can do more than answer
 
-- **User ownership** — your device, your models, your data, your rules.
-- **Open-source development** — the application and its native runtime integration are inspectable and buildable.
-- **Privacy-conscious local operation** — inference can stay entirely on the device.
-- **Model independence** — swap GGUF files, run Ollama, or point at a compatible server.
-- **No mandatory paid API**, **no mandatory cloud account**, and **no mandatory subscription**.
+NYX can plan an objective, save the task graph, run real commands in a verified Termux or Debian PRoot environment, edit files inside an approved workspace, build and test a project, and record what actually happened. The Live Worker Console shows the plan, tool calls, terminal output, verification evidence, and recovery decisions instead of hiding them behind a spinner.
 
-Local inference is still bounded by physics. Model quality, context length, speed, and memory use depend on the device's RAM, thermal headroom, storage, and the weights you choose. A quantized 1–3B model on a phone is useful for focused tasks; it is not a frontier model, and NYX does not pretend otherwise.
+### A runtime that respects the hardware
+
+Eco, Balanced, Performance, and Adaptive modes choose bounded thread counts, autonomous worker concurrency, stream cadence, and idle-release behavior. Thermal and low-battery ceilings apply to every mode. Calibration is opt-in, bounded, and stored on-device. The native session reuses only an exact token prefix and clears its cache on any mismatch or failure.
+
+### A local-first philosophy, not a marketing slogan
+
+Your device, your models, your data, your rules. NYX is open source, buildable, and designed to work without an account or a mandatory paid API. When you connect a remote provider, that is your choice; the local path remains a first-class option.
+
+---
+
+## ⚡ Project Endurance
+
+**v0.8.4 is about making the same local intelligence work better on the device you actually carry.**
+
+### Four operating modes
+
+| Mode | Best for | What it changes |
+| :--- | :--- | :--- |
+| 🔋 **Eco** | Long battery life, small devices, background work | At most two native threads, one autonomous worker, slower UI stream coalescing, and release of the resident native model after ten idle minutes. |
+| ⚖️ **Balanced** | Everyday chat and objectives | Moderate native threading, up to two autonomous workers, and 60 ms stream coalescing. |
+| ⚡ **Performance** | Fast local generation on capable hardware | More native threads, up to four autonomous workers when the device can sustain them, and 33 ms stream coalescing. |
+| 🧠 **Adaptive** | A sensible default across devices | Chooses a level from RAM, low-RAM state, core count, thermal status, and battery state, with hysteresis to avoid oscillation. |
+
+Thermal and battery safety ceilings override every mode. A critical thermal reading or a nearly empty unplugged battery derates the runtime even if Performance was selected. Derating is immediate; upgrading waits for two consecutive observations.
+
+### Device intelligence, not device guesses
+
+The Performance dashboard reports what NYX can actually observe from documented Android and Linux interfaces:
+
+- manufacturer, model, SoC manufacturer/model, hardware, Android release, API level, and supported ABIs;
+- logical cores, estimated performance/efficiency core split, maximum observed CPU frequency, and optional CPU flags such as `dotprod`, `i8mm`, `bf16`, and SVE;
+- total and available RAM, Android memory class, and the low-RAM flag;
+- battery percentage and charging state, `PowerManager` thermal status on Android 10+, display metrics, smallest width, and a hinge/large-screen hint;
+- media performance class, NNAPI system-feature presence, and Vulkan feature version when reported.
+
+Missing evidence is labeled unavailable rather than guessed. SoC family labels such as Tensor G5/G4/G3 or Snapdragon 8 Elite are **display and thread heuristics**, not proof that a vendor GPU, NPU, or runtime can accelerate GGUF inference.
+
+### Adaptive threading at safe boundaries
+
+The selected mode's thread count is used before the next native model load. A model that is already resident keeps its exact existing thread count, so a chat turn cannot silently reload the model or change the session underneath a generation.
+
+- The manual **CPU threads** slider in Settings is authoritative and switches adaptive threading off.
+- **Apply to native session** reloads the resident model only when no generation, agent, workflow, or objective is running.
+- Context length is not silently changed or truncated.
+
+### Calibration with a stop button
+
+Calibration is opt-in and measures real native inference against the currently loaded model:
+
+- at most three thread configurations, derived from the current setting and observed performance-core count;
+- at most eight generated tokens per configuration;
+- a 120-second total budget, with a thermal recheck between candidates;
+- refusal without a loaded native model, during an objective, on a hot device, or on a low unplugged battery;
+- restoration of the original configuration in a non-cancellable `finally` path;
+- on-device provenance: model path and size, runtime version, device fingerprint, load time, generated tokens, end-to-end tokens/s, thermal/battery conditions, and timestamp.
+
+Results are invalidated when the model, runtime version, or device fingerprint changes, and measurements taken under thermal or battery pressure are not used for tuning. "Tokens/s" is end-to-end throughput for a fixed short prompt, including prompt processing; it is not a decode-only synthetic benchmark.
+
+### Safer native prompt reuse
+
+The native session records the exact token IDs represented in its single-sequence KV memory. On the next generation it finds the longest exact prefix shared with the new formatted prompt and removes only the divergent tail with `llama_memory_seq_rm`. At least one prompt token is always decoded so logits exist for the first sample.
+
+Any mismatch, failed sequence removal, cancellation, decode error, or failed generation clears both the KV memory and the token cache. No prompt history is truncated, slid, or silently rewritten. If reuse is not possible, the existing full-prompt path runs exactly as before.
+
+### What is experimental — and what is not claimed
+
+> [!NOTE]
+> **Native CPU inference remains the verified GGUF backend.** No GPU or NPU GGUF backend is bundled or claimed. NNAPI/Vulkan feature presence is capability evidence, not a compatibility promise.
+>
+> Exact-prefix KV reuse is implemented and compiled, but it has **no measured device speedup** and no physical-device runtime test yet. Calibration has not been run on a phone with a real GGUF model. Battery or speed improvements have not been quantitatively established.
+>
+> The release owner reports that the Performance dashboard was opened on a Pixel 10 Pro Fold. That is **UI evidence only**; it does not validate native model loading, calibration, KV reuse, or battery life.
+
+---
+
+## 🧩 What makes NYX different
+
+### Local-first, not cloud-first
+
+Native GGUF inference runs through a bundled llama.cpp runtime and JNI. Basic chat does not require Termux, a network connection, an account, or a paid API. Ollama and OpenAI-compatible endpoints are available when you want them, but they are not the only path.
+
+### One provider layer, several ways to run a model
+
+- **Native GGUF** — import a model through the Android file picker, inspect its metadata and memory estimate, then load, stream, stop, unload, or delete the private copy.
+- **Ollama** — connect to a local server on loopback or your network, including a managed Termux or Debian/PRoot-hosted server.
+- **OpenAI-compatible `/v1`** — point at any compatible chat-completions server.
+
+### Autonomy with evidence
+
+NYX persists objectives and tasks in Room, plans a validated dependency graph, schedules only dependency-ready work, records tool observations, and evaluates declared evidence before a task may complete. A model's prose is never accepted as proof. Read-only work may retry; anything that may have changed state requires explicit human review.
+
+### Real Android execution
+
+- Termux command bridge over the documented `RUN_COMMAND` intent, with real stdout, stderr, and exit codes.
+- Verified Termux host and Debian PRoot guest discovery, with inherited-binary and origin checks.
+- Workspace-scoped file tools, explicit workspace authorization, a managed registry, and guarded deletion.
+- Task-scoped dependency preparation: only the toolchain actually required by planned work is checked; ordinary shell objectives are not blocked by Android SDK or Gradle.
+- Build and test commands fixed by detected project markers — a model cannot substitute its own shell text.
+
+### Safety and control
+
+- Manual, Smart, and Full autonomy modes, with scoped, revocable grants.
+- Central risk classification for terminal commands, file changes, package installs, network access, publishing, credentials, and delegated work.
+- Emergency Stop that denies new actions immediately and remains active across restarts.
+- No root, no hidden APIs, no permission bypass, and no arbitrary model-authored shell execution.
+- Gateway tokens use Android Keystore-backed storage; credentials remain references, not plaintext records.
+
+### Android-native experience
+
+Kotlin and Jetpack Compose, with no web wrapper. A phone-first layout with bottom navigation, an expanded-width navigation rail, and split panes for agents and workflows. Standard phones and foldables use the same adaptive app window; a hinge-aware two-pane layout is not claimed. Dark violet visual identity, branded launcher icon, edge-to-edge insets, API 37 target, and minimum API 26.
+
+### Local network and research tools
+
+- `fetch_url` for public documentation and research, HTTPS-only, with private-address, loopback-pivot, and redirect re-validation.
+- Arsenal: versioned offline procedures with relevance-bounded injection and untrusted-import validation.
+- Gateways: streamable-HTTP MCP and GitHub tools behind per-server allowlists, budgets, timeouts, and redacted logs.
+- Project memory: evidence-hashed verified outcomes and lessons injected into later objectives.
+- Source symbol index and bounded repair loop for development work.
 
 ---
 
@@ -274,8 +233,8 @@ NYX supports two independent ways to run a model. You do not need both, and nati
 
 ### Option A — Native GGUF mode (no Termux, no network)
 
-1. Install `NYX-v0.8.3.apk` on a 64-bit ARM Android device running Android 8.0 (API 26) or newer.
-2. Obtain a **compatible instruct-tuned GGUF** file. Start small: a 0.5B–3B model quantized to `Q4_K_M` is a realistic first test. Memory use grows with parameter count and context length.
+1. Install `NYX-v0.8.4.apk` on a 64-bit ARM Android device running Android 8.0 (API 26) or newer.
+2. Obtain a compatible instruct-tuned GGUF file. Start small: a 0.5B–3B model quantized to `Q4_K_M` is a realistic first test. Memory use grows with parameter count and context length.
 3. Open **Models → Import GGUF** and pick the file with the Android document picker. NYX copies it into app-private storage and reads its metadata.
 4. Review the reported architecture, quantization, context limit, and memory estimate. An incompatible or oversized model is refused rather than attempted.
 5. Select the model, choose a context size and thread count, then **Load**.
@@ -325,7 +284,7 @@ See the [user guide](USER_GUIDE.md) for the full setup and safety boundaries.
 | | |
 | :--- | :--- |
 | **OS** | Android 8.0 (API 26) or newer, up to API 37 |
-| **Form factors** | The standard Compose app window is intended for phone-sized layouts. Foldables use the same app window; no hinge-aware/two-pane layout or foldable-device validation is claimed. |
+| **Form factors** | Phone-first Compose layout with bottom navigation, expanded-width navigation rail, and split panes. Standard phones and foldables use the same adaptive app window; no hinge-aware/two-pane layout or foldable-device validation is claimed. |
 | **CPU** | 64-bit ARM (`arm64-v8a`) — no x86 or 32-bit-only support |
 | **Storage** | Roughly 2–4× the model file size free, plus workspace |
 | **Memory** | Depends on model size and context; small models need ~1–2 GB of headroom |
@@ -339,15 +298,16 @@ This table separates what exists from what has actually been demonstrated. It is
 
 | Status | Area |
 | :--- | :--- |
-| ✅ **Implemented and build-tested** | Native GGUF provider, model import and management, provider factory, inference admission, objective engine, scheduler, verifier, context store, Arsenal procedures, repair loop, Termux bridge, autonomy policy, dependency provisioning, network tools, specialist roles, Android 17 permission handling, managed Ollama lifecycle, MCP/GitHub gateways, project memory, source symbol index, Live Worker Console |
-| ✅ **Build-tested** | v0.8.3 ARM64 debug APK and compiled instrumentation APK; **702 JVM tests, zero failures/errors/skips**. Instrumentation was not executed. |
+| ✅ **Implemented and build-tested** | Native GGUF provider, model import and management, provider factory, inference admission, objective engine, scheduler, verifier, context store, Arsenal procedures, repair loop, Termux bridge, autonomy policy, dependency provisioning, network tools, specialist roles, Android 17 permission handling, managed Ollama lifecycle, MCP/GitHub gateways, project memory, source symbol index, Live Worker Console, device intelligence, operating modes, adaptive threading, bounded calibration, exact-prefix KV reuse, mode-aware concurrency and streaming |
+| ✅ **Published** | v0.8.4 ARM64 debug APK, instrumentation APK, source archive, and checksum manifest; **713 JVM tests, zero failures/errors/skips across 68 classes**. Instrumentation was compiled but not executed. |
+| 📱 **Owner-reported UI check** | Performance dashboard opened on a Pixel 10 Pro Fold. This is UI evidence only; it is not a native inference, calibration, KV-reuse, or battery benchmark. |
 | 🧪 **Verified on Linux host only** | Real llama.cpp JNI generation from an Apache-2.0 SmolLM2-135M Q4_K_M GGUF (`The capital of France is Paris.`, 7 selected tokens), plus cancellation, session reuse, callback-error propagation, and safe unload |
 | 🧪 **Verified on Linux host only** | Autonomous repair of a genuinely failing fixture: baseline build `0`, baseline test `2`, exact-hash edit, retest build `0` / test `0`, with backup and diff retained |
 | 📱 **Confirmed on the owner's Android 17 device** | Termux environment discovery (earlier development cycle) |
-| ⏳ **Awaiting physical-device verification** | v0.8.3 Mission Control/Terminal rendering, touch, insets and fold/unfold behavior; v0.8.2 task-scoped dependency preparation and objective resumption; v0.8.1 run-scoped console rendering, history selection, operation details, scroll behavior, raw-event mode, and clear-history confirmation; planning timeout/progress/repair/`needs_attention` behavior against a real provider; v0.8.0 fixed-build Debian JDK installation and objective continuation; workspace deletion and startup reuse; Debian-only Ollama discovery, durable detached or foreground guest startup, notification actions, readiness/listening evidence, model listing, and Chat/objective reconnect; Arsenal/MCP/GitHub/memory/symbol flows; Termux IPC, Keystore, notifications, foreground service, process-death recovery, Room migration, and fold/unfold layout |
+| ⏳ **Awaiting physical-device verification** | Native GGUF loading/generation, calibration, Eco idle release, adaptive thread application, exact-prefix KV reuse with a real model, Performance mode switching, v0.8.3 Mission Control/Terminal rendering and fold/unfold behavior, v0.8.2 task-scoped dependency preparation and objective resumption, v0.8.1 console and planning behavior against a real provider, v0.8.0 fixed-build Debian JDK installation and continuation, workspace deletion and startup reuse, Debian-only Ollama discovery/lifecycle, notification actions, model listing, Arsenal/MCP/GitHub/memory/symbol flows, Termux IPC, Keystore, foreground service, process-death recovery, Room migration, and fold/unfold layout |
 | 🗺️ **Planned** | See the [roadmap](#-roadmap) |
 
-Artifact checks for v0.8.3: package `com.nyx.ai`, versionName `0.8.3`, versionCode `16`, target and compile SDK `37`, minimum SDK `26`, `arm64-v8a` only, and the established debug signer. This is a debug-signed development build, not a production-signed Play artifact. See [TEST_RESULTS.md](TEST_RESULTS.md) and the [release checksum manifest](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.3/NYX-v0.8.3-SHA256SUMS.txt). No physical-device validation is claimed.
+Artifact checks for the published v0.8.4 build: package `com.nyx.ai`, versionName `0.8.4`, versionCode `17`, target and compile SDK `37`, minimum SDK `26`, `arm64-v8a` only, and the established debug signer. The APK is 16 KB ZIP-aligned. This is a debug-signed development build, not a production-signed Play artifact. See [TEST_RESULTS.md](TEST_RESULTS.md) and the [v0.8.4 checksum manifest](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4-SHA256SUMS.txt). No physical-device native inference validation is claimed.
 
 ---
 
@@ -355,7 +315,7 @@ Artifact checks for v0.8.3: package `com.nyx.ai`, versionName `0.8.3`, versionCo
 
 These are goals, not completed capabilities.
 
-- **Native Android inference validation and optimization** — confirm real GGUF execution across devices, then tune threads, context, and memory behavior.
+- **Native Android inference validation and optimization** — confirm real GGUF execution across devices, then tune threads, context, and memory behavior from measured evidence.
 - **Improved autonomous software development** — stronger multi-file repair, better diagnosis, and reliable end-to-end completion on Android.
 - **Better memory and inference resource management** — more accurate residency accounting and graceful degradation under pressure.
 - **More reliable interruption recovery** — clearer ownership, resumable checkpoints, and safer restart decisions.
@@ -363,11 +323,27 @@ These are goals, not completed capabilities.
 - **Improved accessibility and device compatibility** — broader hardware coverage, larger-text support, and clearer failure messaging.
 - **Reproducible production release builds** — a documented, independently verifiable signing and release process.
 
+The long-term vision is an autonomous assistant that runs on hardware you own, uses tools you approve, shows its evidence, and stops when it cannot prove the work is correct. NYX is an early step toward that vision, not a claim that it has already arrived.
+
 ---
 
-## 🧑‍💻 Development
+## 📚 Release history
 
-### Build from source
+| Version | Codename | Focus |
+| :--- | :--- | :--- |
+| **[v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4)** | **Project Endurance** | Device intelligence, Eco/Balanced/Performance/Adaptive modes, calibration, thermal/battery safety, exact-prefix KV reuse |
+| [v0.8.3](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3) | Project Mission Control | Mission overview, readiness evidence, task timeline, terminal clarity, console accessibility |
+| [v0.8.2](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.2) | Project Unshackle | Task-scoped dependency preparation, negation-aware project inference, GitHub language presentation |
+| [v0.8.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.1) | Project Clear Signal | Run-scoped Live Worker Console, operation grouping, bounded planning recovery, shell hardening |
+| [v0.8.0](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.0) | Project Autonomous Bootstrap | Dependency bootstrap, Debian Deb822/JDK fix, policy-gated terminal, workspace lifecycle |
+| [v0.7.9](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.9) | Project Persistence | Durable Debian/PRoot Ollama lifecycle, foreground ownership, verified readiness and stop |
+| [v0.7.7](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.7.7) | Project Liberation | Debian-aware Ollama, guest lifecycle safety, repeated Full-Autonomy projects |
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete history.
+
+---
+
+## 🧑‍💻 Build from source
 
 Requirements: JDK 17 or newer, Android SDK with API 37 and Build Tools 36.0.0, NDK 28.2.13676358, CMake 3.22.1, and Python 3 for the SDK policy checks.
 
@@ -379,7 +355,7 @@ export JAVA_HOME=/path/to/jdk-21
 ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
 ```
 
-The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native runtime is built for `arm64-v8a` only. Full instructions, including SDK policy guards and instrumentation commands, are in [BUILD.md](BUILD.md).
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native runtime is built for `arm64-v8a` only. Full instructions, including SDK policy guards, signing boundaries, and instrumentation commands, are in [BUILD.md](BUILD.md).
 
 ### Documentation
 
@@ -389,26 +365,28 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 | [USER_GUIDE.md](USER_GUIDE.md) | Setup, models, agents, objectives, terminal, troubleshooting |
 | [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md) | What was built, what was verified, what remains |
 | [TEST_RESULTS.md](TEST_RESULTS.md) | Exact test counts, host evidence, and unexecuted device checks |
-| [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [RELEASE_NOTES_v0.8.3.md](RELEASE_NOTES_v0.8.3.md) | v0.8.3 Project Mission Control release scope, compatibility, checksums, verification, and limits |
-| [V083_IMPLEMENTATION_REPORT.md](V083_IMPLEMENTATION_REPORT.md) | v0.8.3 Mission Control UI implementation, preserved safety paths, build evidence, and open device checks |
-| [RELEASE_NOTES_v0.8.2.md](RELEASE_NOTES_v0.8.2.md) | Historical v0.8.2 Project Unshackle release scope and verification |
-| [V082_IMPLEMENTATION_REPORT.md](V082_IMPLEMENTATION_REPORT.md) | v0.8.2 dependency classification and pre-execution gate report |
-| [RELEASE_NOTES_v0.8.1.md](RELEASE_NOTES_v0.8.1.md) | Published v0.8.1 run-scoped console and planning recovery |
-| [RELEASE_NOTES_v0.8.0.md](RELEASE_NOTES_v0.8.0.md) | Historical v0.8.0 autonomous bootstrap, console, workspace, and verification notes |
-| [V081_IMPLEMENTATION_STATUS.md](docs/V081_IMPLEMENTATION_STATUS.md) | v0.8.1 console and planning recovery implementation, test evidence, and device checklist |
-| [V080_LIVE_WORKSPACE_REPORT.md](V080_LIVE_WORKSPACE_REPORT.md) | Historical v0.8.0 live console and workspace lifecycle implementation report |
+| [CHANGELOG.md](CHANGELOG.md) | Complete release history |
+| [RELEASE_NOTES_v0.8.4.md](RELEASE_NOTES_v0.8.4.md) | Project Endurance release scope, verification, and limits |
+| [V084_IMPLEMENTATION_REPORT.md](V084_IMPLEMENTATION_REPORT.md) | Performance implementation, safety invariants, test evidence, and device checklist |
+
+<details>
+<summary><strong>Historical release and implementation documents</strong></summary>
+
+| Document | Contents |
+| :--- | :--- |
+| [RELEASE_NOTES_v0.8.3.md](RELEASE_NOTES_v0.8.3.md) | v0.8.3 Project Mission Control |
+| [V083_IMPLEMENTATION_REPORT.md](V083_IMPLEMENTATION_REPORT.md) | v0.8.3 implementation and device checks |
+| [RELEASE_NOTES_v0.8.2.md](RELEASE_NOTES_v0.8.2.md) | v0.8.2 Project Unshackle |
+| [V082_IMPLEMENTATION_REPORT.md](V082_IMPLEMENTATION_REPORT.md) | v0.8.2 dependency classification and gate |
+| [RELEASE_NOTES_v0.8.1.md](RELEASE_NOTES_v0.8.1.md) | v0.8.1 Project Clear Signal |
+| [RELEASE_NOTES_v0.8.0.md](RELEASE_NOTES_v0.8.0.md) | v0.8.0 Project Autonomous Bootstrap |
+| [V080_LIVE_WORKSPACE_REPORT.md](V080_LIVE_WORKSPACE_REPORT.md) | v0.8.0 live console and workspace lifecycle |
+| [docs/V081_IMPLEMENTATION_STATUS.md](docs/V081_IMPLEMENTATION_STATUS.md) | v0.8.1 console and planning implementation |
 | [ENGINEERING_STANDARDS.md](ENGINEERING_STANDARDS.md) | Permanent SDK and compatibility policy |
 | [PLATFORM_NOTES.md](PLATFORM_NOTES.md) | Android and Termux platform constraints |
-| [docs/V061_VERIFIED_DEVELOPER.md](docs/V061_VERIFIED_DEVELOPER.md) | v0.6.1 environment, preflight, and verified-developer details |
-| [docs/V070_IMPLEMENTATION_STATUS.md](docs/V070_IMPLEMENTATION_STATUS.md) | v0.7.0 policy, environment, network, and delegation implementation status |
-| [docs/V075_INTEGRATION_STATUS.md](docs/V075_INTEGRATION_STATUS.md) | v0.7.5 managed Ollama, Arsenal, gateways, memory, console, and workspace integration status |
-| [docs/V077_IMPLEMENTATION_STATUS.md](docs/V077_IMPLEMENTATION_STATUS.md) | v0.7.7 Debian Ollama, target-scoped lifecycle, workspace authorization, and verification status |
-| [docs/V080_DEVICE_VALIDATION.md](docs/V080_DEVICE_VALIDATION.md) | v0.8.0 physical-device evidence, open checks, and release checklist |
-| [docs/V079_IMPLEMENTATION_STATUS.md](docs/V079_IMPLEMENTATION_STATUS.md) | v0.7.9 persistent guest runtime, foreground ownership, readiness, and device checklist |
-| [docs/V079_PLATFORM_EVIDENCE.md](docs/V079_PLATFORM_EVIDENCE.md) | Verified PRoot session and Android foreground-service platform evidence |
-| [docs/DEVICE_VALIDATION_v0.7.7.md](docs/DEVICE_VALIDATION_v0.7.7.md) | Historical physical-device checklist for v0.7.7 |
 | [docs/](docs/) | Native inference, development engine, context and skills, Android compatibility |
+
+</details>
 
 ### Contributing
 
@@ -432,6 +410,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.8.3 — Project Mission Control · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.8.4 — Project Endurance · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

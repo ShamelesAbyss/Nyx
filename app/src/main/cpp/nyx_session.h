@@ -35,5 +35,8 @@ private:
     std::string path_;
     int context_requested_ = 0;
     int threads_ = 0;
+    // Exact token IDs currently represented in the single-sequence KV memory.
+    // Cleared on unload and on every failed or cancelled generation.
+    std::vector<int32_t> cached_tokens_;
 };
 }

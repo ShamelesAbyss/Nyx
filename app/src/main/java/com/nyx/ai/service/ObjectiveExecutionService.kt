@@ -363,7 +363,11 @@ class ObjectiveExecutionService : Service() {
                 ).takeIf { it.names.isNotEmpty() }
             }.getOrNull()
             val resources = DeviceResourceReader.read(this)
-            val resourceProfile = ResourcePolicy.profile(resources, objective.parallelism)
+            val resourceProfile = ResourcePolicy.profile(
+                resources = resources,
+                requestedParallelism = objective.parallelism,
+                parallelismCap = com.nyx.ai.performance.PerformanceController.tuning().autonomyParallelism,
+            )
             ExecutionMonitor.update { it.copy(phase = "executing", message = resourceProfile.reason) }
             val engine = ObjectiveExecutionEngine(
                 context = this,

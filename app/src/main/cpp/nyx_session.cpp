@@ -36,10 +36,14 @@ using ContextPtr = std::unique_ptr<llama_context, decltype(&llama_free)>;
 using SamplerPtr = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
 struct MemoryReset {
     llama_context * ctx;
+    std::vector<int32_t> * cache;
+    bool keep = false;
     ~MemoryReset() {
+        if (keep) return;
         llama_synchronize(ctx);
         // Aborted ubatches may have changed the memory; never reuse partial state.
         llama_memory_clear(llama_get_memory(ctx), true);
+        if (cache) cache->clear();
     }
 };
 }
@@ -57,7 +61,7 @@ bool Session::progress_cb(float, void * data) { return !abort_cb(data); }
 void Session::unload() noexcept {
     if (context_) { llama_synchronize(context_); llama_free(context_); context_ = nullptr; }
     if (model_) { llama_model_free(model_); model_ = nullptr; }
-    path_.clear(); context_requested_ = 0; threads_ = 0;
+    path_.clear(); context_requested_ = 0; threads_ = 0; cached_tokens_.clear();
 }
 int Session::load(const std::string & path, int context, int threads) {
     if (path.empty() || path[0] != '/' || path.find('\0') != std::string::npos)
@@ -144,8 +148,24 @@ int Session::generate(const std::vector<std::pair<std::string, std::string>> & m
     std::vector<llama_token> tokens(static_cast<size_t>(n_prompt));
     if (llama_tokenize(vocab, formatted.data(), needed, tokens.data(), n_prompt, true, true) != n_prompt)
         throw std::runtime_error("Prompt tokenization failed");
-    llama_memory_clear(llama_get_memory(context_), true);
-    MemoryReset reset{context_};
+    // Conservative prefix reuse: only an exact token-for-token match is trusted. At least
+    // one prompt token is always decoded so logits exist for the first sample.
+    llama_memory_t memory = llama_get_memory(context_);
+    int reuse = 0;
+    if (!cached_tokens_.empty()) {
+        const int maximum = std::min(static_cast<int>(cached_tokens_.size()), n_prompt);
+        while (reuse < maximum && cached_tokens_[static_cast<size_t>(reuse)] == tokens[static_cast<size_t>(reuse)]) ++reuse;
+        reuse = std::min(reuse, n_prompt - 1);
+    }
+    if (reuse > 0) {
+        if (!llama_memory_seq_rm(memory, 0, reuse, -1)) {
+            llama_memory_clear(memory, true);
+            reuse = 0;
+        }
+    } else {
+        llama_memory_clear(memory, true);
+    }
+    MemoryReset reset{context_, &cached_tokens_};
     SamplerPtr sampler(llama_sampler_chain_init(llama_sampler_chain_default_params()), llama_sampler_free);
     if (!sampler) throw std::bad_alloc();
     if (temperature == 0) {
@@ -165,12 +185,14 @@ int Session::generate(const std::vector<std::pair<std::string, std::string>> & m
         if (rc == 2) throw Cancelled();
         if (rc != 0) throw std::runtime_error("llama_decode failed with code " + std::to_string(rc));
     };
-    for (int pos = 0; pos < n_prompt;) {
+    for (int pos = reuse; pos < n_prompt;) {
         const int count = std::min(static_cast<int>(llama_n_batch(context_)), n_prompt - pos);
         decode(tokens.data() + pos, count, pos, pos + count == n_prompt);
         pos += count;
     }
     int generated = 0;
+    std::vector<llama_token> decoded_generated;
+    decoded_generated.reserve(static_cast<size_t>(std::min(max_tokens, n_ctx - n_prompt)));
     size_t output_bytes = 0;
     const int limit = std::min(max_tokens, n_ctx - n_prompt);
     for (int i = 0; i < limit; ++i) {
@@ -193,9 +215,15 @@ int Session::generate(const std::vector<std::pair<std::string, std::string>> & m
         output_bytes += piece.size();
         if (!piece.empty()) emit(piece);
         ++generated;
-        if (i + 1 < limit) decode(&token, 1, n_prompt + i, true);
+        if (i + 1 < limit) {
+            decode(&token, 1, n_prompt + i, true);
+            decoded_generated.push_back(token);
+        }
     }
     check_cancelled();
+    cached_tokens_.assign(tokens.begin(), tokens.end());
+    cached_tokens_.insert(cached_tokens_.end(), decoded_generated.begin(), decoded_generated.end());
+    reset.keep = true;
     return generated;
 }
 }

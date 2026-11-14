@@ -1,5 +1,18 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.4 — Project Endurance (published)
+NYX 0.8.4 is versionCode 17/versionName 0.8.4 for `com.nyx.ai`, published as [GitHub release v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4). It adds observed device intelligence, Eco/Balanced/Performance/Adaptive modes with thermal and battery safety ceilings, adaptive native threading at safe boundaries, opt-in bounded calibration, exact-token-prefix KV reuse, mode-aware autonomy concurrency, mode-aware stream coalescing, and Eco-only idle model release. The Performance dashboard exposes capabilities, live resource state, effective tuning, calibration samples, and honest accelerator status.
+| Area | Status | Evidence/limit |
+| :--- | :--- | :--- |
+| Device intelligence and modes | Implemented, build-tested | Reads Build/ActivityManager/PowerManager/battery/display/package features and readable `/proc`/cpufreq evidence; missing data is labeled unavailable. |
+| Adaptive native threading | Implemented, build-tested | Applied before load; resident sessions keep their exact thread count; Apply reloads only at an idle boundary. |
+| Bounded calibration | Implemented, build-tested | Up to three thread candidates, eight tokens each, 120 s budget, gate and `finally` restore; not run on hardware. |
+| Exact-prefix KV reuse | Implemented, compiled | Exact token match only, at least one token always decoded, full cache/memory invalidation on failure; no device/model runtime test. |
+| Autonomy and streaming | Implemented, build-tested | `ResourcePolicy` concurrency cap and 120/60/33 ms stream coalescing; existing safety limits unchanged. |
+| Verification | Build-tested | 713 JVM tests across 68 classes; ARM64 debug and instrumentation APKs assembled. Instrumentation was not run. |
+| Device behavior | Partially observed | The release owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold. Native inference, calibration, Eco idle release, adaptive apply, and KV reuse still require device validation with a GGUF model. |
+The published assets include the primary APK, instrumentation APK, source archive, and checksum manifest. The APK is debug-signed, not production/Play-signed.
+
 ## v0.8.3 — Project Mission Control (published)
 
 NYX 0.8.3 is versionCode 16/versionName 0.8.3 for `com.nyx.ai`, published as [GitHub release v0.8.3](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3). It makes existing autonomy state easier to inspect through Mission Control, task details, clearer host/guest selection, and Live Worker Console visual refinements; it does not add a new execution engine or widen permissions. The v0.8.2 task-scoped dependency repairs remain intact.

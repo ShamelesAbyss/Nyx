@@ -1,5 +1,24 @@
 # NYX Test Results
 
+## 0.8.4 — Project Endurance (published build)
+
+Published as [GitHub release v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4).
+
+Executed on 2026-11-14 UTC from `/home/ubuntu/nyx`:
+```bash
+./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+Result: `BUILD SUCCESSFUL in 1m 20s`.
+- JVM tests: **713**, failures **0**, errors **0**, skipped **0** across **68 classes**.
+- New `PerformancePolicyTest`: **11 tests** covering SoC classification, fixed/adaptive modes, thermal/battery ceilings, hysteresis, calibration validity/invalidation, candidate bounds, calibration gating, best-sample selection, and the autonomy concurrency cap.
+- The ARM64 debug APK is `com.nyx.ai`, versionCode **17**, versionName **0.8.4**, minSdk 26, compile/target SDK 37, `arm64-v8a` only.
+- The instrumentation APK compiled but was not run. No `adb` binary or connected Android device was available in this build environment. The release owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold; this is UI evidence only, not a native inference, calibration, KV-reuse, or battery benchmark.
+- Published APK SHA-256: `65a415a2e57d72575fd858d428e997db7b6377e10a3c8e9b701102285e025dce`.
+- Instrumentation APK SHA-256: `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3`.
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`, unchanged from the established NYX identity.
+- APK 16 KB ZIP alignment check passed (`zipalign -c -P 16 -v 4`). Existing Compose `Divider` deprecation and Room migration parameter-name warnings remain.
+- The native C++ exact-prefix KV reuse compiles and links but has no device/model runtime test. The source archive and checksum manifest are published alongside the APKs; the manifest covers all three files. No AAB or Play submission was produced.
+
 ## 0.8.3 — Project Mission Control (published build)
 
 Executed on 2026-11-13 UTC from `/home/ubuntu/nyx`:

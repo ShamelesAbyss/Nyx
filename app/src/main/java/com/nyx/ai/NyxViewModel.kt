@@ -80,6 +80,11 @@ import com.nyx.ai.ollama.OllamaServerStatus
 import com.nyx.ai.ollama.OllamaProcess
 import com.nyx.ai.network.InferenceProvider
 import com.nyx.ai.nativeinference.*
+import com.nyx.ai.performance.CalibrationPlanner
+import com.nyx.ai.performance.CalibrationRunner
+import com.nyx.ai.performance.OperatingMode
+import com.nyx.ai.performance.PerformanceController
+import com.nyx.ai.performance.PerformanceSnapshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
@@ -174,6 +179,7 @@ data class NyxState(
     val temperature: Float = 0.7f,
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
+    val performance: PerformanceSnapshot = PerformanceSnapshot(),
     val error: String = ""
 ) { val nativeMode: Boolean get() = endpoint == "native://local" }
 
@@ -231,6 +237,18 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     init {
         AutonomyRuntime.initialize(app)
         com.nyx.ai.autonomy.WorkerActivityBus.initialize(app)
+        PerformanceController.initialize(app)
+        viewModelScope.launch {
+            PerformanceController.state.collect { performance -> _state.update { it.copy(performance = performance) } }
+        }
+        viewModelScope.launch {
+            while (true) {
+                delay(30_000)
+                val native = NativeRuntime.status.value
+                PerformanceController.refresh(native.modelPath, native.modelPath?.let { path -> runCatching { File(path).length() }.getOrNull() })
+                releaseIdleNativeModelIfNeeded()
+            }
+        }
         viewModelScope.launch {
             ollamaManager.state.collect { server -> _state.update { it.copy(ollamaServer = server) } }
         }
@@ -426,8 +444,138 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTemperature(value: Float) { prefs.edit().putFloat("temperature", value).apply(); _state.update { it.copy(temperature = value) } }
     fun setContextLength(value: Int) { prefs.edit().putInt("context_length", value).apply(); _state.update { it.copy(contextLength = value) } }
-    fun setCpuThreads(value: Int) { prefs.edit().putInt("cpu_threads", value).apply(); _state.update { it.copy(cpuThreads = value) } }
-    private fun options() = InferenceOptions(_state.value.temperature.toDouble(), _state.value.contextLength, _state.value.cpuThreads)
+    fun setCpuThreads(value: Int) {
+        prefs.edit().putInt("cpu_threads", value).apply()
+        _state.update { it.copy(cpuThreads = value) }
+        // A manual thread choice is authoritative; adaptive mode can be re-enabled on Performance.
+        if (PerformanceController.adaptiveThreads()) PerformanceController.setAdaptiveThreads(false)
+    }
+
+    fun setOperatingMode(mode: OperatingMode) {
+        PerformanceController.setMode(mode)
+        refreshPerformance()
+    }
+
+    fun setAdaptiveThreads(enabled: Boolean) {
+        PerformanceController.setAdaptiveThreads(enabled)
+    }
+
+    fun refreshPerformance() {
+        val native = NativeRuntime.status.value
+        PerformanceController.refresh(native.modelPath, native.modelPath?.let { path -> runCatching { File(path).length() }.getOrNull() })
+    }
+
+    /** Re-load the resident model with the current tuning. Only valid at an idle, non-objective boundary. */
+    fun applyPerformanceToNative() {
+        val current = _state.value
+        if (current.isGenerating || current.agentRunning || current.workflowRunning || current.objectiveRunning ||
+            ExecutionMonitor.state.value.running) {
+            _state.update { it.copy(error = "Stop active inference or objectives before applying a new native configuration.") }
+            return
+        }
+        val path = current.nativeStatus.modelPath ?: run {
+            _state.update { it.copy(error = "Load a native GGUF model before applying performance settings.") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val options = nativeOptions()
+                NativeRuntime.unload()
+                NativeRuntime.load(path, options)
+                _state.update {
+                    it.copy(performance = it.performance.copy(message = "Native session reloaded with ${options.cpuThreads} threads at context ${options.contextLength}."))
+                }
+                refreshPerformance()
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message ?: "Could not apply the native performance configuration.") }
+            }
+        }
+    }
+
+    fun runCalibration() {
+        val current = _state.value
+        if (current.performance.calibrationRunning) return
+        if (current.isGenerating || current.agentRunning || current.workflowRunning ||
+            current.objectiveRunning || ExecutionMonitor.state.value.running) {
+            _state.update { it.copy(error = "Stop active inference, agents, workflows, or objectives before calibrating.") }
+            return
+        }
+        val capabilities = current.performance.capabilities
+        if (capabilities != null) {
+            val gate = CalibrationPlanner.gate(
+                capabilities = capabilities,
+                modelLoaded = current.nativeStatus.loaded,
+                objectiveRunning = current.objectiveRunning || ExecutionMonitor.state.value.running,
+                activeWork = current.isGenerating || current.agentRunning || current.workflowRunning,
+            )
+            if (!gate.allowed) {
+                _state.update { it.copy(error = gate.reason ?: "Calibration is not available right now.") }
+                return
+            }
+        }
+        viewModelScope.launch {
+            PerformanceController.setCalibrationRunning(true, "Calibration started…")
+            try {
+                val result = CalibrationRunner(app).run { progress ->
+                    PerformanceController.setCalibrationRunning(true, progress)
+                }
+                PerformanceController.saveCalibration(result)
+                refreshPerformance()
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message ?: "Calibration failed.") }
+                PerformanceController.setCalibrationRunning(false, e.message ?: "Calibration failed.")
+            } finally {
+                if (PerformanceController.state.value.calibrationRunning) {
+                    PerformanceController.setCalibrationRunning(false, PerformanceController.state.value.message)
+                }
+            }
+        }
+    }
+
+    private fun effectiveNativeThreads(): Int {
+        val current = _state.value
+        return if (current.performance.adaptiveThreads) {
+            current.performance.tuning.nativeThreads.coerceIn(1, 32)
+        } else {
+            current.cpuThreads.coerceIn(1, 32)
+        }
+    }
+
+    private fun nativeOptions() = InferenceOptions(
+        _state.value.temperature.toDouble(),
+        _state.value.contextLength,
+        effectiveNativeThreads(),
+    )
+
+    /**
+     * If a session is already resident, reuse its exact thread count so a chat turn cannot
+     * silently reload the model. Adaptive tuning otherwise applies before the next load.
+     */
+    private fun options(): InferenceOptions {
+        val current = _state.value
+        val threads = if (current.nativeStatus.loaded && current.nativeStatus.modelPath == current.selectedModel) {
+            NativeRuntime.currentOptions?.cpuThreads ?: current.cpuThreads
+        } else {
+            effectiveNativeThreads()
+        }
+        return InferenceOptions(current.temperature.toDouble(), current.contextLength, threads)
+    }
+
+    private suspend fun releaseIdleNativeModelIfNeeded() {
+        val current = _state.value
+        val minutes = current.performance.tuning.idleUnloadMinutes
+        if (minutes <= 0 || !current.nativeStatus.loaded || current.nativeStatus.phase != NativePhase.READY ||
+            current.isGenerating || current.agentRunning || current.workflowRunning || current.objectiveRunning ||
+            ExecutionMonitor.state.value.running) {
+            return
+        }
+        val lastUsed = current.nativeStatus.lastUsedAtEpochMs ?: return
+        if (System.currentTimeMillis() - lastUsed < minutes * 60_000L) return
+        runCatching { NativeRuntime.unload() }
+        _state.update {
+            it.copy(performance = it.performance.copy(message = "Native model released after $minutes minutes idle in ${it.performance.level.label} mode."))
+        }
+    }
 
     private fun persistOllamaEndpoint() {
         val snapshot = _state.value
@@ -551,11 +699,12 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(isGenerating = true, streamingText = "", error = "") }
             val streamed = StringBuilder()
             var lastPublishAt = 0L
+            val streamPublishInterval = _state.value.performance.tuning.streamPublishIntervalMs
             try {
                 val result = inferenceProvider(s.endpoint).chat(s.selectedModel, past, tools = null, options = options()) { token ->
                     streamed.append(token)
                     val now = System.nanoTime() / 1_000_000L
-                    if (now - lastPublishAt >= 45L) {
+                    if (now - lastPublishAt >= streamPublishInterval) {
                         val snapshot = streamed.toString()
                         _state.update { it.copy(streamingText = snapshot) }
                         lastPublishAt = now

@@ -132,6 +132,7 @@ import com.nyx.ai.ui.WorkerActivityPreview
 import com.nyx.ai.ui.WorkerConsoleDialog
 import com.nyx.ai.ui.ArsenalScreen
 import com.nyx.ai.ui.GatewaysScreen
+import com.nyx.ai.ui.PerformanceScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
@@ -141,14 +142,14 @@ import com.nyx.ai.settings.formatInstalledAppVersion
 import com.nyx.ai.settings.installedAppVersion
 import java.util.Locale
 
-private val Obsidian = Color(0xFF09090D)
-private val Surface1 = Color(0xFF12121A)
-private val Surface2 = Color(0xFF1A1A25)
-private val Violet = Color(0xFFA78BFA)
-private val VioletSoft = Color(0xFFC4B5FD)
-private val TextMain = Color(0xFFF2F0F8)
-private val TextMuted = Color(0xFFA5A2B0)
-private val Green = Color(0xFF72D6A3)
+internal val Obsidian = Color(0xFF09090D)
+internal val Surface1 = Color(0xFF12121A)
+internal val Surface2 = Color(0xFF1A1A25)
+internal val Violet = Color(0xFFA78BFA)
+internal val VioletSoft = Color(0xFFC4B5FD)
+internal val TextMain = Color(0xFFF2F0F8)
+internal val TextMuted = Color(0xFFA5A2B0)
+internal val Green = Color(0xFF72D6A3)
 private val Red = Color(0xFFFF8E9B)
 
 class MainActivity : ComponentActivity() {
@@ -180,11 +181,11 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val textDocumentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importTextDocument(uri)
     }
-    val destinations = listOf("Chat", "Models", "Agents", "Autonomy", "Arsenal", "Gateways", "Workflows", "Settings")
+    val destinations = listOf("Chat", "Models", "Agents", "Autonomy", "Arsenal", "Gateways", "Workflows", "Performance", "Settings")
     val icons = listOf(
         Icons.Rounded.ChatBubbleOutline, Icons.Rounded.Memory, Icons.Rounded.SmartToy,
         Icons.Rounded.PlayArrow, Icons.Rounded.AutoAwesome, Icons.Rounded.Hub,
-        Icons.Rounded.AccountTree, Icons.Rounded.Settings,
+        Icons.Rounded.AccountTree, Icons.Rounded.Tune, Icons.Rounded.Settings,
     )
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 840.dp
@@ -203,7 +204,7 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                         )
                     }
                     NavigationBarItem(
-                        selected = tab in setOf(2, 6, 7),
+                        selected = tab in setOf(2, 6, 7, 8),
                         onClick = { showMore = true },
                         icon = { Icon(Icons.Rounded.MoreHoriz, contentDescription = "More destinations") },
                         label = { Text("More", fontSize = 9.sp) },
@@ -225,9 +226,9 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                 Column(Modifier.weight(1f).fillMaxSize().background(Obsidian)) {
                     AppHeader(tab = destinations[tab], connected = state.connected, model = state.selectedModel, endpoint = state.endpoint)
                     LaunchedEffect(tab) {
-                        if (tab !in setOf(0, 1, 3, 7)) vm.clearError()
+                        if (tab !in setOf(0, 1, 3, 7, 8)) vm.clearError()
                     }
-                    if (state.error.isNotBlank() && tab in setOf(0, 1, 3, 7)) ErrorBanner(state.error, vm::clearError)
+                    if (state.error.isNotBlank() && tab in setOf(0, 1, 3, 7, 8)) ErrorBanner(state.error, vm::clearError)
                     when (tab) {
                         0 -> ChatScreen(state, vm)
                         1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
@@ -236,6 +237,8 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                         4 -> ArsenalScreen(state, vm)
                         5 -> GatewaysScreen(state, vm)
                         6 -> WorkflowScreen(state, vm)
+                        7 -> PerformanceScreen(state, vm)
+                        8 -> SettingsScreen(state, vm)
                         else -> SettingsScreen(state, vm)
                     }
                 }
@@ -248,7 +251,7 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
         title = { Text("More destinations", color = TextMain) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(2, 6, 7).forEach { index ->
+                listOf(2, 6, 7, 8).forEach { index ->
                     OutlinedButton(onClick = { tab = index; showMore = false }, modifier = Modifier.fillMaxWidth()) {
                         Icon(icons[index], null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(8.dp))
@@ -1127,7 +1130,7 @@ private fun MissionStatusPill(status: String) {
     }
 }
 
-private val Amber = Color(0xFFF2C879)
+internal val Amber = Color(0xFFF2C879)
 private fun missionStatusColor(status: String): Color = when (status.lowercase()) {
     "completed", "verified", "succeeded", "passed" -> Green
     "running", "verifying", "planning", "generating" -> VioletSoft
@@ -1694,6 +1697,14 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                     Slider(value = state.contextLength.toFloat(), onValueChange = { vm.setContextLength((it / 512).toInt() * 512) }, valueRange = 512f..32768f, steps = 62)
                     Text("CPU threads · ${state.cpuThreads}", color = TextMain, fontSize = 13.sp)
                     Slider(value = state.cpuThreads.toFloat(), onValueChange = { vm.setCpuThreads(it.toInt().coerceAtLeast(1)) }, valueRange = 1f..16f, steps = 14)
+                    Text(
+                        if (state.performance.adaptiveThreads) {
+                            "Adaptive threading is on: ${state.performance.tuning.nativeThreads} threads are used before the next native load. Moving this slider switches to manual control."
+                        } else {
+                            "Manual native thread count. Enable adaptive threading on the Performance screen to let NYX choose at safe load boundaries."
+                        },
+                        color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp,
+                    )
                     Text("Native CPU honors context/thread settings; Ollama servers may cap them. /v1 services control their own context and thread configuration.", color = TextMuted, fontSize = 11.sp)
                 }
             }

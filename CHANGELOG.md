@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.4 — Project Endurance (published)
+
+Project Endurance adds hardware-aware operating modes and a Performance dashboard, adaptive native threading applied only at safe boundaries, opt-in bounded native calibration, exact-token-prefix KV reuse in the native session, mode-aware autonomy concurrency and stream coalescing, and Eco-only idle model release. The existing autonomy policy, workspace authorization, dependency gate, provider snapshots, checkpoints, recovery, and no-root/no-arbitrary-shell boundaries are unchanged.
+
+Published as [GitHub release v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4). Package metadata is versionCode 17/versionName 0.8.4 for `com.nyx.ai`; the established debug signer is retained. The clean build passed **713 JVM tests** (68 classes, zero failures/errors/skips), and the ARM64 debug and instrumentation APKs assembled. The APK SHA-256 is `65a415a2e57d72575fd858d428e997db7b6377e10a3c8e9b701102285e025dce`. The official release includes the APK, compiled instrumentation APK, clean source archive, and checksum manifest. The owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold; this is UI evidence only. Native GGUF inference, calibration, exact-prefix KV reuse, and battery/performance gains remain device-validation items. See `RELEASE_NOTES_v0.8.4.md` and `V084_IMPLEMENTATION_REPORT.md`.
+
 ## 0.8.3 — Project Mission Control (published)
 
 The Autonomy screen now summarizes the actual selected/active objective, execution phase, persisted task completion count, active task, and existing objective controls. Its readiness rows are sourced from real inference, environment, workspace, and objective state; an absent probe or model is not presented as ready. Task timeline cards expand to show persisted instructions, prerequisites, verification criteria, outcomes, errors, and bounded evidence. Historical objective selection loads that objective's own task graph.

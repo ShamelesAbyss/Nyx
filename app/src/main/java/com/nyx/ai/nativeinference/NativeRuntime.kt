@@ -38,6 +38,7 @@ data class NativeRuntimeStatus(
     val lastLoadMillis: Long? = null,
     val generatedTokens: Int? = null,
     val lastGenerateMillis: Long? = null,
+    val lastUsedAtEpochMs: Long? = null,
 ) {
     val loaded: Boolean get() = modelPath != null && phase in setOf(NativePhase.READY, NativePhase.GENERATING)
 }
@@ -49,9 +50,12 @@ object NativeRuntime {
     private val mutableStatus = MutableStateFlow(NativeRuntimeStatus())
     val status: StateFlow<NativeRuntimeStatus> = mutableStatus.asStateFlow()
     @Volatile private var appContext: Context? = null
-    private var loadedOptions: InferenceOptions? = null
+    @Volatile private var loadedOptions: InferenceOptions? = null
     @Volatile private var libraryLoaded = false
     private val cancellationEpoch = AtomicLong()
+
+    /** The options of the resident native session, if any. Safe for read-only calibration planning. */
+    val currentOptions: InferenceOptions? get() = loadedOptions
 
     /** Call once from the provider/repository constructor, or application integration. Stores application context only. */
     fun initialize(context: Context) { appContext = context.applicationContext }
@@ -109,7 +113,11 @@ object NativeRuntime {
                 throw error
             } finally {
                 // blockingOperation joins native work BEFORE the outer mutex is released.
-                mutableStatus.value = mutableStatus.value.copy(phase = NativePhase.READY, lastGenerateMillis = (System.nanoTime() - started) / 1_000_000)
+                mutableStatus.value = mutableStatus.value.copy(
+                    phase = NativePhase.READY,
+                    lastGenerateMillis = (System.nanoTime() - started) / 1_000_000,
+                    lastUsedAtEpochMs = System.currentTimeMillis(),
+                )
             }
         }
     }
@@ -157,7 +165,7 @@ object NativeRuntime {
             val actualContext = blockingOperation(operationEpoch) { NativeBindings.load(path.toByteArray(Charsets.UTF_8), options.contextLength, options.cpuThreads) }
             loadedOptions = options
             mutableStatus.value = mutableStatus.value.copy(phase = NativePhase.READY, contextLength = actualContext,
-                lastLoadMillis = (System.nanoTime() - started) / 1_000_000)
+                lastLoadMillis = (System.nanoTime() - started) / 1_000_000, lastUsedAtEpochMs = System.currentTimeMillis())
             return mutableStatus.value
         } catch (error: Throwable) {
             // A coroutine can be cancelled immediately after successful native load but before resume.

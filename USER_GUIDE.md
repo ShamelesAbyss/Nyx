@@ -1,6 +1,20 @@
-# NYX User Guide — v0.8.3 “Project Mission Control”
+# NYX User Guide — v0.8.4 “Project Endurance”
 
-> v0.8.3 “Project Mission Control” is the latest published release. The ARM64 debug APK and 702-test JVM/build checks are verified; physical-device visual interaction and Termux/PRoot execution remain unverified.
+> v0.8.4 “Project Endurance” is the latest published release. The ARM64 debug APK and 713-test JVM/build checks are verified. The release owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold; native GGUF inference, calibration, exact-prefix KV reuse, and battery/performance gains remain unverified.
+
+## v0.8.4 — Project Endurance
+
+Open **More → Performance** to inspect the device capabilities NYX actually observed, choose Eco, Balanced, Performance, or Adaptive, and see the effective native thread count, autonomous worker cap, stream cadence, and idle-release behavior. Thermal and low-battery safety ceilings apply to every mode. Adaptive mode chooses from RAM, low-RAM state, core count, thermal status, and battery state; recovery from a derated state waits for two consecutive samples.
+
+Adaptive threading is used before the next native model load. A model that is already resident keeps its current thread count so a chat turn cannot silently reload it. Moving the **CPU threads** slider in Settings switches to manual control; re-enable adaptive threading on the Performance screen when you want NYX to choose. **Apply to native session** reloads the model only when no generation, agent, workflow, or objective is running.
+
+**Run calibration** is opt-in. It requires a loaded native GGUF model, a cool device, sufficient battery (or charging), and no running objective. It tests at most three thread counts, generates at most eight tokens each, and stops within two minutes. Results are stored on-device and are tied to the model, runtime version, and device; changing any of them makes the result inapplicable rather than silently reusing it. End-to-end tokens/s includes prompt processing and is not a decode-only score.
+
+In **Eco** mode, NYX releases the resident native model after ten idle minutes when no chat generation, agent, workflow, or objective is active. The next message reloads it normally. Balanced and Performance keep the model resident.
+
+The Performance screen reports NNAPI/Vulkan feature presence as capability evidence only. No GPU or NPU GGUF backend is bundled or claimed; the ARM64 CPU path remains the supported runtime. SoC family labels are display/thread heuristics, not accelerator proof.
+
+The release is available from the [official GitHub release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4). The Performance dashboard render on a Pixel 10 Pro Fold is owner-reported UI evidence, not a native inference, calibration, KV-reuse, or battery benchmark. See [release notes](RELEASE_NOTES_v0.8.4.md) and [implementation report](V084_IMPLEMENTATION_REPORT.md).
 
 ## v0.8.3 — Project Mission Control (published)
 

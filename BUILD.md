@@ -1,8 +1,9 @@
-# Building NYX 0.8.3 — Project Mission Control
+# Building NYX 0.8.4 — Project Endurance
 
-Package identity: `com.nyx.ai`, versionCode **16**, versionName **0.8.3**. The published v0.8.3 build passed `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`: 702 JVM tests pass, the ARM64 debug APK builds, and the instrumentation-test APK compiles. **The official v0.8.3 GitHub release is now the latest release.** The APK remains debug-signed, not a production Play build. No physical device was available for rendering/touch validation or Termux/PRoot runtime checks.
-
-## v0.8.3 release artifacts
+Package identity: `com.nyx.ai`, versionCode **17**, versionName **0.8.4**. The release passed `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`: **713 JVM tests** pass across 68 classes, the ARM64 debug APK builds, and the instrumentation-test APK compiles. The APK is debug-signed, not a production Play build. No Android device was attached to the build environment; the release owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold, which is UI evidence only. Native inference, calibration, KV reuse, and Termux/PRoot runtime remain device-validation items.
+## v0.8.4 release artifacts
+The official [NYX v0.8.4 — Project Endurance release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4) includes `NYX-v0.8.4.apk`, `NYX-v0.8.4-androidTest.apk`, `NYX-Source-v0.8.4.zip`, and `NYX-v0.8.4-SHA256SUMS.txt`. Verify them with `sha256sum -c NYX-v0.8.4-SHA256SUMS.txt`. The primary APK SHA-256 is `65a415a2e57d72575fd858d428e997db7b6377e10a3c8e9b701102285e025dce`; the instrumentation APK SHA-256 is `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3`. The established debug signer SHA-256 remains `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. Instrumentation was compiled but not executed. No AAB or Google Play submission was produced.
+## v0.8.3 release artifacts (previous release)
 
 The official [NYX v0.8.3 — Project Mission Control release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3) includes the ARM64 primary installation APK, compiled instrumentation APK, clean source archive, and SHA-256 manifest. Download the assets from that page and verify the APKs and source archive with `sha256sum -c NYX-v0.8.3-SHA256SUMS.txt`. The APK is debug-signed, not production/Play-signed; instrumentation was compiled but not executed, and physical-device behavior remains unverified. No AAB or Google Play submission was produced.
 
@@ -42,16 +43,16 @@ python3 tools/check_sdk_policy.py --self-test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package identity: `com.nyx.ai`; versionCode 16/versionName 0.8.3; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
+Package identity: `com.nyx.ai`; versionCode 17/versionName 0.8.4; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
 
 Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, settings, and imported GGUF copies; preserve the prior key and back up user data first. `assembleRelease` alone is not a production-signed release. Keep all signing secrets outside source archives.
 
 ## Automated checks and current verification boundary
 
-- The final v0.8.3 clean Gradle run completed with `BUILD SUCCESSFUL in 1m 29s`: **702 JVM tests, zero failures, zero errors, and zero skips** across 67 classes. `assembleDebugAndroidTest` compiled the instrumentation APK; no instrumentation test was executed.
-- v0.8.3's Autonomy/Terminal changes are presentation and binding changes over existing state/actions. No objective policy, workspace grant, command authority, checkpoint, or resume confirmation was removed.
-- The debug APK is `com.nyx.ai`, versionCode 16/versionName 0.8.3, min API 26, compile/target API 37, `arm64-v8a` only. Its SHA-256 and the established debug signing certificate are in [TEST_RESULTS.md](TEST_RESULTS.md). APK 16 KB ZIP alignment passed.
-- No physical Android device was attached and `adb` is unavailable in this environment. Mission Control rendering/touch behavior, Termux/PRoot runtime, package installation, and resumed objective behavior remain device checks.
+- The final v0.8.4 clean Gradle run completed with `BUILD SUCCESSFUL in 1m 20s`: **713 JVM tests, zero failures, zero errors, and zero skips** across 68 classes. `assembleDebugAndroidTest` compiled the instrumentation APK; no instrumentation test was executed.
+- v0.8.4's Performance, calibration, and native-prefix changes preserve the existing autonomy policy, workspace grants, command authority, checkpoints, and resume confirmations. No policy boundary was removed.
+- The debug APK is `com.nyx.ai`, versionCode 17/versionName 0.8.4, min API 26, compile/target API 37, `arm64-v8a` only. Its SHA-256 and the established debug signing certificate are in [TEST_RESULTS.md](TEST_RESULTS.md). APK 16 KB ZIP alignment passed.
+- No Android device was attached to the build environment and `adb` is unavailable. The release owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold; native inference, calibration, KV reuse, Mission Control rendering, Termux/PRoot runtime, package installation, and resumed objective behavior remain device checks.
 - The earlier host x86_64 JNI/model run and standalone ARM64 cross-compilation recorded in [TEST_RESULTS.md](TEST_RESULTS.md) are historical host evidence, not an Android runtime pass or proof that this release was tested on a phone.
 - Existing compiler warnings are the Compose `Divider` deprecation and Room migration parameter-name notices; no compile errors occurred.
 

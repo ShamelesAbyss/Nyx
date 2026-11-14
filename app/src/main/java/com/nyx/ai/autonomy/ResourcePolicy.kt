@@ -18,7 +18,11 @@ data class ResourceProfile(
 )
 
 object ResourcePolicy {
-    fun profile(resources: DeviceResources, requestedParallelism: Int = 0): ResourceProfile {
+    fun profile(
+        resources: DeviceResources,
+        requestedParallelism: Int = 0,
+        parallelismCap: Int = Int.MAX_VALUE,
+    ): ResourceProfile {
         val base = when {
             resources.lowMemory ||
                 resources.totalMemMb < 3072L ||
@@ -73,11 +77,11 @@ object ResourcePolicy {
             maxFilesystem = base.policy.maxFilesystem.coerceAtLeast(1),
             maxVerification = base.policy.maxVerification.coerceAtLeast(1),
             maxDevelopment = base.policy.maxDevelopment.coerceAtLeast(1),
-            maxTotal = (if (requestedParallelism > 0) {
-                minOf(base.policy.maxTotal, requestedParallelism)
-            } else {
-                base.policy.maxTotal
-            }).coerceAtLeast(1),
+            maxTotal = minOf(
+                base.policy.maxTotal,
+                if (requestedParallelism > 0) requestedParallelism else Int.MAX_VALUE,
+                if (parallelismCap > 0) parallelismCap else Int.MAX_VALUE,
+            ).coerceAtLeast(1),
         )
         return base.copy(policy = adjustedPolicy)
     }
