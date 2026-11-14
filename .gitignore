@@ -29,3 +29,6 @@ verification-output/
 /NYX-Source.zip
 /NYX-Source-v*.zip
 /NYX-v*-SHA256SUMS.txt
+
+# Generated inside source archives by the release gate
+SOURCE-MANIFEST.sha256
