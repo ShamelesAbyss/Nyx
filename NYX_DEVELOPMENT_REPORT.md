@@ -1,6 +1,6 @@
-# NYX v0.9.1 — Project Ignition source candidate
+# NYX v0.9.1 — Project Ignition (published)
 
-Implemented three deterministic, explicitly selected Quick Actions within the existing Kotlin objective engine and Compose Autonomy UI. Fixed project tools, retained Workbench integrity checks, evidence/ownership, cancellation and no-replay review remain enforced. No model planning or inference call occurs on this path. See [scoped implementation and verification report](V091_IMPLEMENTATION_REPORT.md) and [release notes](RELEASE_NOTES_v0.9.1.md). Clean host build passed 1,198 tests/133 suites with no failures/errors/skips and assembled both APKs; independent metadata/ARM64/notices/16 KB checks passed in build-only signer mode. The original signing key and successful exact-commit hosted CI are mandatory publication gates; no public v0.9.1 release is claimed here.
+Implemented three deterministic, explicitly selected Quick Actions within the existing Kotlin objective engine and Compose Autonomy UI. Fixed project tools, retained Workbench integrity checks, evidence/ownership, cancellation and no-replay review remain enforced. No model planning or inference call occurs on this path. See [scoped implementation and verification report](V091_IMPLEMENTATION_REPORT.md) and [release notes](RELEASE_NOTES_v0.9.1.md). Clean host build passed 1,198 tests/133 suites with no failures/errors/skips and assembled both APKs. The original signing key was verified, certificate continuity and 16 KB checks passed, and exact-commit hosted CI succeeded. v0.9.1 is published as the latest stable release.
 
 # NYX Eclipse AI — Development Reports
 

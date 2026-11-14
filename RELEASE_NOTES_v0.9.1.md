@@ -2,7 +2,7 @@
 
 Package `com.nyx.ai` · versionName `0.9.1` · versionCode 24 · ARM64 · API 26–37.
 
-**Source candidate. Publication is blocked until all release gates pass and the established signing key is available. Public stable downloads remain v0.9.0.**
+**Published stable release. The established NYX signing identity is available and verified. Download the verified APK, source archive, instrumentation APK, checksums and verification report below.**
 
 ## Quick Actions
 
@@ -24,6 +24,19 @@ Submission and tool start/end wall timestamps are retained. Permission validatio
 
 See [implementation report](V091_IMPLEMENTATION_REPORT.md) and [test results](TEST_RESULTS.md) for the actual current verification outcome. Physical Android, Room upgrade, foldable layout, Binder/Termux/PRoot and real-provider acceptance are UNVERIFIED without a device. No database schema/migration, package ID, native inference, provider, dependency or SDK policy change is introduced.
 
-## Distribution gate
+## Verification
 
-The established signer is SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. A local newly generated debug key is build-only and cannot produce a public upgrade APK. Source may be committed/pushed while signing is blocked. No v0.9.1 tag/release/download is claimed until exact-commit hosted CI, signing continuity, source correspondence, independent checksums, ARM64/ZIP/ELF and notices pass.
+- Source commit: `538b73adb528bd0ddfafbfa17225b7d76ec01d3f`.
+- Hosted CI: [run 43631095524](https://github.com/ShamelesAbyss/Nyx/actions/runs/43631095524) passed on that exact commit.
+- JVM suite: **1,198 tests across 133 suites**, zero failures, errors or skips with real-network acceptance enabled.
+- APK: package `com.nyx.ai`, versionName `0.9.1`, versionCode 24, min API 26, compile/target API 37, ARM64 only.
+- Signing continuity: certificate SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`, matching prior NYX releases.
+- Artifact gates: 16 KB ZIP alignment passed for both APKs; ARM64 JNI and third-party notices verified.
+- APK SHA-256: `40680ebfeac10953a41e8142d5a2e5138fcdc3d423ad6cd45fef81235b44200f`.
+- Instrumentation APK SHA-256: `eccbc53bb3839b9f5f2e172421023bce6aeac96b67836ec3e66bfeaa8e85319b`.
+
+The release checksum manifest covers every uploaded payload except itself. The source archive is generated from the exact release commit and verified against the current working tree.
+
+## Distribution
+
+This is an ARM64, debug-signed development release, not a Google Play or production-signed artifact. No AAB was generated. Existing installations signed with the established NYX certificate can update in place; back up important data first. Physical Android execution, foldable rendering, installed-data upgrade and real Ollama/Termux/PRoot/provider behavior remain **UNVERIFIED**.

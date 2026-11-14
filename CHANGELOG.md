@@ -1,8 +1,7 @@
-# NYX v0.9.1 — Project Ignition source candidate
-
-VersionCode 24. Three explicitly approved Quick Actions use the existing engine without model planning: read-only project inspection, fixed project tests and verification of an existing Workbench output. Action-specific scope, task-bound evidence, actual exits, no automatic replay and timing events are retained. No Room/native/SDK migration. Publication awaits verification and the established signing key; stable downloads remain v0.9.0. See [release notes](RELEASE_NOTES_v0.9.1.md) and [implementation report](V091_IMPLEMENTATION_REPORT.md).
-
 # Changelog
+
+## 0.9.1 — Project Ignition (published)
+VersionCode 24, package `com.nyx.ai`. Three explicitly approved Quick Actions use the existing objective engine without model planning: read-only project inspection, fixed approved project tests, and verification of an existing Workbench artifact. Action-specific scope, task-bound evidence, real exits, cancellation, no automatic replay and run-local timing are retained. No Room/native/SDK/provider migration. The final clean build passed **1,198 JVM tests across 133 suites, zero failures/errors/skips** with real-network acceptance enabled, assembled both APKs, preserved the established signer, and passed 16 KB ZIP/ELF checks. Exact-commit hosted CI passed. Android hardware, installed-app upgrade and real-provider acceptance remain unverified. See [release notes](RELEASE_NOTES_v0.9.1.md) and [implementation/verification report](V091_IMPLEMENTATION_REPORT.md).
 
 ## 0.9.0 — Project Bedrock (published)
 Bedrock adds a default-off, original-project-bound development → selected-file flow through the existing engine, a structured terminal catalog with controlled environment/link guards, exact-request capability evidence and checkpoint-stable continuation IDs, mandatory process/artifact checks, conservative persistent-host token fencing, and stricter store/network/credential boundaries. The final clean build passed **1,182 JVM tests across 132 suites**, zero failures/errors/skips; terminal and production non-UI combined host acceptance also passed. Android/Room/Binder/provider and real-device execution remain unverified. See [release notes](RELEASE_NOTES_v0.9.0.md), [implementation/evidence report](V090_IMPLEMENTATION_REPORT.md) and [security dispositions](BEDROCK_SECURITY_AUDIT.md).
