@@ -1,8 +1,22 @@
-# NYX User Guide — v0.8.4 “Project Endurance”
+# NYX User Guide — v0.8.5 “Project Sovereign”
 
-> v0.8.4 “Project Endurance” is the latest published release. The ARM64 debug APK and 713-test JVM/build checks are verified. The release owner reports that the Performance dashboard rendered on a Pixel 10 Pro Fold; native GGUF inference, calibration, exact-prefix KV reuse, and battery/performance gains remain unverified.
+> v0.8.5 “Project Sovereign” is the latest published release. It adds adaptive deliberation budgets, durable working state, task-scoped tools, a false-success guard, bounded self-repair, and a two-hour checkpointed objective window. The JVM suite and clean Android build are verified; the Sovereign runtime behavior has not yet been validated on a physical device or against a real provider/model.
 
-## v0.8.4 — Project Endurance
+## v0.8.5 — Project Sovereign (published)
+
+The Autonomy screen and Live Worker Console now expose the execution profile and short decision/observation summaries for each task. These are deliberately concise: NYX does not request or display a private chain-of-thought transcript. The profile shows the selected reasoning depth, step budget, model-call budget, tool-call budget, and context budget.
+
+Each objective task persists a compact **working state** in its checkpoint: objective, requirements, observed facts, open errors, next action, evidence pointers, and completed steps. If the app process is restarted or a task is retried, the state is restored and included in the next bounded context. The checkpoint is a recovery aid, not a guarantee that an interrupted side effect did not happen; uncertain mutating work still requires **Review & resume**.
+
+Tools are scoped to the task kind. Inference tasks may read and use non-mutating tools but cannot run shell commands or write files. Filesystem tasks may edit files but cannot run shell or project commands. Verification tasks may inspect files and run the fixed test command, but cannot write files or run arbitrary shell. Terminal and development tasks receive the full approved capability set inside the authorized workspace. A capability that is not available on the run is never shown to the model as an available tool.
+
+For tasks that require tool evidence, a final answer that claims completed work without a successful tool observation is rejected once. If the model repeats the claim, the result is marked unverified and objective verification fails. A clear blocker is not treated as a completion claim. Malformed structured actions receive at most two repair attempts; repeated identical failing actions and consecutive tool failures stop the task instead of consuming the entire budget.
+
+The foreground objective watchdog now allows up to **two hours**. Thermal, memory, battery, lease, pause, cancel, and explicit-review rules are unchanged. The watchdog is an upper bound, not a promise that Android will keep the process alive for that long.
+
+The release is available from the [official GitHub release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5). See [RELEASE_NOTES_v0.8.5.md](RELEASE_NOTES_v0.8.5.md) and [V085_IMPLEMENTATION_REPORT.md](V085_IMPLEMENTATION_REPORT.md) for scope and verification boundaries.
+
+## v0.8.4 — Project Endurance (published)
 
 Open **More → Performance** to inspect the device capabilities NYX actually observed, choose Eco, Balanced, Performance, or Adaptive, and see the effective native thread count, autonomous worker cap, stream cadence, and idle-release behavior. Thermal and low-battery safety ceilings apply to every mode. Adaptive mode chooses from RAM, low-RAM state, core count, thermal status, and battery state; recovery from a derated state waits for two consecutive samples.
 
@@ -176,7 +190,7 @@ Hard process timeouts require coreutils `timeout` and the discovery/write utilit
 
 ## How objectives execute
 
-Objectives run in a visible `specialUse` foreground service, with Pause/Cancel controls, leases, heartbeats, and saved Room state. This is an honest compute-service declaration with a manifest explanation; it requires Play review and does not promise store approval or unlimited background life. NYX's own run deadline is **30 minutes**, not a platform-imposed specialUse timeout.
+Objectives run in a visible `specialUse` foreground service, with Pause/Cancel controls, leases, heartbeats, and saved Room state. This is an honest compute-service declaration with a manifest explanation; it requires Play review and does not promise store approval or unlimited background life. In the v0.8.5 candidate, NYX's own run deadline is **two hours**, not a platform-imposed specialUse timeout; thermal, memory, battery, lease, and user controls can still stop or pause the run earlier.
 
 1. Choose the provider/model and an agent whose enabled tools fit your objective. Authorize a trusted workspace only if the work needs it.
 2. Open **Autonomy**, describe the objective and its verification requirements, and select **Plan and execute**.

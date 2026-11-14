@@ -8,7 +8,7 @@
 
 **A local-first Android AI workstation for private inference, real device tools, and autonomous work that has to prove itself.**
 
-[![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4)
+[![Release](https://img.shields.io/github/v/release/ShamelesAbyss/Nyx?style=for-the-badge&label=release&color=8B5CF6&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#-build-from-source)
 
@@ -21,23 +21,23 @@
 ---
 
 > [!IMPORTANT]
-> **NYX v0.8.4 — Project Endurance is the latest release.** It turns NYX from a local AI workstation into a hardware-aware one: observed device intelligence, four operating modes, adaptive native threading, opt-in calibration, thermal and battery ceilings, and exact-prefix KV reuse. Read the [release notes](RELEASE_NOTES_v0.8.4.md) and [implementation report](V084_IMPLEMENTATION_REPORT.md).
+> **NYX v0.8.5 — Project Sovereign is the latest official release.** It moves autonomous work from basic tool execution toward deliberate, evidence-driven execution: adaptive deliberation budgets, a working state that survives context compaction and retries, task-scoped tool authority, a false-success guard, bounded self-repair, and a longer checkpointed execution window. Read the [release notes](RELEASE_NOTES_v0.8.5.md) and [implementation report](V085_IMPLEMENTATION_REPORT.md).
 
 > [!WARNING]
 > **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device. Existing NYX installations signed with the established debug certificate can update in place; back up anything important before experimenting.
 
-## ⬇️ Download NYX v0.8.4 — Project Endurance
+## ⬇️ Download NYX v0.8.5 — Project Sovereign
 
 <div align="center">
 
-### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4)
+### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5)
 
 | Asset | What it is |
 | :--- | :--- |
-| **[NYX-v0.8.4.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4.apk)** | Primary installation APK. ARM64, debug-signed. |
-| **[NYX-Source-v0.8.4.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-Source-v0.8.4.zip)** | Complete source, tests, docs, licenses, and Gradle wrapper. |
-| **[NYX-v0.8.4-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4-androidTest.apk)** | Instrumentation tests for device verification. |
-| **[NYX-v0.8.4-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4-SHA256SUMS.txt)** | SHA-256 digests for the APKs and source archive. |
+| **[NYX-v0.8.5.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.5/NYX-v0.8.5.apk)** | Primary installation APK. ARM64, debug-signed. |
+| **[NYX-Source-v0.8.5.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.5/NYX-Source-v0.8.5.zip)** | Complete source, tests, docs, licenses, and Gradle wrapper. |
+| **[NYX-v0.8.5-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.5/NYX-v0.8.5-androidTest.apk)** | Instrumentation tests for device verification. |
+| **[NYX-v0.8.5-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.5/NYX-v0.8.5-SHA256SUMS.txt)** | SHA-256 digests for the APKs and source archive. |
 
 </div>
 
@@ -51,12 +51,12 @@ NYX is not a chat wrapper around a hosted API. It is an Android application that
 
 It is also a private inference workstation. Run a quantized GGUF through the bundled llama.cpp CPU runtime, connect to a managed Ollama server, or point NYX at any OpenAI-compatible endpoint. Chat, agents, workflows, and autonomous objectives all resolve through the same provider layer, so no single cloud vendor is the only path.
 
-v0.8.4 adds the missing layer between the model and the phone: **the device itself**. NYX now observes the hardware it is running on, chooses a conservative operating profile, applies native threading at safe boundaries, and exposes the evidence in a dedicated Performance dashboard.
+Project Sovereign adds the missing layer between a model and a long objective: **a durable, bounded working state**. NYX now adapts its deliberation budget to the task, scopes tools to what the task actually needs, rejects unsupported completion claims, repairs malformed actions a bounded number of times, and carries verified context across retries and process restarts.
 
 | | |
 | :--- | :--- |
 | **Package** | `com.nyx.ai` |
-| **Version** | `0.8.4` (versionCode 17) |
+| **Version** | `0.8.5` (versionCode 18) |
 | **Android** | 8.0+ / API 26–37 |
 | **Architecture** | `arm64-v8a` |
 | **Inference** | Native GGUF CPU · Ollama · OpenAI-compatible `/v1` |
@@ -84,9 +84,57 @@ Your device, your models, your data, your rules. NYX is open source, buildable, 
 
 ---
 
-## ⚡ Project Endurance
+## 🛡️ Project Sovereign
 
-**v0.8.4 is about making the same local intelligence work better on the device you actually carry.**
+**Project Sovereign is about making autonomous work survive real models, long runs, and its own mistakes.**
+
+NYX already planned objectives, ran authorized tools, and checked evidence. This release adds the layer that keeps those loops coherent when the context is compacted, a tool fails, a model repeats itself, or a process restarts. It is an engineering step toward reliable autonomous execution — not a claim of unbounded or Manus-style autonomy.
+
+### 🧠 Adaptive deliberation
+
+NYX assigns a bounded reasoning depth and hard model, tool, step, and context budgets from the task kind, its complexity, and the observed performance mode. Light tasks get fewer calls; development, diagnosis, and verification get more. The model receives a short operating protocol asking for one decision and one observation at a time — never a hidden chain-of-thought transcript.
+
+### 🤖 Intelligent agent execution
+
+Each task runs a structured loop: plan the next action, invoke only an authorized tool, record the observation, evaluate whether the evidence supports progress, and verify before completion. The planner sees the tools actually enabled for the run instead of guessing at capabilities.
+
+### 🛡️ Evidence-backed completion
+
+For tasks that require tool evidence, a final answer that claims concrete work without a successful tool observation is rejected and the model is asked for evidence or an honest blocker. If it repeats the claim, the result is marked unverified and objective verification fails. An honest blocker is not treated as a completion claim.
+
+### 🔄 Bounded self-correction
+
+Malformed structured actions get at most two repair attempts, each recorded. Repeated identical failing actions stop with an explanation, and consecutive tool failures stop the task before it burns the whole budget. Retries receive the previous failure evidence and an explicit instruction to change approach.
+
+### 💾 Durable working state
+
+Each task persists a compact working state: objective, requirements, established facts, open errors, next action, evidence pointers, and completed steps. It is restored from the task checkpoint after a retry or process restart and included in bounded context. A long objective no longer depends on an ever-growing chat transcript.
+
+### 🔐 Task-scoped capabilities
+
+Tools follow the planned task, not the widest capability the app happens to have:
+
+| Task kind | Allowed capability |
+| :--- | :--- |
+| Inference | Read-only grounding and enabled non-mutating tools; no shell, file writes, or project execution |
+| Filesystem | File inspection and atomic edits; no shell commands or project builds |
+| Verification | Read-only inspection plus the fixed test command; no file writes or arbitrary shell |
+| Terminal | File tools and policy-gated shell commands inside the authorized workspace |
+| Development | Full approved development capability set |
+
+Every scope is intersected with tools actually available on the run, so a missing terminal never becomes a phantom capability.
+
+### ⚡ Resource-aware autonomy
+
+Sovereign reasoning and execution integrate with Project Endurance's Eco, Balanced, Performance, and Adaptive modes. Eco reduces budgets and can release an idle native model; Performance may raise them within fixed caps. Thermal, battery, and memory safeguards still apply.
+
+### Long-running execution
+
+The foreground objective watchdog now allows up to two hours, while the existing lease heartbeat still pauses on thermal, memory, or battery pressure. Checkpoints are written before and after verification, and uncertain mutating work still requires explicit review.
+
+### Performance foundation from v0.8.4
+
+The hardware-aware layer introduced in Project Endurance remains in place.
 
 ### Four operating modes
 
@@ -141,6 +189,8 @@ Any mismatch, failed sequence removal, cancellation, decode error, or failed gen
 ### What is experimental — and what is not claimed
 
 > [!NOTE]
+> **Project Sovereign is build- and JVM-tested, not physically validated in this cycle.** Adaptive deliberation, task-scoped tools, the false-success guard, and durable working state have no on-device run against a real provider or model yet. "Replanning" here means bounded plan repair plus changed-approach retry guidance, not an unrestricted planner loop. No speed, battery, or success-rate benchmark is claimed.
+>
 > **Native CPU inference remains the verified GGUF backend.** No GPU or NPU GGUF backend is bundled or claimed. NNAPI/Vulkan feature presence is capability evidence, not a compatibility promise.
 >
 > Exact-prefix KV reuse is implemented and compiled, but it has **no measured device speedup** and no physical-device runtime test yet. Calibration has not been run on a phone with a real GGUF model. Battery or speed improvements have not been quantitatively established.
@@ -233,7 +283,7 @@ NYX supports two independent ways to run a model. You do not need both, and nati
 
 ### Option A — Native GGUF mode (no Termux, no network)
 
-1. Install `NYX-v0.8.4.apk` on a 64-bit ARM Android device running Android 8.0 (API 26) or newer.
+1. Install `NYX-v0.8.5.apk` on a 64-bit ARM Android device running Android 8.0 (API 26) or newer.
 2. Obtain a compatible instruct-tuned GGUF file. Start small: a 0.5B–3B model quantized to `Q4_K_M` is a realistic first test. Memory use grows with parameter count and context length.
 3. Open **Models → Import GGUF** and pick the file with the Android document picker. NYX copies it into app-private storage and reads its metadata.
 4. Review the reported architecture, quantization, context limit, and memory estimate. An incompatible or oversized model is refused rather than attempted.
@@ -298,8 +348,9 @@ This table separates what exists from what has actually been demonstrated. It is
 
 | Status | Area |
 | :--- | :--- |
-| ✅ **Implemented and build-tested** | Native GGUF provider, model import and management, provider factory, inference admission, objective engine, scheduler, verifier, context store, Arsenal procedures, repair loop, Termux bridge, autonomy policy, dependency provisioning, network tools, specialist roles, Android 17 permission handling, managed Ollama lifecycle, MCP/GitHub gateways, project memory, source symbol index, Live Worker Console, device intelligence, operating modes, adaptive threading, bounded calibration, exact-prefix KV reuse, mode-aware concurrency and streaming |
-| ✅ **Published** | v0.8.4 ARM64 debug APK, instrumentation APK, source archive, and checksum manifest; **713 JVM tests, zero failures/errors/skips across 68 classes**. Instrumentation was compiled but not executed. |
+| ✅ **Implemented and build-tested** | Native GGUF provider, model import and management, provider factory, inference admission, objective engine, scheduler, verifier, context store, Arsenal procedures, repair loop, Termux bridge, autonomy policy, dependency provisioning, network tools, specialist roles, Android 17 permission handling, managed Ollama lifecycle, MCP/GitHub gateways, project memory, source symbol index, Live Worker Console, device intelligence, operating modes, adaptive threading, bounded calibration, exact-prefix KV reuse, mode-aware concurrency and streaming, adaptive deliberation budgets, durable working state, task-scoped tool authority, false-success guard, bounded action repair |
+| ✅ **Published** | v0.8.5 ARM64 debug APK, instrumentation APK, source archive, and checksum manifest on GitHub; **731 JVM tests, zero failures/errors/skips across 70 classes**. Instrumentation was compiled but not executed. |
+| ✅ **Previous release** | v0.8.4 ARM64 debug APK, instrumentation APK, source archive, and checksum manifest remain available. |
 | 📱 **Owner-reported UI check** | Performance dashboard opened on a Pixel 10 Pro Fold. This is UI evidence only; it is not a native inference, calibration, KV-reuse, or battery benchmark. |
 | 🧪 **Verified on Linux host only** | Real llama.cpp JNI generation from an Apache-2.0 SmolLM2-135M Q4_K_M GGUF (`The capital of France is Paris.`, 7 selected tokens), plus cancellation, session reuse, callback-error propagation, and safe unload |
 | 🧪 **Verified on Linux host only** | Autonomous repair of a genuinely failing fixture: baseline build `0`, baseline test `2`, exact-hash edit, retest build `0` / test `0`, with backup and diff retained |
@@ -307,7 +358,7 @@ This table separates what exists from what has actually been demonstrated. It is
 | ⏳ **Awaiting physical-device verification** | Native GGUF loading/generation, calibration, Eco idle release, adaptive thread application, exact-prefix KV reuse with a real model, Performance mode switching, v0.8.3 Mission Control/Terminal rendering and fold/unfold behavior, v0.8.2 task-scoped dependency preparation and objective resumption, v0.8.1 console and planning behavior against a real provider, v0.8.0 fixed-build Debian JDK installation and continuation, workspace deletion and startup reuse, Debian-only Ollama discovery/lifecycle, notification actions, model listing, Arsenal/MCP/GitHub/memory/symbol flows, Termux IPC, Keystore, foreground service, process-death recovery, Room migration, and fold/unfold layout |
 | 🗺️ **Planned** | See the [roadmap](#-roadmap) |
 
-Artifact checks for the published v0.8.4 build: package `com.nyx.ai`, versionName `0.8.4`, versionCode `17`, target and compile SDK `37`, minimum SDK `26`, `arm64-v8a` only, and the established debug signer. The APK is 16 KB ZIP-aligned. This is a debug-signed development build, not a production-signed Play artifact. See [TEST_RESULTS.md](TEST_RESULTS.md) and the [v0.8.4 checksum manifest](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.4/NYX-v0.8.4-SHA256SUMS.txt). No physical-device native inference validation is claimed.
+Artifact checks for the published v0.8.5 build: package `com.nyx.ai`, versionName `0.8.5`, versionCode `18`, target and compile SDK `37`, minimum SDK `26`, `arm64-v8a` only, and the established debug signer. The APK is 16 KB ZIP-aligned. This is a debug-signed development build, not a production-signed Play artifact. See [TEST_RESULTS.md](TEST_RESULTS.md) and the [v0.8.5 checksum manifest](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.5/NYX-v0.8.5-SHA256SUMS.txt). No physical-device native inference validation is claimed.
 
 ---
 
@@ -331,7 +382,8 @@ The long-term vision is an autonomous assistant that runs on hardware you own, u
 
 | Version | Codename | Focus |
 | :--- | :--- | :--- |
-| **[v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4)** | **Project Endurance** | Device intelligence, Eco/Balanced/Performance/Adaptive modes, calibration, thermal/battery safety, exact-prefix KV reuse |
+| **[v0.8.5](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5)** | **Project Sovereign** | Adaptive deliberation budgets, durable working state, task-scoped tools, false-success guard, bounded self-repair, two-hour checkpointed execution |
+| [v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4) | Project Endurance | Device intelligence, Eco/Balanced/Performance/Adaptive modes, calibration, thermal/battery safety, exact-prefix KV reuse |
 | [v0.8.3](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.3) | Project Mission Control | Mission overview, readiness evidence, task timeline, terminal clarity, console accessibility |
 | [v0.8.2](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.2) | Project Unshackle | Task-scoped dependency preparation, negation-aware project inference, GitHub language presentation |
 | [v0.8.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.1) | Project Clear Signal | Run-scoped Live Worker Console, operation grouping, bounded planning recovery, shell hardening |
@@ -366,8 +418,8 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 | [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md) | What was built, what was verified, what remains |
 | [TEST_RESULTS.md](TEST_RESULTS.md) | Exact test counts, host evidence, and unexecuted device checks |
 | [CHANGELOG.md](CHANGELOG.md) | Complete release history |
-| [RELEASE_NOTES_v0.8.4.md](RELEASE_NOTES_v0.8.4.md) | Project Endurance release scope, verification, and limits |
-| [V084_IMPLEMENTATION_REPORT.md](V084_IMPLEMENTATION_REPORT.md) | Performance implementation, safety invariants, test evidence, and device checklist |
+| [RELEASE_NOTES_v0.8.5.md](RELEASE_NOTES_v0.8.5.md) | Project Sovereign release scope, verification, and limits |
+| [V085_IMPLEMENTATION_REPORT.md](V085_IMPLEMENTATION_REPORT.md) | Sovereign execution implementation, safety invariants, test evidence, and device checklist |
 
 <details>
 <summary><strong>Historical release and implementation documents</strong></summary>
@@ -410,6 +462,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.8.4 — Project Endurance · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.8.5 — Project Sovereign · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

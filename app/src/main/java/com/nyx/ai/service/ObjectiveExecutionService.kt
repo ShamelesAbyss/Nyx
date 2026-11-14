@@ -544,7 +544,10 @@ class ObjectiveExecutionService : Service() {
         const val KEY_TERMINAL_WORKSPACE = "terminal_workspace"
         private const val CHANNEL_ID = "nyx_objective_execution"
         private const val NOTIFICATION_ID = 4101
-        private const val MAX_RUN_MILLIS = 30 * 60_000L
+        // Long objectives are checkpointed and can legitimately exceed half an hour. The watchdog
+        // remains a hard bound, while the lease heartbeat still pauses on thermal, memory, or
+        // battery pressure and the user can pause or cancel at any time.
+        private const val MAX_RUN_MILLIS = 2 * 60 * 60_000L
         private const val LEASE_MILLIS = 90_000L
 
         fun start(context: Context, objectiveId: String) {

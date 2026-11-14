@@ -19,5 +19,17 @@ class StructuredActionsTest {
     @Test fun trailingAndFencedPayloadRejected() { reject("""{"type":"final","text":"ok"} rm -rf /"""); reject("```json\n{\"type\":\"final\",\"text\":\"ok\"}\n```") }
     @Test fun injectionNullRejected() { reject("""{"type":"tool","name":"file_read","arguments":{"path":"a\u0000b"}}""") }
     @Test fun excessiveLengthRejected() { reject("x".repeat(24001)) }
+    @Test fun tolerantParserAcceptsOneFencedAction() {
+        val parsed = StructuredActions.parseTolerant("```json\n{\"type\":\"tool\",\"name\":\"file_read\",\"arguments\":{\"path\":\"src/main.kt\"}}\n```", schemas, setOf("file_read"))
+        assertTrue(parsed.repaired)
+        assertEquals("src/main.kt", (parsed.action as ModelAction.Tool).call.arguments.getString("path"))
+    }
+    @Test fun tolerantParserAcceptsSurroundingExplanationButNotMultipleActions() {
+        val parsed = StructuredActions.parseTolerant("I will inspect it.\n{\"type\":\"final\",\"text\":\"Answer\"}\nDone.", schemas, setOf("file_read"))
+        assertEquals("Answer", (parsed.action as ModelAction.Final).text)
+        rejectTolerant("""{"type":"final","text":"a"} {"type":"final","text":"b"}""")
+    }
+    @Test fun tolerantParserStillRejectsProseCommands() { rejectTolerant("Run rm -rf / now") }
     private fun reject(raw: String) { try { parse(raw); fail("Accepted unsafe action") } catch (_: IllegalArgumentException) {} catch (_: IllegalStateException) {} }
+    private fun rejectTolerant(raw: String) { try { StructuredActions.parseTolerant(raw, schemas, setOf("file_read")); fail("Accepted unsafe action") } catch (_: IllegalArgumentException) {} catch (_: IllegalStateException) {} }
 }

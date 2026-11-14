@@ -1,5 +1,22 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.5 — Project Sovereign (published)
+
+NYX 0.8.5 is versionCode 18/versionName 0.8.5 for `com.nyx.ai`, published as [GitHub release v0.8.5](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5). It strengthens the existing objective execution path rather than adding a parallel engine: adaptive deliberation budgets, durable working state, task-scoped tools, a false-success guard, bounded action repair, repeated-failure stops, and a two-hour checkpointed watchdog. The planner now sees the tools actually enabled for the run.
+
+| Area | Status | Evidence/limit |
+| :--- | :--- | :--- |
+| Adaptive deliberation | Implemented, build-tested | Pure `SovereignPolicy` derives depth and model/tool/step/context budgets from task kind, complexity, and performance mode. |
+| Durable working state | Implemented, build-tested | Bounded state is stored in `checkpointJson`, restored after retries/restarts, and included in context; no credential or hidden-reasoning storage. |
+| Task-scoped tools | Implemented, build-tested | Inference/filesystem/verification/terminal/development scopes intersect configured and actually available tools; existing command policy remains the final gate. |
+| False-success guard | Implemented, build-tested | Completion claims without successful tool observations are rejected once, then marked unverified; honest blockers are preserved. |
+| Bounded self-repair | Implemented, build-tested | Tolerant extraction of one JSON action, at most two repairs, consecutive-failure and repeated-failure stops. |
+| Long-running execution | Implemented, build-tested | Objective watchdog raised to two hours; thermal/memory/battery/lease/pause/cancel controls unchanged. |
+| Verification | Build-tested | **731 JVM tests** across 70 classes; ARM64 debug and instrumentation APKs assembled. Instrumentation was not run. |
+| Device behavior | Pending | No physical-device validation of the Sovereign loop, task-scoped tools, false-success guard, durable recovery, or long-run behavior is claimed. |
+
+The published assets include the primary APK, instrumentation APK, clean source archive, and checksum manifest. The APK is debug-signed, not production/Play-signed. No AAB or Google Play submission was produced.
+
 ## v0.8.4 — Project Endurance (published)
 NYX 0.8.4 is versionCode 17/versionName 0.8.4 for `com.nyx.ai`, published as [GitHub release v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4). It adds observed device intelligence, Eco/Balanced/Performance/Adaptive modes with thermal and battery safety ceilings, adaptive native threading at safe boundaries, opt-in bounded calibration, exact-token-prefix KV reuse, mode-aware autonomy concurrency, mode-aware stream coalescing, and Eco-only idle model release. The Performance dashboard exposes capabilities, live resource state, effective tuning, calibration samples, and honest accelerator status.
 | Area | Status | Evidence/limit |

@@ -1,5 +1,26 @@
 # NYX Test Results
 
+## 0.8.5 — Project Sovereign (published build)
+
+Executed on 2026-11-14 UTC from `/home/ubuntu/nyx`:
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+
+Result: `BUILD SUCCESSFUL in 1m 21s`.
+
+- JVM tests: **731**, failures **0**, errors **0**, skipped **0** across **70 classes**.
+- New focused coverage: **9** `SovereignPolicyTest` cases (depth, budgets, observation classification, completion claims, blockers, retry guidance); **6** `SovereignStateScopeTest` cases (working-state round trip/checkpoint recovery and task-kind tool scope); **3** tolerant-action parser cases. Existing strict-action, autonomy, policy, workspace, and provider tests remain in the same suite.
+- The ARM64 debug APK is `com.nyx.ai`, versionCode **18**, versionName **0.8.5**, minSdk 26, compile/target SDK 37, `arm64-v8a` only.
+- The instrumentation APK compiled but was not run. No `adb` binary or connected Android device was available in this build environment. The Sovereign execution loop, task-scoped tools, false-success guard, durable working state, and adaptive budgets have not been exercised against a real provider/model or on a phone.
+- Published APK SHA-256: `024c5fa4ab91a7d28b19f8fe22c362766109470e72a615a82f81501a1d8aa456`.
+- Instrumentation APK SHA-256: `5454b3e6d8f33b86a07d30ea5b3b4f50a63ec26e3feba371a98805cdb5f022b3`.
+- Source archive SHA-256: recorded in the sidecar `NYX-v0.8.5-SHA256SUMS.txt` manifest.
+- Debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`, unchanged from the established NYX identity.
+- APK 16 KB ZIP alignment passed (`zipalign -c -P 16 -v 4`).
+- No AAB or Google Play submission was produced. The APK, instrumentation APK, source archive, and checksum manifest are published on GitHub.
+
 ## 0.8.4 — Project Endurance (published build)
 
 Published as [GitHub release v0.8.4](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.4).

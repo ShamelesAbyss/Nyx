@@ -13,6 +13,7 @@ import com.nyx.ai.agent.AgentTools
 import com.nyx.ai.agent.AgentToolProvider
 import com.nyx.ai.agent.CompositeToolProvider
 import com.nyx.ai.agent.NetworkAgentTools
+import com.nyx.ai.agent.SovereignRunConfig
 import com.nyx.ai.agent.WorkerRoles
 import com.nyx.ai.agent.FileProbe
 import com.nyx.ai.agent.ToolExecutionEvidence
@@ -29,6 +30,7 @@ import com.nyx.ai.data.ObjectiveEventEntity
 import com.nyx.ai.data.ObjectiveTaskEntity
 import com.nyx.ai.data.TaskEvidenceEntity
 import com.nyx.ai.network.ApiMessage
+import com.nyx.ai.performance.PerformanceController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -181,7 +183,10 @@ class ObjectiveExecutionEngine(
             try {
                 return@coroutineScope withTimeout(PlanningRecovery.ATTEMPT_TIMEOUT_MS) {
                 val messages = buildList {
-                    add(ApiMessage("system", plannerPrompt()))
+                    add(ApiMessage("system", plannerPrompt(
+                        terminalEnabled = terminalTools != null,
+                        toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty(),
+                    )))
                     add(ApiMessage("user", "Objective:\n${objective.goal.take(8_000)}"))
                     repair?.let { (previous, failure) ->
                         add(ApiMessage("user", PlanningRecovery.repairPrompt(previous, failure)))
@@ -350,6 +355,28 @@ class ObjectiveExecutionEngine(
         control.checkpoint()
         val attempt = task.attemptCount + 1
         val startedAt = now()
+        val objectiveGoal = dao.getObjective(objectiveId)?.goal.orEmpty()
+        val performanceLevel = runCatching { PerformanceController.tuning().level }.getOrNull()
+        val depth = SovereignPolicy.depthFor(
+            workerKind = task.workerKind,
+            title = task.title,
+            instructions = task.instructions,
+            performanceLevel = performanceLevel,
+        )
+        val budget = SovereignPolicy.budgetFor(
+            depth = depth,
+            performanceLevel = performanceLevel,
+            workerKind = task.workerKind,
+            contextLength = session.options.contextLength,
+        )
+        var working = (SovereignWorkingState.fromCheckpoint(task.checkpointJson)
+            ?: SovereignWorkingState.start(objectiveGoal, task.title, attempt))
+            .copy(attempt = attempt)
+        val runningCheckpoint = JSONObject()
+            .put("phase", "running")
+            .put("attempt", attempt)
+            .put("startedAt", startedAt)
+            .put("sovereignState", working.toJson())
         dao.upsertTask(
             task.copy(
                 status = "running",
@@ -358,11 +385,12 @@ class ObjectiveExecutionEngine(
                 finishedAt = null,
                 error = null,
                 verificationStatus = "pending",
-                checkpointJson = JSONObject().put("phase", "running").put("attempt", attempt).put("startedAt", startedAt).toString(),
+                checkpointJson = runningCheckpoint.toString(),
                 updatedAt = startedAt,
             )
         )
         event(objectiveId, task.id, "task_started", "${task.title} · attempt $attempt/${task.maxAttempts} · ${task.workerKind}")
+        event(objectiveId, task.id, "execution_profile", SovereignPolicy.executionProfile(depth, budget))
 
         val specs = EvidenceSpecParser.parse(task.evidenceJson)
         val records = contextStore.list(objectiveId)
@@ -376,10 +404,17 @@ class ObjectiveExecutionEngine(
                 verification = task.verification,
                 dependencyTaskIds = dependencyIds,
                 records = records,
-                budgetChars = minOf(12_000, session.options.contextLength * 2),
+                budgetChars = budget.maxContextChars,
             ),
             contextStore,
         )
+        val workingBlock = working.promptBlock(minOf(3_500, budget.maxContextChars / 3))
+        val retryHint = if (attempt > 1) SovereignPolicy.retryHint(task.error, attempt, task.maxAttempts) else null
+        val sharedContext = buildString {
+            append(built.text)
+            if (workingBlock.isNotBlank()) append("\n\n").append(workingBlock)
+            if (retryHint != null) append("\n\nRETRY GUIDANCE: ").append(retryHint)
+        }.take(budget.maxContextChars + 4_000)
 
         val config = runCatching { JSONObject(agent.configurationJson ?: "{}") }.getOrDefault(JSONObject())
         val configured = config.optJSONArray("tools")?.let { raw ->
@@ -403,15 +438,23 @@ class ObjectiveExecutionEngine(
                 requireNotNull(checked.skill) { "Builtin skill validation failed: ${checked.issues.joinToString { it.message }}" }
             }
         } else emptyList()
-        val objectiveGoal = dao.getObjective(objectiveId)?.goal.orEmpty()
         val arsenalSkills = runCatching {
             arsenal?.selectForGoal("$objectiveGoal ${task.title} ${task.instructions}", 3).orEmpty()
         }.getOrDefault(emptyList())
         val allowed = configured + approvedSkills.flatMap { it.allowedTools } +
             arsenalSkills.flatMap { it.manifest.tools } +
             extraTools?.names.orEmpty()
+        val availableTools = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
+        val toolScope = TaskCapabilityScope.forTask(
+            workerKind = task.workerKind,
+            configured = allowed,
+            available = availableTools,
+            terminalAvailable = terminalTools != null,
+        )
+        val scopedAllowed = toolScope.allowed
         if (approvedSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", approvedSkills.joinToString { "${it.manifest.id}@${it.manifest.version}" })
         if (arsenalSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", arsenalSkills.joinToString { "${it.id}@${it.version}" })
+        event(objectiveId, task.id, "tool_scope", "${toolScope.reason} Enabled: ${scopedAllowed.sorted().joinToString(", ").ifBlank { "none" }}.")
         val role = WorkerRoles.forTask(task.workerKind, task.title)
         event(objectiveId, task.id, "delegation_role", "${role.label} worker assigned to \"${task.title.take(80)}\".")
         val spec = AgentSpec(
@@ -424,8 +467,8 @@ class ObjectiveExecutionEngine(
                 runCatching { projectMemory?.buildPromptBlock("$objectiveGoal ${task.title}", 3_500).orEmpty() }
                     .getOrDefault("")
                     .let { if (it.isNotBlank()) "\n\n$it" else "" },
-            maxSteps = config.optInt("maxSteps", 8),
-            allowedTools = allowed,
+            maxSteps = minOf(config.optInt("maxSteps", 8), budget.maxSteps),
+            allowedTools = scopedAllowed,
         )
 
         val eventChannel = Channel<AgentEvent>(Channel.UNLIMITED)
@@ -465,9 +508,15 @@ class ObjectiveExecutionEngine(
             } else AgentRunner(app, session.provider, objectiveTools).run(
                 spec = spec,
                 task = task.instructions,
-                sharedContext = built.text,
+                sharedContext = sharedContext,
                 options = session.options,
                 onEvent = { eventChannel.trySend(it) },
+                sovereign = SovereignRunConfig(
+                    depth = depth,
+                    budget = budget,
+                    requiresToolEvidence = task.workerKind != "inference" && scopedAllowed.isNotEmpty(),
+                    workingState = working,
+                ),
                 onToken = { if (control.isPauseRequested.not() && !control.isCancelRequested) onToken(it) },
             )
         } finally {
@@ -476,9 +525,15 @@ class ObjectiveExecutionEngine(
         }
         control.checkpoint()
 
+        working = SovereignWorkingState.fromJson(outcome.workingStateJson) ?: working
+        if (outcome.falseSuccessRisk) {
+            working = working.withError("Completion claim rejected: no successful tool observation supported it.")
+            event(objectiveId, task.id, "completion_guard", "The final answer claimed completion without successful tool evidence; verification treats this as a failed tool observation.", status = "failed")
+        }
         val toolFailures = if (developmentPassed != null) { if (developmentPassed == true) 0 else 1 } else
             outcome.events.count { it.kind == "tool_observation" && Regex("(?i)Tool (error|denied)").containsMatchIn(it.text) } +
-                outcome.evidence.count { it.exitCode != null && it.exitCode != 0 }
+                outcome.evidence.count { it.exitCode != null && it.exitCode != 0 } +
+                (if (outcome.falseSuccessRisk) 1 else 0)
         val effectiveSpecs = if (task.workerKind == "development") specs + EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0") else specs
         require(task.workerKind == "inference" || effectiveSpecs.isNotEmpty()) { "Tool task has no declared evidence; no completion can be established." }
         val lastExit = outcome.evidence.lastOrNull { it.exitCode != null }
@@ -499,6 +554,8 @@ class ObjectiveExecutionEngine(
             outcome = outcome.result.take(30_000),
             verificationStatus = if (report.passed) "passed" else "failed",
             evidenceJson = mergeEvidence(task.evidenceJson, report),
+            checkpointJson = JSONObject().put("phase", "verifying").put("attempt", attempt)
+                .put("sovereignState", working.toJson()).toString(),
             updatedAt = now(),
         )
         dao.upsertTask(verifying)
@@ -528,7 +585,8 @@ class ObjectiveExecutionEngine(
                     finishedAt = now(),
                     error = null,
                     verificationStatus = "passed",
-                    checkpointJson = JSONObject().put("phase", "completed").put("attempt", attempt).put("verifiedAt", now()).toString(),
+                    checkpointJson = JSONObject().put("phase", "completed").put("attempt", attempt).put("verifiedAt", now())
+                        .put("sovereignState", working.toJson()).toString(),
                     updatedAt = now(),
                 )
             )
@@ -610,7 +668,8 @@ class ObjectiveExecutionEngine(
                     error = report.reason,
                     failureSignature = signature,
                     finishedAt = now(),
-                    checkpointJson = JSONObject().put("phase", "needs_review").put("attempt", attempt).toString(),
+                    checkpointJson = JSONObject().put("phase", "needs_review").put("attempt", attempt)
+                        .put("sovereignState", working.toJson()).toString(),
                     updatedAt = now(),
                 )
             )
@@ -620,7 +679,8 @@ class ObjectiveExecutionEngine(
                     error = report.reason,
                     failureSignature = signature,
                     finishedAt = now(),
-                    checkpointJson = JSONObject().put("phase", "failed").put("attempt", attempt).toString(),
+                    checkpointJson = JSONObject().put("phase", "failed").put("attempt", attempt)
+                        .put("sovereignState", working.toJson()).toString(),
                     updatedAt = now(),
                 )
             )
@@ -740,9 +800,11 @@ class ObjectiveExecutionEngine(
     }
 
     private fun statusForKind(kind: String): String? = when {
-        kind == "planning" || kind == "planning_attempt" || kind == "planning_progress" -> "running"
+        kind == "planning" || kind == "planning_attempt" || kind == "planning_progress" ||
+            kind == "execution_profile" || kind == "decision_summary" || kind == "tool_scope" -> "running"
         kind == "plan_created" || kind == "task_completed" || kind == "completed" || kind == "verification_passed" -> "completed"
-        kind == "planning_failed" || kind == "task_error" || kind == "verification_failed" || kind == "failed" -> "failed"
+        kind == "planning_failed" || kind == "task_error" || kind == "verification_failed" ||
+            kind == "completion_guard" || kind == "failed" -> "failed"
         kind == "planning_validation_failed" -> "failed"
         kind == "planning_repair" || kind == "recovery_retry" || kind == "blocked" -> "waiting"
         kind == "recovery_needs_review" || kind == "checkpoint_interrupted" -> "interrupted"
@@ -759,9 +821,11 @@ class ObjectiveExecutionEngine(
         kind.startsWith("delegation") -> WorkerActivityKind.DELEGATION
         kind.startsWith("verification") -> WorkerActivityKind.VERIFICATION
         kind.startsWith("recovery") || kind == "retry_approved" || kind == "blocked" -> WorkerActivityKind.RECOVERY
+        kind.startsWith("decision") || kind == "execution_profile" || kind == "tool_scope" -> WorkerActivityKind.SUPERVISOR
         kind.startsWith("task") || kind.startsWith("development") -> WorkerActivityKind.TASK
         kind.startsWith("plan") -> WorkerActivityKind.PLAN
         kind.startsWith("supervisor") -> WorkerActivityKind.SUPERVISOR
+        kind.startsWith("completion") -> WorkerActivityKind.ERROR
         kind.contains("error") || kind == "failed" -> WorkerActivityKind.ERROR
         else -> WorkerActivityKind.INFO
     }
@@ -813,7 +877,7 @@ class ObjectiveExecutionEngine(
 
     private fun now(): Long = System.currentTimeMillis()
 
-    private fun plannerPrompt(): String = buildString {
+    private fun plannerPrompt(terminalEnabled: Boolean, toolNames: Set<String>): String = buildString {
         append(
             """
             You create a bounded executable task graph for NYX, an Android autonomy engine.
@@ -829,8 +893,9 @@ class ObjectiveExecutionEngine(
             - If the objective cannot be completed with these capabilities, make the final task explain the blocker instead of inventing capabilities.
             """.trimIndent()
         )
-        append("\n- Terminal tools are ")
-        append(if (terminalTools != null) "ENABLED for this run." else "DISABLED for this run; do not plan terminal or development tasks.")
+        append("\n- ").append(SovereignPolicy.plannerCapabilityLine(toolNames, terminalEnabled))
+        append("\n- Plan only capabilities that are actually listed. Do not plan terminal or development tasks when terminal tools are disabled.")
+        append("\n- Prefer a minimal dependency graph. A failed task may receive one changed-approach retry, so include a verification task where success is otherwise ambiguous.")
     }
 
     @Suppress("unused")

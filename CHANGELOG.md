@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.5 — Project Sovereign (published)
+
+Project Sovereign makes the autonomous execution path more durable and more conservative about what it claims. It adds adaptive reasoning-depth and model/tool/step budgets derived from task kind, complexity, and the selected performance mode; a bounded durable working state that survives context compaction and process restarts; task-scoped tool authority for inference, filesystem, verification, terminal, and development work; a false-success guard for tasks that require tool evidence; bounded structured-action repair; repeated-failure and consecutive-failure stops; and a two-hour checkpointed objective watchdog.
+
+The planner now sees the tools actually enabled for the run instead of guessing, and retries receive the previous failure evidence with an explicit instruction to change approach. Existing workspace authorization, command policy, dependency gating, provider snapshots, checkpoints, recovery, and no-root/no-arbitrary-shell boundaries are unchanged. No llama.cpp source was modified.
+
+Published as [GitHub release v0.8.5](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5). Package metadata is versionCode 18/versionName 0.8.5 for `com.nyx.ai`; versionCode 18 is used because the previous release already consumed code 17, preserving the in-place upgrade path with the established debug certificate. The clean build passed **731 JVM tests** (70 classes, zero failures/errors/skips), and the ARM64 debug and instrumentation APKs assembled. The APK SHA-256 is `024c5fa4ab91a7d28b19f8fe22c362766109470e72a615a82f81501a1d8aa456`. Native GGUF inference, the Sovereign loop against a real provider/model, and all runtime behavior remain physical-device validation items. See `RELEASE_NOTES_v0.8.5.md` and `V085_IMPLEMENTATION_REPORT.md`.
+
 ## 0.8.4 — Project Endurance (published)
 
 Project Endurance adds hardware-aware operating modes and a Performance dashboard, adaptive native threading applied only at safe boundaries, opt-in bounded native calibration, exact-token-prefix KV reuse in the native session, mode-aware autonomy concurrency and stream coalescing, and Eco-only idle model release. The existing autonomy policy, workspace authorization, dependency gate, provider snapshots, checkpoints, recovery, and no-root/no-arbitrary-shell boundaries are unchanged.
