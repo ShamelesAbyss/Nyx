@@ -20,6 +20,8 @@ import com.nyx.ai.agent.WorkerRoles
 import com.nyx.ai.agent.FileProbe
 import com.nyx.ai.agent.ToolExecutionEvidence
 import com.nyx.ai.context.ContextEngine
+import com.nyx.ai.workbench.*
+import kotlinx.coroutines.flow.first
 import com.nyx.ai.context.ContextRecord
 import com.nyx.ai.context.ContextRequest
 import com.nyx.ai.context.ContextStore
@@ -83,6 +85,8 @@ class ObjectiveExecutionEngine(
     private val suppliedRunId: String? = null,
     private val beforeTasksExecute: suspend (List<ObjectiveTaskEntity>) -> Boolean = { true },
     private val capabilityStore: ModelCapabilityStore = ModelCapabilities.store(),
+    private val workbenchApproval: WorkbenchAuthorization = WorkbenchAuthorization(),
+    private val workbenchStore: WorkbenchStore? = null,
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
@@ -121,7 +125,11 @@ class ObjectiveExecutionEngine(
             )
             capabilityIdentity = identity
             val capability = capabilityStore.get(identity) ?: ModelCapabilityProfile(identity)
-            val decision = ModelCapabilityPolicy.decide(capability, objective.goal, terminalTools != null)
+            val selectedDecision = ModelCapabilityPolicy.decide(capability, objective.goal, terminalTools != null)
+            val decision = if (workbenchApproval.enabled && selectedDecision.strategy == PlanningStrategy.DIRECT)
+                selectedDecision.copy(strategy = PlanningStrategy.INCREMENTAL, allowExpansion = true,
+                    reason = "Explicit requested disk artifacts require a validated tool plan, not direct prose.")
+                else selectedDecision
             planningStrategy = decision.strategy
             thinkingDisabled = decision.disableThinking
             incrementalExpansions = 0
@@ -235,8 +243,9 @@ class ObjectiveExecutionEngine(
         val limits = session.timeouts.planningLimits()
         val lifecycle = PlanningLifecyclePolicy(clock(), limits)
         val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
-        val systemPrompt = systemPromptOverride ?: if (profile.compact) CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)
-            else plannerPrompt(terminalTools != null, toolNames)
+        val systemPrompt = (systemPromptOverride ?: if (profile.compact) CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)
+            else plannerPrompt(terminalTools != null, toolNames)) +
+            workbenchApproval.promptBlock().let { if (it.isNotBlank()) "\n\n$it" else "" }
         val input = CompactPlanningPolicy.prepareInput(objective.goal, systemPrompt, profile, repair)
         val messages = buildList {
             add(ApiMessage("system", input.systemPrompt))
@@ -398,6 +407,19 @@ class ObjectiveExecutionEngine(
                             continue
                         }
                     }
+                    if (workbenchApproval.enabled) {
+                        val store = requireNotNull(workbenchStore) { "Approved Workbench storage is unavailable." }
+                        val witnesses = dao.observeEvents(objectiveId).first().filter {
+                            it.kind == "workbench_artifact_verified" && it.taskId != null
+                        }.mapNotNull { event -> runCatching {
+                            val json = JSONObject(event.detail ?: "{}")
+                            WorkbenchCompletionPolicy.WriteWitness(requireNotNull(event.taskId), json.getString("name"), json.getString("sha256"))
+                        }.getOrNull() }
+                        val missing = WorkbenchCompletionPolicy.missing(workbenchApproval, store,
+                            tasks.filter { it.status == "completed" }.map { it.id }.toSet(), witnesses)
+                        if (missing.isNotEmpty()) return@coroutineScope needsAttention(objectiveId,
+                            "Requested disk artifacts lack matching verified task write evidence: ${missing.joinToString()}. Prose/DONE is not file delivery; review and use a tool-capable model.")
+                    }
                     val done = requireNotNull(dao.getObjective(objectiveId)).copy(
                         status = "completed",
                         updatedAt = now(),
@@ -494,7 +516,8 @@ class ObjectiveExecutionEngine(
         val terminalTools = this@ObjectiveExecutionEngine.terminalTools?.forTask(toolContext)
         val extraTools = this@ObjectiveExecutionEngine.extraTools?.forTask(toolContext)
         // Verification must use the same task-local terminal instance, never drain its parent.
-        val fileProbe = (terminalTools as? FileProbe) ?: this@ObjectiveExecutionEngine.fileProbe
+        val terminalProbe = (terminalTools as? FileProbe) ?: this@ObjectiveExecutionEngine.fileProbe
+        val fileProbe = workbenchStore?.let { WorkbenchArtifactProbe(it, terminalProbe) } ?: terminalProbe
         val attempt = task.attemptCount + 1
         val startedAt = now()
         val objectiveGoal = dao.getObjective(objectiveId)?.goal.orEmpty()
@@ -556,6 +579,7 @@ class ObjectiveExecutionEngine(
             append(built.text)
             if (workingBlock.isNotBlank()) append("\n\n").append(workingBlock)
             if (retryHint != null) append("\n\nRETRY GUIDANCE: ").append(retryHint)
+            if (workbenchApproval.enabled) append("\n\n").append(workbenchApproval.promptBlock())
         }.take(budget.maxContextChars + 4_000)
 
         val config = runCatching { JSONObject(agent.configurationJson ?: "{}") }.getOrDefault(JSONObject())
@@ -692,7 +716,15 @@ class ObjectiveExecutionEngine(
             outcome.events.count { it.kind == "tool_observation" && Regex("(?i)Tool (error|denied)").containsMatchIn(it.text) } +
                 outcome.evidence.count { it.exitCode != null && it.exitCode != 0 } +
                 (if (outcome.falseSuccessRisk) 1 else 0)
-        val effectiveSpecs = if (task.workerKind == "development") specs + EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0") else specs
+        val artifactWrites = outcome.evidence.filter { it.toolName in WorkbenchAgentTools.MUTATING && it.exitCode == 0 }
+        val artifactChecks = artifactWrites.map { write ->
+            val json = JSONObject(write.stdout)
+            val path = "workbench/${json.getString("name")}"
+            require(write.files == listOf(path)) { "Artifact evidence path mismatch." }
+            EvidenceSpec(EvidenceKind.CHECKSUM_SHA256, target = path, expected = json.getString("sha256"),
+                description = "Actual tool write digest checked against current registered bytes")
+        }
+        val effectiveSpecs = (if (task.workerKind == "development") specs + EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0") else specs) + artifactChecks
         require(task.workerKind == "inference" || effectiveSpecs.isNotEmpty()) { "Tool task has no declared evidence; no completion can be established." }
         val lastExit = outcome.evidence.lastOrNull { it.exitCode != null }
         val observation = ObservationBundle(
@@ -726,6 +758,12 @@ class ObjectiveExecutionEngine(
         )
 
         if (report.passed) {
+            for (write in artifactWrites) {
+                val artifactJson = JSONObject(write.stdout)
+                event(objectiveId, task.id, "workbench_artifact_verified", JSONObject()
+                    .put("name", artifactJson.getString("name")).put("sha256", artifactJson.getString("sha256"))
+                    .put("tool", write.toolName).toString(), status = "completed")
+            }
             val artifact = ObjectiveArtifactEntity(
                 id = UUID.randomUUID().toString(),
                 objectiveId = objectiveId,

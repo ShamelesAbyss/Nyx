@@ -1,4 +1,12 @@
-# Building NYX 0.8.8 — Project Insight
+# Building NYX 0.8.9 — Project Workbench
+
+## v0.8.9 Project Workbench published release
+
+Current source builds package com.nyx.ai, versionCode 22 / versionName 0.8.9, minimum API26 and compile/target37, ARM64 only. Use the existing clean command: `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`. `NYX_REAL_NETWORK_TEST=1` enables separate public-URL host acceptance; without it these opt-in network tests skip. The host Kotlin compiler fixture needs a real kotlinc on PATH. Release artifacts are NYX-v0.8.9.apk, NYX-v0.8.9-androidTest.apk, NYX-Source-v0.8.9.zip and NYX-v0.8.9-SHA256SUMS.txt. Published on GitHub with the established debug signer; no AAB or Play publication. Historical release evidence below remains intact; final results are in [TEST_RESULTS.md](TEST_RESULTS.md).
+
+### Source archive correspondence
+
+The release source ZIP contains tracked application source, tests, documentation, branding, licenses, Gradle wrapper and repository metadata. It excludes Git/cache/build trees, machine-local configuration, signing material, model weights and historical root binary bundles (NYX.apk and NYX-Source.zip). Ignored upstream workspace/log helpers are omitted; the tracked upstream Keynote .key document is retained as documentation, not a signing key. Publication compares every ZIP member with the tagged tree and checks that omitted tracked paths match these documented exclusions. The checksum manifest covers the two APKs, final source ZIP and deterministic host acceptance ZIP; it does not hash itself.
 
 ## v0.8.8 Project Insight published release
 

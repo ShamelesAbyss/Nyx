@@ -85,6 +85,7 @@ import com.nyx.ai.network.InferenceProvider
 import com.nyx.ai.network.ModelCapabilities
 import com.nyx.ai.network.ModelCapabilityPolicy
 import com.nyx.ai.network.ModelIdentity
+import com.nyx.ai.workbench.*
 import com.nyx.ai.nativeinference.*
 import com.nyx.ai.performance.CalibrationPlanner
 import com.nyx.ai.performance.CalibrationRunner
@@ -149,6 +150,13 @@ data class NyxState(
     val objectiveRunning: Boolean = false,
     val objectiveStreaming: String = "",
     val objectivePhase: String = "idle",
+    val workbenchManifest: WorkbenchManifest? = null,
+    val workbenchApproval: WorkbenchAuthorization = WorkbenchAuthorization(),
+    val workbenchMessage: String = "",
+    val workbenchPreviewTitle: String = "",
+    val workbenchPreviewText: String = "",
+    val workbenchDraftImportName: String = "",
+    val workbenchImporting: Boolean = false,
     val terminalHistory: List<TerminalCommandEntity> = emptyList(),
     val terminalOperations: List<com.nyx.ai.terminal.TerminalOperationEvidence> = emptyList(),
     val requestedTerminalContexts: Int = 3,
@@ -243,6 +251,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private val inferenceReservationLock = Any()
     private var inferenceReserved = false
     @Volatile private var objectiveReservation = false
+    private data class PendingWorkbenchImport(val name: String, val contentType: String, val bytes: ByteArray)
+    private var pendingWorkbenchImport: PendingWorkbenchImport? = null
+    private var pendingWorkbenchExport: AndroidArtifactHandoff.Selection? = null
 
     private fun reserveInference(): Boolean = synchronized(inferenceReservationLock) {
         if (inferenceReserved || ExecutionMonitor.state.value.running) false else { inferenceReserved = true; true }
@@ -654,13 +665,18 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             configurationJson = JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads).toString(),
             createdAt = previous?.createdAt ?: System.currentTimeMillis()))
     }
-    private suspend fun snapshotObjective(id: String, s: NyxState) {
+    private suspend fun snapshotObjective(id: String, s: NyxState, workbench: WorkbenchAuthorization? = null) {
         persistEndpointNow(s)
+        // Workbench authority belongs to the objective, not today's UI/provider settings.
+        val existing = db.objectiveDao().observeEvents(id).first().lastOrNull { it.kind == "execution_config" }
+            ?.detail?.let { WorkbenchAuthorization.fromSnapshot(JSONObject(it)) } ?: WorkbenchAuthorization()
+        val approval = (workbench ?: existing).validate()
         val snapshot = JSONObject().put("endpointId", endpointRecordId(s.endpoint)).put("modelId", s.selectedModel)
             .put("options", JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads))
-            .put("terminalEnabled", s.terminalToolsEnabled).put("workspace", s.terminalWorkspace)
+            .put("terminalEnabled", s.terminalToolsEnabled && !approval.enabled).put("workspace", if (approval.enabled) "" else s.terminalWorkspace)
             .put("environment", s.terminalEnvironment.name).put("guestAlias", s.guestAlias)
             .put(ExecutionTimeoutPolicyStore.SNAPSHOT_KEY, timeoutPolicyStore.snapshot(s.executionTimeoutPolicy))
+            .put(WorkbenchAuthorization.SNAPSHOT_KEY, approval.toJson())
         db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "execution_config", snapshot.toString(), System.currentTimeMillis()))
     }
 
@@ -911,9 +927,14 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Creates and executes a durable objective independently of a chat turn. */
-    fun createObjective(goal: String, development: Boolean = false) {
+    fun createObjective(goal: String, development: Boolean = false, workbench: WorkbenchAuthorization = WorkbenchAuthorization()) {
         if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
-        val clean = goal.trim().take(8_000)
+        val approval = runCatching { workbench.validate() }.getOrElse { failure ->
+            _state.update { it.copy(error = failure.message ?: "Invalid Workbench approval.") }; return
+        }
+        require(!development || !approval.enabled) { "Workbench is not a development workspace." }
+        if (goal.length > 8_000) { _state.update { it.copy(error = "Objective exceeds 8,000 characters; shorten it rather than executing a truncated request.") }; return }
+        val clean = goal.trim()
         if (clean.isBlank()) return
         if (development && !_state.value.terminalToolsEnabled) { _state.update { it.copy(error = "Enable an approved development workspace first.") }; return }
         if (development) {
@@ -926,7 +947,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val s = _state.value
-        workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
+        if (!approval.enabled) workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId }
         if (agent == null) { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
         if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
@@ -944,7 +965,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(error = "Ollama started, but Chat could not reconnect to its models.") }
                     return@launch
                 }
-                createObjective(clean, development)
+                createObjective(clean, development, approval)
             }
             return
         }
@@ -954,7 +975,22 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val row = ObjectiveEntity(title = clean.take(72), goal = clean, status = "planning", agentId = agent.id, modelId = s.selectedModel)
             db.objectiveDao().upsertObjective(row)
-            snapshotObjective(row.id, s)
+            try {
+                snapshotObjective(row.id, s, approval)
+                if (approval.enabled) {
+                    val store = WorkbenchStore(File(app.filesDir, "workbench"), row.id)
+                    pendingWorkbenchImport?.let { imported ->
+                        withContext(Dispatchers.IO) { store.importFile(imported.name, imported.bytes, imported.contentType) }
+                    }
+                    pendingWorkbenchImport = null
+                    _state.update { it.copy(workbenchDraftImportName = "") }
+                }
+            } catch (error: Exception) {
+                releaseInference()
+                db.objectiveDao().upsertObjective(row.copy(status = "needs_attention", error = "Workbench/config preparation failed; no execution started."))
+                _state.update { it.copy(error = error.message?.take(240) ?: "Could not prepare objective storage.") }
+                return@launch
+            }
             if (development) {
                 require(s.terminalToolsEnabled) { "Enable an approved development workspace first." }
                 db.objectiveDao().upsertTask(ObjectiveTaskEntity(objectiveId = row.id, ordinal = 0, title = "Inspect, establish baseline, repair and retest", instructions = clean, workerKind = "development", maxAttempts = 1, evidenceJson = "[]"))
@@ -977,13 +1013,16 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectObjective(id: String) {
-        _state.update { it.copy(selectedObjectiveId = id) }
+        _state.update { it.copy(selectedObjectiveId = id, workbenchManifest = null, workbenchApproval = WorkbenchAuthorization(), workbenchPreviewText = "") }
         objectiveObservation?.cancel()
         objectiveObservation = viewModelScope.launch {
             val dao = db.objectiveDao()
             kotlinx.coroutines.coroutineScope {
                 launch { dao.observeTasks(id).collect { rows -> _state.update { it.copy(objectiveTasks = rows) } } }
-                launch { dao.observeEvents(id).collect { rows -> _state.update { it.copy(objectiveEvents = rows) } } }
+                launch { dao.observeEvents(id).collect { rows ->
+                    _state.update { it.copy(objectiveEvents = rows) }
+                    refreshWorkbenchNow(id, rows)
+                } }
                 launch { dao.observeArtifacts(id).collect { rows -> _state.update { it.copy(objectiveArtifacts = rows) } } }
             }
         }
@@ -993,7 +1032,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun resumeObjective(id: String, userApprovedRetry: Boolean) {
         if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val s = _state.value
-        workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
+        if (!s.workbenchApproval.enabled) workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
         val objective = s.objectives.firstOrNull { it.id == id } ?: return
         val agent = s.agents.firstOrNull { it.id == objective.agentId } ?: run { _state.update { it.copy(error = "The objective's agent is unavailable.") }; return }
         if (!s.connected && OllamaProcess.isLoopbackEndpoint(s.endpoint)) {
@@ -1043,6 +1082,128 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 releaseInference()
                 _state.update { it.copy(objectiveRunning = false, error = "The execution service did not start. Check notification permission and try again.") }
             }
+        }
+    }
+
+    private suspend fun refreshWorkbenchNow(id: String, events: List<ObjectiveEventEntity>) {
+        try {
+            val snapshot = events.lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) } ?: return
+            val approval = WorkbenchAuthorization.fromSnapshot(snapshot)
+            val manifest = if (approval.enabled) withContext(Dispatchers.IO) {
+                WorkbenchStore(File(app.filesDir, "workbench"), id).readManifest()
+            } else null
+            _state.update { current -> if (current.selectedObjectiveId == id)
+                current.copy(workbenchManifest = manifest, workbenchApproval = approval) else current }
+        } catch (error: Exception) {
+            _state.update { current -> if (current.selectedObjectiveId == id)
+                current.copy(workbenchManifest = null, workbenchMessage = "Workbench reopen rejected: ${error.message?.take(180)}") else current }
+        }
+    }
+
+    fun refreshWorkbench() {
+        val id = _state.value.selectedObjectiveId ?: return
+        viewModelScope.launch { refreshWorkbenchNow(id, db.objectiveDao().observeEvents(id).first()) }
+    }
+
+    /** Trusted picker callback only. Draft bytes remain private and are committed before dispatch. */
+    fun importWorkbenchDocument(uri: Uri) {
+        if (_state.value.workbenchImporting) return
+        _state.update { it.copy(workbenchImporting = true, workbenchMessage = "Reading only the selected text document…") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val draftId = "draft-${UUID.randomUUID()}"
+            val draftRoot = File(app.cacheDir, "workbench-import-drafts")
+            try {
+                val store = WorkbenchStore(draftRoot, draftId)
+                val imported = DocumentImporter(store).importSelected(app.contentResolver, uri)
+                val bytes = store.readImport(imported.record.id)
+                pendingWorkbenchImport = PendingWorkbenchImport(imported.record.fileName, imported.record.contentType, bytes)
+                _state.update { it.copy(workbenchDraftImportName = imported.record.fileName,
+                    workbenchMessage = "Selected ${imported.record.fileName} (${bytes.size} bytes). Imported data is untrusted and will be copied into the next approved Workbench objective.") }
+            } catch (cancel: CancellationException) { throw cancel
+            } catch (error: Exception) {
+                _state.update { it.copy(workbenchMessage = "Import rejected: ${error.message?.take(240) ?: "unsupported or unreadable document"}") }
+            } finally {
+                // Generated cache-only draft directory; never a picker/provider/model path.
+                File(draftRoot, draftId).deleteRecursively()
+                _state.update { it.copy(workbenchImporting = false) }
+            }
+        }
+    }
+
+    fun clearWorkbenchImport() {
+        pendingWorkbenchImport = null
+        _state.update { it.copy(workbenchDraftImportName = "", workbenchMessage = "Selected draft import cleared.") }
+    }
+
+    private suspend fun approvedWorkbenchStore(id: String): WorkbenchStore {
+        requireNotNull(db.objectiveDao().getObjective(id)) { "Objective no longer exists." }
+        val snapshot = db.objectiveDao().observeEvents(id).first().lastOrNull { it.kind == "execution_config" }
+            ?.detail?.let { JSONObject(it) } ?: error("Missing objective approval.")
+        require(WorkbenchAuthorization.fromSnapshot(snapshot).enabled) { "Workbench was not approved for this objective." }
+        return WorkbenchStore(File(app.filesDir, "workbench"), id)
+    }
+
+    fun previewWorkbenchObject(kind: String, id: String, title: String) {
+        val objectiveId = _state.value.selectedObjectiveId ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val store = approvedWorkbenchStore(objectiveId)
+                val text = when (kind) {
+                    "artifact" -> {
+                        val artifact = store.listArtifacts().singleOrNull { it.id == id } ?: error("Artifact is no longer verified.")
+                        if (artifact.format in setOf(ArtifactFormat.ZIP, ArtifactFormat.PDF))
+                            "Binary ${artifact.format.name} artifact: ${artifact.bytes} bytes\nSHA-256: ${artifact.sha256}\n${artifact.validationNote}"
+                        else store.readArtifact(artifact).toString(Charsets.UTF_8).take(32_000)
+                    }
+                    "import" -> store.readImport(id).toString(Charsets.UTF_8).take(32_000)
+                    "source" -> store.readSource(id)?.toString(Charsets.UTF_8)?.take(32_000) ?: error("Source has no persisted content.")
+                    else -> error("Unknown preview kind.")
+                }
+                _state.update { current -> if (current.selectedObjectiveId == objectiveId)
+                    current.copy(workbenchPreviewTitle = title, workbenchPreviewText = text,
+                        workbenchMessage = "Read-only text preview; HTML is shown as source, never executed. Sources/imports remain untrusted. Preview limited to 32,000 characters.") else current }
+            } catch (error: Exception) { _state.update { it.copy(workbenchMessage = "Preview rejected: ${error.message?.take(220)}") } }
+        }
+    }
+
+    fun closeWorkbenchPreview() { _state.update { it.copy(workbenchPreviewText = "", workbenchPreviewTitle = "") } }
+
+    fun prepareWorkbenchExport(record: ArtifactRecord): String? {
+        val s = _state.value
+        val objectiveId = s.selectedObjectiveId ?: return null
+        if (s.workbenchManifest?.artifacts?.any { it == record && it.status == ArtifactStatus.VERIFIED } != true) {
+            _state.update { it.copy(workbenchMessage = "Select a registered verified artifact, then save.") }; return null
+        }
+        pendingWorkbenchExport = AndroidArtifactHandoff.Selection(objectiveId, record)
+        return record.fileName
+    }
+
+    /** The selected objective may change while the picker is open; use the original full record. */
+    fun saveWorkbenchExport(uri: Uri?) {
+        val selection = pendingWorkbenchExport
+        pendingWorkbenchExport = null
+        if (uri == null) return
+        if (selection == null) { _state.update { it.copy(workbenchMessage = "No artifact selection survived; nothing was exported. Select it again.") }; return }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                AndroidArtifactHandoff.save(app, uri, approvedWorkbenchStore(selection.objectiveId), selection.artifact)
+                _state.update { it.copy(workbenchMessage = "Saved ${selection.artifact.fileName}; verified digest ${selection.artifact.sha256.take(16)}…") }
+            } catch (error: Exception) { _state.update { it.copy(workbenchMessage = "Save rejected: ${error.message?.take(240)}") } }
+        }
+    }
+
+    fun shareWorkbenchArtifact(record: ArtifactRecord) {
+        val s = _state.value
+        val objectiveId = s.selectedObjectiveId ?: return
+        if (s.workbenchManifest?.artifacts?.contains(record) != true) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val intent = AndroidArtifactHandoff.shareIntent(app, approvedWorkbenchStore(objectiveId), record)
+                withContext(Dispatchers.Main) {
+                    app.startActivity(Intent.createChooser(intent, "Share verified ${record.fileName}").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                _state.update { it.copy(workbenchMessage = "Shared a verified artifact-only byte snapshot. Only read permission is granted.") }
+            } catch (error: Exception) { _state.update { it.copy(workbenchMessage = "Share rejected: ${error.message?.take(240)}") } }
         }
     }
 

@@ -1,6 +1,7 @@
 package com.nyx.ai.autonomy
 
 import com.nyx.ai.agent.AgentTools
+import com.nyx.ai.workbench.WorkbenchAgentTools
 
 /**
  * Deterministic, least-authority tool scope for one planned task. The model never chooses its own
@@ -33,7 +34,7 @@ object TaskCapabilityScope {
         val base = configured.map { it.trim() }.filter { it.isNotEmpty() }.toSet() intersect actual
         val terminalCapabilities = if (terminalAvailable) actual else emptySet()
         val fileCapabilities = base intersect terminalCapabilities
-        val allowed = when (kind) {
+        val allowedBase = when (kind) {
             "inference" -> (base - mutatingFiles - commands - projectRuns) +
                 (fileCapabilities intersect readOnlyFiles)
             "filesystem" -> (base - commands - projectRuns) + (fileCapabilities intersect (readOnlyFiles + mutatingFiles))
@@ -43,7 +44,9 @@ object TaskCapabilityScope {
             "development" -> base + (fileCapabilities intersect (readOnlyFiles + mutatingFiles + commands + projectRuns))
             else -> base - mutatingFiles - commands - projectRuns
         }.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        val readOnly = allowed.none { it in mutatingFiles || it in commands || it in projectRuns }
+        val allowed = if (kind in setOf("filesystem", "terminal", "development")) allowedBase
+            else allowedBase - WorkbenchAgentTools.MUTATING
+        val readOnly = allowed.none { it in mutatingFiles || it in WorkbenchAgentTools.MUTATING || it in commands || it in projectRuns }
         val reason = when (kind) {
             "inference" -> "Inference tasks may read and use enabled non-mutating tools; command and project execution are excluded."
             "filesystem" -> "Filesystem tasks may inspect and edit files, but may not run shell commands or project builds."

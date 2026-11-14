@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.9 — Project Workbench (published)
+
+VersionCode 22 / versionName 0.8.9. Adds an app-private objective artifact store with atomic manifests, shared storage quotas, safe paths, verified checksums and conservative recovery. URL-driven research retains readable sources/provenance under existing network policy; selected TXT/MD/CSV/JSON documents import through the Android picker. Existing objective tools create and validate Markdown/text/CSV/JSON/static HTML/ZIP files; completion requires actual artifacts and successful-task digest witnesses. Research-backed requests also require retained source evidence. Workbench provides reopening, inert previews, SAF saving and narrow artifact-only FileProvider sharing. No Room migration, new broad filesystem/network authority, PDF or browser automation. Published on GitHub as v0.8.9; no AAB or Play publication.
+
 ## 0.8.8 — Project Insight (published)
 
 versionCode 21 / versionName 0.8.8, com.nyx.ai. Adds a bounded capability profile per provider/model/context/thread identity (24-hour cache, identity invalidation), a deterministic direct start for short text-only objectives, incremental planning with at most two initial validated steps and one continuation after verified work (six continuations maximum), and guided one-line decisions limited to inference. Ollama `thinking` and OpenAI-compatible `reasoning_content` deltas are counted as activity, never as answer or plan text; structured planning disables thinking only after a reasoning stream was observed for that model. No new permissions or tool authority. Physical-device verification of strategy selection and reasoning behavior remains pending.

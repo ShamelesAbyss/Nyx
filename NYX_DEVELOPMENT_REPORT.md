@@ -1,5 +1,9 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.9 — Project Workbench (published)
+
+Adds real retained file work to the existing engine, not a competing orchestration framework. Core storage, guarded research, selected-document import, task-scoped artifact tools, local verification and Android handoff are integrated. No existing user data, models, credentials, Room history or vendored llama.cpp were replaced. Read [V089_IMPLEMENTATION_REPORT.md](V089_IMPLEMENTATION_REPORT.md) for architecture, acceptance evidence, format support, provider limitations and prioritized 1.0 readiness.
+
 ## v0.8.8 — Project Insight (published)
 
 Adds measured capability profiles, capability-driven planning strategies (direct, incremental, full, guided), a deterministic zero-call start for simple text objectives, bounded continuation after verified work, and reasoning-stream visibility with evidence-based thinking suppression for planning. 934 JVM tests across 96 classes pass with zero failures and zero errors (one environment-dependent skip); clean ARM64 APK and instrumentation compilation passed. Real-provider strategy selection and device behavior remain unverified. See [implementation report](V088_IMPLEMENTATION_REPORT.md).

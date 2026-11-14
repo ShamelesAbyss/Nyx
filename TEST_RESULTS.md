@@ -1,5 +1,18 @@
 # NYX Test Results
 
+## 0.8.9 — Project Workbench (published)
+
+Executed 2026-11-14 UTC with Android SDK /home/ubuntu/Android/Sdk, Java21, cached real kotlinc on PATH, NYX_REAL_NETWORK_TEST=1 and the separate parent-controlled acceptance output directory. Command: `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`.
+
+**BUILD SUCCESSFUL in 1m 53s: 1034 JVM tests across 107 classes, zero failures, zero errors, zero skipped.** Workbench adds 100 tests across 11 classes: ArtifactFormats13, DocumentImporter7, HandoffCachePolicy16, HtmlTextExtractor5, ResearchEngine17, ResearchRealNetwork1, WorkbenchAcceptance2, WorkbenchAgentRunner6, WorkbenchIntegration8, WorkbenchProvenance2, WorkbenchStore23. Existing Kotlin/JVM creation/compile fixtures executed rather than skipped.
+
+New acceptance routes fake providers through the actual AgentRunner and task-local Workbench tools to real disk files; covers rejected actions/invalid formats/model-only completion, persisted reopen, actual source bytes, and required-file witnesses. Research acceptance used three public HTTPS URLs on the Linux host; created a cited deterministic Markdown excerpt comparison and valid CSV/JSON/static HTML. This is not Android hardware execution or real-model synthesis. Core tests exercise independent JVM quota races and abrupt Runtime.halt recovery.
+
+APK com.nyx.ai, versionCode22, versionName0.8.9, minSdk26, compile/target37, arm64-v8a only. APK SHA-256: `a258085bbe4f5bbf8bf0d80fcb7a4613512770c7e0c49a2b7a67ff6bc75194bf`; instrumentation SHA-256: `31b13d01dfa7058f4eeea6bb7b2b55604234f1f23fbc417aa2f8a7751b0e4aaf`. Existing debug signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. apksigner and zipalign -c -P16 -v4 passed. Source digest is in the external checksum manifest.
+
+Instrumentation compiled, not executed. No attached Android hardware, real Ollama model trial or measured energy/speed improvement. Published as v0.8.9; v0.8.8 remains intact. No AAB or Play work. Format matrix, limitations and two-model device procedure are in [V089_IMPLEMENTATION_REPORT.md](V089_IMPLEMENTATION_REPORT.md).
+
+
 ## 0.8.8 — Project Insight (published)
 
 Executed 2026-11-14 UTC: `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`, Android SDK `/home/ubuntu/Android/Sdk`, Java 21, host Kotlin fixture skipped without a real `kotlinc`.

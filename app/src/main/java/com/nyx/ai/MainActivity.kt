@@ -295,8 +295,17 @@ private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
             } else {
                 OutlinedButton(onClick = { mode = 1 }) { Text("Terminal") }
             }
+            if (mode == 2) {
+                Button(onClick = { mode = 2 }, colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) { Text("Workbench") }
+            } else {
+                OutlinedButton(onClick = { mode = 2 }) { Text("Workbench") }
+            }
         }
-        if (mode == 0) ObjectivesPanel(state, vm) else TerminalPanel(state, vm)
+        when (mode) {
+            0 -> ObjectivesPanel(state, vm)
+            1 -> TerminalPanel(state, vm)
+            else -> com.nyx.ai.ui.WorkbenchScreen(state, vm)
+        }
     }
 }
 

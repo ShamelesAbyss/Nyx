@@ -51,6 +51,7 @@ import com.nyx.ai.terminal.TerminalRepository
 import com.nyx.ai.autonomy.policy.ActionKind
 import com.nyx.ai.autonomy.policy.ActionRequest
 import com.nyx.ai.development.DevelopmentPaths
+import com.nyx.ai.workbench.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -259,6 +260,19 @@ class ObjectiveExecutionService : Service() {
             val snapshot = events.lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
                 ?: error("No approved execution settings for this objective.")
             val timeouts = ExecutionTimeoutPolicyStore.fromSnapshot(snapshot)
+            val workbenchApproval = WorkbenchAuthorization.fromSnapshot(snapshot)
+            val workbenchStore = if (workbenchApproval.enabled) WorkbenchStore(java.io.File(filesDir, "workbench"), objectiveId) else null
+            val researchEngine = workbenchStore?.takeIf { workbenchApproval.researchEnabled }?.let { store ->
+                ResearchEngine(store, workbenchApproval.authorizedUrls.toSet()) { AutonomyRuntime.mode() }
+            }
+            val workbenchTools = workbenchStore?.let { store ->
+                WorkbenchAgentTools(store, objectiveId, workbenchApproval, research = researchEngine?.let { researcher ->
+                    { url ->
+                        val result = researcher.research(listOf(url))
+                        WorkbenchResearchObservation(result.pages.isNotEmpty(), result.asUntrustedBlock(24_000))
+                    }
+                })
+            }
             // Room orders general events by wall clock/UUID. A dedicated sequence prevents same-ms
             // ties or clock adjustment from selecting an older reservation and restoring spent time.
             val checkpoint = events.filter { it.kind == "timeout_allowance" }.map {
@@ -414,7 +428,7 @@ class ObjectiveExecutionService : Service() {
                 database = database,
                 sessions = sessions,
                 terminalTools = terminalTools,
-                extraTools = if (gatewayExtra != null) {
+                extraTools = if (workbenchTools != null) workbenchTools else if (gatewayExtra != null) {
                     com.nyx.ai.agent.CompositeToolProvider(listOf(NetworkAgentTools(this), gatewayExtra))
                 } else NetworkAgentTools(this),
                 arsenal = com.nyx.ai.skills.ArsenalRepository(this),
@@ -428,6 +442,8 @@ class ObjectiveExecutionService : Service() {
                 contextStore = contextStore,
                 suppliedRunId = currentRunId,
                 beforeTasksExecute = beforeTasksExecute,
+                workbenchApproval = workbenchApproval,
+                workbenchStore = workbenchStore,
             )
             val result = if (tasks.isEmpty()) {
                 engine.planAndExecute(objectiveId, agent, resourceProfile.policy, executionControl)

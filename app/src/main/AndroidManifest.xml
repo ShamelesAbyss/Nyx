@@ -36,6 +36,15 @@
             android:name=".service.OllamaHostService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.workbench.artifacts"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/workbench_artifact_paths" />
+        </provider>
         <receiver
             android:name=".terminal.TermuxResultReceiver"
             android:exported="false" />

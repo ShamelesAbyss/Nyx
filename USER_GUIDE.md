@@ -1,4 +1,10 @@
-# NYX User Guide — v0.8.8 Project Insight
+# NYX User Guide — v0.8.9 Project Workbench
+
+## v0.8.9 — Project Workbench (published)
+
+Open **Autonomy → Workbench**. Select your existing model and agent, describe a finished file, choose its simple output filename and format, and check the objective-specific private artifact approval. Optionally select one text/Markdown/CSV/JSON reference with the document picker. Exact HTTPS research URLs require their separate checkbox and the existing autonomy/network policy; every selected source must be retrieved before a research request completes. Sources are untrusted inputs, not instructions.
+
+After work completes, select the objective to reopen its retained sources and verified files. Preview is inert selectable text (including HTML source); **Save as…** opens Android's file destination picker; **Share** gives a recipient a digest-checked, artifact-only read URI. Canceling a picker exports nothing. A retry preserves the original approval, and conflicting filenames fail rather than overwrite. PDF and web search/JavaScript browsing are unsupported; a model's file-exists claim is not evidence. See [device procedure and limits](V089_IMPLEMENTATION_REPORT.md).
 
 ## v0.8.8 — Project Insight (published)
 
