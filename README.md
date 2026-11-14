@@ -12,13 +12,13 @@
 
 [![Release](https://img.shields.io/badge/release-v0.8.9-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#-build-from-source)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#%E2%80%8D-build-from-source)
 
 [![License](https://img.shields.io/github/license/ShamelesAbyss/Nyx?style=for-the-badge&color=8B5CF6)](LICENSE)
 [![ABI](https://img.shields.io/badge/ABI-arm64--v8a-0EA5E9?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
 [![Local first](https://img.shields.io/badge/local--first-no%20account-22C55E?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](#local-first-not-cloud-first)
 
-[**Workbench**](#-project-workbench) · [**Getting started**](#-getting-started) · [**Known limits**](#-known-limitations) · [**Build**](#-build-from-source) · [**History**](#-release-history)
+[**Workbench**](#%EF%B8%8F-project-workbench) · [**Getting started**](#-getting-started) · [**Known limits**](#-known-limitations) · [**Build**](#%E2%80%8D-build-from-source) · [**History**](#-release-history)
 
 </div>
 
