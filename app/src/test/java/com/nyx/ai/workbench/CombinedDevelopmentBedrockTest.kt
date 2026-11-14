@@ -212,7 +212,7 @@ internal class CombinedHostFixture(val root: File) {
             outputs = listOf(CombinedOutput("result", "build/result.json", "result.json", ArtifactFormat.JSON)))).bindObjective(OBJECTIVE)
     fun terminal(project: File, approval: WorkbenchAuthorization?) = TerminalAgentTools(executor, project.canonicalPath, TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true,
         outputApproval = approval?.combinedDevelopment?.terminalApproval(OBJECTIVE), trustedToolchainExecutables = mapOf(
-            "kotlinc" to (System.getProperty("bedrock.kotlin.compiler") ?: "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"),
+            "kotlinc" to (System.getenv("NYX_KOTLINC") ?: System.getProperty("bedrock.kotlin.compiler") ?: "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"),
             "java" to "/usr/lib/jvm/java-21-openjdk-amd64/bin/java"))
     fun engine(provider: InferenceProvider, terminal: AgentToolProvider? = null, approval: WorkbenchAuthorization = WorkbenchAuthorization(),
                before: suspend (List<ObjectiveTaskEntity>) -> Boolean = { true }, capabilityStore: ModelCapabilityStore = ModelCapabilityStore()) =

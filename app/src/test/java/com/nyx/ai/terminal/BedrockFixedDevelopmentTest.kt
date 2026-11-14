@@ -79,7 +79,7 @@ class BedrockFixedDevelopmentTest {
     }
 
     @Test fun realKotlinCompilationBehavioralRepairAndApprovedSnapshotUseProductionTools() = runBlocking {
-        val compiler = Path.of(System.getProperty("bedrock.kotlin.compiler", "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"))
+        val compiler = Path.of((System.getenv("NYX_KOTLINC") ?: System.getProperty("bedrock.kotlin.compiler") ?: "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"))
         val java = Path.of("/usr/lib/jvm/java-21-openjdk-amd64/bin/java")
         assumeTrue(Files.isExecutable(compiler) && Files.isExecutable(java))
         val root = Files.createTempDirectory("bedrock-fixed-kotlin-")

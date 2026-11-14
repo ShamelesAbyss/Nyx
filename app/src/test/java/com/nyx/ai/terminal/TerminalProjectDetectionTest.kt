@@ -16,7 +16,7 @@ import java.util.Comparator
 /** Linux fixtures execute only standalone javac/sh programs. Gradle is never invoked. */
 class TerminalProjectDetectionTest {
     private val fileTools = listOf("realpath", "sha256sum", "head", "wc", "stat", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")
-    private val compiler = Path.of(System.getProperty("bedrock.kotlin.compiler", "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"))
+    private val compiler = Path.of((System.getenv("NYX_KOTLINC") ?: System.getProperty("bedrock.kotlin.compiler") ?: "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"))
 
     private fun observed(vararg extra: String): String = (fileTools + extra).distinct().joinToString("\n") { "TOOL:$it=/usr/bin/$it" }
 

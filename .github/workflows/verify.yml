@@ -50,6 +50,8 @@ jobs:
         run: bash tools/setup_ci_kotlin.sh "$RUNNER_TEMP/nyx-kotlin-2.2.10"
       - name: JVM regressions, native app and instrumentation assembly, artifact gates
         shell: bash
+        env:
+          NYX_KOTLINC: ${{ runner.temp }}/nyx-kotlin-2.2.10/kotlinc/bin/kotlinc
         run: bash tools/build_release.sh --build verification-output/ci --ci-ephemeral-signer
       - name: Retain bounded verification evidence (never CI-signed installation APKs)
         if: ${{ always() }}

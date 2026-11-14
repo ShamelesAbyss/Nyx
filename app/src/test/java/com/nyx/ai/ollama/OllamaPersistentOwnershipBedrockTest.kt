@@ -159,7 +159,7 @@ class OllamaPersistentOwnershipBedrockTest {
     }
 
     private fun fixture(): Path {
-        val root = Path.of(System.getProperty("bedrock.ollama.fixtures", "/home/ubuntu/bedrock-lifecycle-tests/ollama-fixtures"))
+        val root = Path.of(System.getProperty("bedrock.ollama.fixtures", Path.of(System.getProperty("java.io.tmpdir"), "nyx-bedrock-ollama-fixtures").toString()))
         Files.createDirectories(root)
         return Files.createTempDirectory(root, "owned-")
     }
