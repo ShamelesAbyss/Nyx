@@ -1,12 +1,12 @@
 # NYX Test Results
 
 **Final parent verification (2026-11-14): clean BUILD SUCCESSFUL in 2m 21s; 1,182 JVM tests across 132 suites, zero failures/errors/skips, with real-network acceptance enabled. ARM64 app and instrumentation APKs assembled; independent package/version/SDK, established signer, notice, 16 KB ZIP and ELF checks passed. Instrumentation and Android hardware were not executed; hosted CI and real Ollama remain unverified.**
-## 0.9.0 — Project Bedrock (unpublished candidate; clean build and APK gates verified)
+## 0.9.0 — Project Bedrock (published)
 
-Evidence recorded 2026-11-14. Package `com.nyx.ai`, versionCode23/versionName0.9.0; pinned min26/target37/ARM64 toolchain and established debug signer unchanged. Parent reports two production Kotlin compile passes. **The final parent-controlled clean whole-app JVM/native/APK/instrumentation build is RUNNING/pending at this synthesis, with `NYX_REAL_NETWORK_TEST=1`.** Do not start a second build or carry historical counts into this candidate.
+Evidence recorded 2026-11-14. Package `com.nyx.ai`, versionCode23/versionName0.9.0; pinned min26/target37/ARM64 toolchain and established debug signer unchanged. The final clean whole-app JVM/native/APK/instrumentation build completed with `NYX_REAL_NETWORK_TEST=1`.
 
-- Final whole-app tests: **1,182 tests; 132 suites; zero failures, zero errors, zero skipped** (pending; parent fills from final current-source XML/logs, including failures/errors/skips/classes).
-- Final clean build/artifact gate: **BUILD SUCCESSFUL in 2m 21s; clean testDebugUnitTest assembleDebug assembleDebugAndroidTest and debugRuntimeClasspath inventory; independent APK identity/signing/ARM64/16 KB ZIP+ELF/notices gates PASSED** (pending; parent fills exact command/outcome and real signer/ABI/ELF+ZIP/notices/source/checksum evidence, not synthetic preflight results).
+- Final whole-app tests: **1,182 tests; 132 suites; zero failures, zero errors, zero skipped**.
+- Final clean build/artifact gate: **BUILD SUCCESSFUL in 2m 21s; clean testDebugUnitTest assembleDebug assembleDebugAndroidTest and debugRuntimeClasspath inventory; independent APK identity/signing/ARM64/16 KB ZIP+ELF/notices gates PASSED**. The APK and instrumentation SHA-256 values are recorded below.
 
 Retained independent scopes: terminal **99 passed** (`/home/ubuntu/bedrock-terminal-tests/results.log`); capability **106 passed** (`/tmp/nyx-bedrock-capability-20261114/results.txt`); network **106 passed** (`/tmp/nyx-bedrock-network.sYCU4G/tests.log`); integrity **71 passed**; earlier lifecycle **22 passed**; follow-up persistent ownership **17 new passed**, with accompanying old 71-test run's one env-i expectation failure retained; native **56 passed** plus fresh Linux x86_64 JNI against one immutable GGUF; combined **11 passed** (`/tmp/nyx-bedrock-combined.HboCqE5p/results.log`). Counts overlap and are not a whole-app sum.
 

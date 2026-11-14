@@ -2,7 +2,7 @@
 
 **Final parent verification (2026-11-14): clean BUILD SUCCESSFUL in 2m 21s; 1,182 JVM tests across 132 suites, zero failures/errors/skips, with real-network acceptance enabled. ARM64 app and instrumentation APKs assembled; independent package/version/SDK, established signer, notice, 16 KB ZIP and ELF checks passed. Instrumentation and Android hardware were not executed; hosted CI and real Ollama remain unverified.**
 
-**Local candidate:** `com.nyx.ai`, versionName0.9.0/versionCode23. **Baseline:** public main `d35d4d679711614b3d07b8e8b8de16140ae6b71a` (v0.8.9 preserved). **Synthesis:** 2026-11-14. This report documents existing implementation and retained evidence; its author changed documentation only. The final parent clean whole-app JVM/native/APK/instrumentation build is **running/pending**, with `NYX_REAL_NETWORK_TEST=1`. No final candidate signing/alignment/archive checksum or release approval is invented.
+**Published release:** `com.nyx.ai`, versionName0.9.0/versionCode23. **Baseline:** public main `d35d4d679711614b3d07b8e8b8de16140ae6b71a` (v0.8.9 preserved). **Synthesis:** 2026-11-14. This report documents the implemented release and retained evidence. The final clean whole-app JVM/native/APK/instrumentation build passed with `NYX_REAL_NETWORK_TEST=1`; signing/alignment/archive/checksum gates also passed. It is not Android hardware acceptance, production-signing approval or an exhaustive security certification.
 
 ## 1. Architecture and authority changes
 
@@ -49,7 +49,7 @@ Actual initial→next planning persists a second unique task then deliberately i
 |---|---|---|
 | Schema-honoring deterministic provider | Helpers and actual production continuation/reopen/DONE and bounded Full callers pass. | Real provider enforcement, Full task execution and Android/Room behavior. |
 | Limited/prose/schema-ignoring deterministic provider | UNKNOWN defaults, typed-reject distinctions, Guided inference-only helper and production text-action validation/no promotion for malformed/unauthorized/prose. | Full native rejection→later runner skip/fallback chain and live model competence. |
-| Local HTTP Ollama NDJSON / OpenAI SSE fixtures | Network106 and scoped reasoning policies pass; parent direct throttled reasoning/no-activity methods passed initial failed whole-suite attempt. | Real Ollama/OpenAI; final clean rerun pending. Reasoning remains activity, not answer tokens/control support. |
+| Local HTTP Ollama NDJSON / OpenAI SSE fixtures | Network106 and scoped reasoning policies pass; parent direct throttled reasoning/no-activity methods passed initial failed whole-suite attempt. | Real Ollama/OpenAI; final clean rerun passed, but live provider behavior remains unverified. Reasoning remains activity, not answer tokens/control support. |
 | Selected Termux loopback Ollama | Adapter can request tools/schema, loopback HTTP/no Ollama bearer, exact evidence needed for model support. | Binder/permission/runtime/model behavior; no real Ollama campaign. |
 | Selected RFC1918 / IPv6 ULA LAN inference | Explicit origin/local DNS/route required, public HTTP and nonloopback HTTP credentials refused by app gates. | API37 grant/deny/revoke, actual LAN routing/errors and endpoint behavior. Global cleartext is not OS firewall. |
 | OpenAI-compatible HTTPS or actual loopback `/v1` | Standard TLS/header auth/no redirects and local HTTP auth fixtures; tool API availability separate from support. | Live endpoint/tools/reasoning/stats. Constrained schema **UNKNOWN/not requested** by current adapter, not universally unsupported. |
@@ -62,7 +62,7 @@ Replacing a server/model behind the same address requires explicit non-secret ru
 
 [BEDROCK_SECURITY_AUDIT.md](BEDROCK_SECURITY_AUDIT.md) preserves all **56 original numbered findings** with original IDs/severities/baseline sources and explicit FIXED/MITIGATED/UNVERIFIED/DEFERRED/NOT APPLICABLE scope, plus nine original unnumbered risks/hypotheses. No new critical-resolution claim is added. [Eight repair reports](docs/bedrock/README.md) provide details; missing network/capability/combined handoffs now exist and are evidence-based.
 
-1. **Final clean build and candidate artifacts:** parent current-source JVM/native/APK/instrumentation run, exact signature continuity/identity/ABI/16KiB ELF+ZIP/notices and byte-exact final source/checksum gates remain pending. The failed1182-test attempt is not approval.
+1. **Final clean build and release artifacts:** the current-source JVM/native/APK/instrumentation run, signature continuity/identity/ABI/16KiB ELF+ZIP/notices and source/checksum gates passed for the published release. The failed initial 1,182-test attempt remains retained as history, not approval.
 2. **Android platform acceptance:** real Binder/Termux/PRoot/Room/services, concurrent workers, permission grant/deny/revoke, review-only recovery, safe v0.8.9 upgrade, SAF/FileProvider and physical ARM64 16KiB runtime. Compilation/host seams cannot close these cells.
 3. **Persistent-host uncertainty reconciliation:** pending-token fence is MITIGATED with17 host passes, but real preferences/process/PRoot durability and stuck-fence availability require safe separately authorized reconciliation. No naked PID kill, automatic reset or blind relaunch.
 4. **Provider/runtime qualification:** native revision default empty/same-address replacement limitations; real schema/tools/text/think/reasoning/stats and measured latency/memory. Full may remain conservatively unavailable; no timeout inflation.
@@ -70,7 +70,7 @@ Replacing a server/model behind the same address requires explicit non-secret ru
 6. **Residual architecture/durability:** same-UID/trusted project code can access existing network/secrets and copy into allowed outputs; app leases/link/hash guards are not OS isolation. Global cleartext app gating is not firewall. Power-loss/check-open/journal/private store/SAF durability and global storage limits remain unverified.
 7. **Hosted CI and distribution:** authorized hosted run/required-check setup and future production-signing/data-preserving migration are outstanding. Existing debug signer is not production release approval. No commit/tag/push/publication/AAB/Play work is authorized by this report.
 
-The [device/provider procedure](docs/BEDROCK_DEVICE_ACCEPTANCE.md), [BUILD.md](BUILD.md), [CI contract](docs/CI_VERIFICATION.md), [candidate release notes](RELEASE_NOTES_v0.9.0.md) and [TEST_RESULTS.md](TEST_RESULTS.md) define the remaining gates. Source, syntax, digest and citation validity are not semantic truth, secret-free output or prompt-injection immunity.
+The [device/provider procedure](docs/BEDROCK_DEVICE_ACCEPTANCE.md), [BUILD.md](BUILD.md), [CI contract](docs/CI_VERIFICATION.md), [release notes](RELEASE_NOTES_v0.9.0.md) and [TEST_RESULTS.md](TEST_RESULTS.md) define the remaining gates. Source, syntax, digest and citation validity are not semantic truth, secret-free output or prompt-injection immunity.
 
 ## Final reproducible package verification
 
