@@ -11,7 +11,7 @@ import org.junit.Test
 class BedrockPlanningContractTest {
     private val base = PlanningProfile(true, 384, setOf("inference", "filesystem", "terminal"), 2048,
         exitCodeWorkers = setOf("terminal"), maxSteps = 2)
-    private val next = """{"next":{"do":"Summarize verified results","worker":"inference"}}"""
+    private val next = """{"next":{"do":"Summarize verified results","worker":"inference","check":{"kind":"artifact_nonempty"}}}"""
 
     /** Deliberately small schema evaluator for the actual keywords these owned wire contracts use. */
     private fun matches(schema: JSONObject, value: Any?): Boolean {
@@ -40,7 +40,7 @@ class BedrockPlanningContractTest {
     }
 
     @Test fun schemaHonoringFakeCompletesInitialNextDoneWithoutOverwritingTasks() = runBlocking {
-        val scripted = ArrayDeque(listOf("""{"steps":[{"do":"Answer first part","worker":"inference"}]}""", next, """{"done":true}"""))
+        val scripted = ArrayDeque(listOf("""{"steps":[{"do":"Answer first part","worker":"inference","check":{"kind":"artifact_nonempty"}}]}""", next, """{"done":true}"""))
         var calls = 0
         val fake = object : InferenceProvider {
             override val id = "bedrock-schema-fake"

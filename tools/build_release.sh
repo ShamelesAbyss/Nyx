@@ -15,7 +15,7 @@ preflight() {
   python3 tools/check_release_integrity.py --self-test
   python3 tools/check_release_integrity.py --check-repository
   python3 tools/check_release_integrity.py --no-apk \
-    --delivery-file NYX-v0.9.1.apk --delivery-file NYX-Source-v0.9.1.zip \
+    --delivery-file NYX-v0.9.2.apk --delivery-file NYX-Source-v0.9.2.zip \
     --release-doc CHANGELOG.md --release-doc BUILD.md
   command -v kotlinc >/dev/null || { echo 'Real kotlinc on PATH is required; fixture skips are not compiler acceptance.' >&2; exit 1; }
   kotlinc -version
@@ -30,7 +30,7 @@ verify_built() {
     --android-test-apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
     --sdk-root "$ANDROID_HOME" --report-dir "$OUT/artifact-checks" "${signer[@]}"
   python3 tools/check_release_integrity.py --apk app/build/outputs/apk/debug/app-debug.apk \
-    --delivery-file NYX-v0.9.1.apk --delivery-file NYX-Source-v0.9.1.zip --release-doc CHANGELOG.md
+    --delivery-file NYX-v0.9.2.apk --delivery-file NYX-Source-v0.9.2.zip --release-doc CHANGELOG.md
 }
 package_built() {
   # Packaging is separate so a parent can perform its own combined clean build.
@@ -39,11 +39,15 @@ package_built() {
   [[ ! -e "$OUT" ]] || { echo "Refusing to overwrite output: $OUT" >&2; exit 1; }
   mkdir -p "$OUT"
   verify_built
-  cp app/build/outputs/apk/debug/app-debug.apk "$OUT/NYX-v0.9.1.apk"
-  cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$OUT/NYX-v0.9.1-androidTest.apk"
-  python3 tools/check_release_integrity.py --make-source "$OUT/NYX-Source-v0.9.1.zip"
-  (cd "$OUT" && sha256sum NYX-v0.9.1.apk NYX-v0.9.1-androidTest.apk NYX-Source-v0.9.1.zip > NYX-v0.9.1-SHA256SUMS.txt)
-  python3 tools/check_release_integrity.py --verify-delivery-dir "$OUT"
+  cp app/build/outputs/apk/debug/app-debug.apk "$OUT/NYX-v0.9.2.apk"
+  cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$OUT/NYX-v0.9.2-androidTest.apk"
+  cp RELEASE_NOTES_v0.9.2.md "$OUT/NYX-v0.9.2-RELEASE_NOTES.md"
+  cp V092_IMPLEMENTATION_REPORT.md "$OUT/NYX-v0.9.2-IMPLEMENTATION_REPORT.md"
+  python3 tools/check_release_integrity.py --make-source "$OUT/NYX-Source-v0.9.2.zip"
+  (cd "$OUT" && sha256sum NYX-v0.9.2.apk NYX-v0.9.2-androidTest.apk NYX-Source-v0.9.2.zip NYX-v0.9.2-RELEASE_NOTES.md NYX-v0.9.2-IMPLEMENTATION_REPORT.md > NYX-v0.9.2-SHA256SUMS.txt)
+  python3 tools/check_release_integrity.py --verify-delivery-dir "$OUT" \
+    --extra-delivery-file NYX-v0.9.2-RELEASE_NOTES.md \
+    --extra-delivery-file NYX-v0.9.2-IMPLEMENTATION_REPORT.md
 }
 case "$MODE" in
   --preflight) preflight ;;

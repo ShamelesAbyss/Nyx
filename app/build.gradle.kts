@@ -15,8 +15,9 @@ android {
         applicationId = "com.nyx.ai"
         minSdk = 26
         targetSdk = 37
-        versionCode = 24
-        versionName = "0.9.1"
+        // v0.9.1 shipped as 24; 22 would be a downgrade and could not install over it.
+        versionCode = 25
+        versionName = "0.9.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         ndk { abiFilters += "arm64-v8a" }

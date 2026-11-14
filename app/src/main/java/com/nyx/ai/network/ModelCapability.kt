@@ -139,10 +139,16 @@ object ModelCapabilityPolicy {
     const val FULL_STRATEGY_MIN_TOKENS_PER_SECOND = 6.0
     const val FULL_STRATEGY_MIN_CONTEXT = 4_096
     private val textGoal = Regex("(?i)^\\s*(?:explain|summari[sz]e|translate|paraphrase|define|compare|describe|answer|outline|brainstorm|draft|compose|rewrite|proofread|review|critique|analy[sz]e|(?:write|tell)\\s+(?:me\\s+)?(?:a|an|the)?\\s*(?:short\\s+|brief\\s+|simple\\s+)?(?:poem|haiku|story|paragraph|essay|message|reply|list))\\b")
+    private val conversationalGoal = Regex(
+        "(?i)^\\s*(?:hi|hello|hey|good\\s+(?:morning|afternoon|evening)|how\\s+are\\s+you|" +
+            "how(?:'s| is)\\s+it\\s+going|are\\s+you\\s+(?:there|ready|okay|ok)|" +
+            "what(?:'s| is)\\s+your\\s+name|who\\s+are\\s+you|thanks|thank\\s+you|" +
+            "okay|ok|cool|nice|great|sounds\\s+good)\\b",
+    )
     private val resourceIntent = Regex("(?i)\\b(?:file|files|folder|directory|workspace|repo|repository|project|save|write to|create|delete|edit|modify|rename|move|copy|run|execute|command|shell|terminal|compile|build|test|install|uninstall|download|fetch|browse|open|read|inspect|check|verify|commit|push|publish|deploy)\\b|[/\\\\]")
 
     fun decide(profile: ModelCapabilityProfile, goal: String, toolsAvailable: Boolean): PlanningDecision {
-        if (goal.length <= 400 && goal.lineSequence().count { it.isNotBlank() } <= 2 && textGoal.containsMatchIn(goal) && !resourceIntent.containsMatchIn(goal))
+        if (isClearlyTextOnly(goal) || isClearlyConversational(goal))
             return PlanningDecision(PlanningStrategy.DIRECT, "Simple text-only objective; one inference task needs no planning call.", 1, false, false)
         if (profile.structuredOutput == CapabilitySupport.UNSUPPORTED)
             return PlanningDecision(PlanningStrategy.GUIDED, "Explicit schema rejection: request one bounded inference-only decision; JSON/tool authority is not inferred.", 1, true, false)
@@ -157,6 +163,16 @@ object ModelCapabilityPolicy {
                 "${if (!fast) "measured throughput is unknown or below the full-graph threshold" else "full-graph behavior not yet demonstrated"}. No thinking control is inferred from reasoning output.",
             2, true, false)
     }
+
+    /** A bounded chat/readiness turn with no resource or complexity intent; never grants tool authority. */
+    fun isClearlyConversational(goal: String): Boolean =
+        goal.length <= 400 && goal.lineSequence().count { it.isNotBlank() } <= 2 &&
+            conversationalGoal.containsMatchIn(goal) && !resourceIntent.containsMatchIn(goal) &&
+            !ComplexGoal.heuristic(goal)
+
+    private fun isClearlyTextOnly(goal: String): Boolean =
+        goal.length <= 400 && goal.lineSequence().count { it.isNotBlank() } <= 2 &&
+            textGoal.containsMatchIn(goal) && !resourceIntent.containsMatchIn(goal)
 
     fun fromDiagnostic(identity: ModelIdentity, result: ModelDiagnosticResult, now: Long = System.currentTimeMillis()): ModelCapabilityProfile {
         require(identity.providerId == result.providerId && identity.model == result.model) { "Diagnostic result belongs to another provider/model." }
@@ -183,7 +199,7 @@ object ModelCapabilityPolicy {
         firstTextMillis: Long?, now: Long = System.currentTimeMillis()): ModelCapabilityProfile {
         var updated = expireEvidence(profile, now)
         if (thinkingObserved) updated = evidence(updated, ObservedCapability.REASONING_STREAM, CapabilitySupport.SUPPORTED, now)
-        if (listOf(stats?.promptTokens, stats?.outputTokens, stats?.generationDurationNanos, stats?.totalDurationNanos, stats?.loadDurationNanos).any { it != null && it >= 0 })
+        if (listOf(stats?.promptTokens, stats?.outputTokens, stats?.generationDurationNanos, stats?.promptEvalDurationNanos, stats?.totalDurationNanos, stats?.loadDurationNanos).any { it != null && it >= 0 })
             updated = evidence(updated, ObservedCapability.STATISTICS, CapabilitySupport.SUPPORTED, now)
         val speed = throughput(stats)
         return updated.copy(observedOutputTokensPerSecond = speed ?: updated.observedOutputTokensPerSecond,

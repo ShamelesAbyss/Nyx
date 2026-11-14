@@ -107,7 +107,7 @@ object CompactPlanningPolicy {
         }
         val singleStep = compact && selected == setOf("inference")
         val context = minOf(contextLength, if (compact) 2_048 else 8_192)
-        val desiredOutput = when { singleStep -> 192; compact -> 384; else -> 1024 }
+        val desiredOutput = when { singleStep -> 256; compact -> 512; else -> 1024 }
         val output = minOf(desiredOutput, (context / 4).coerceAtLeast(1))
         val exitWorkers = buildSet {
             if (terminalEnabled && "terminal_run" in toolNames) add("terminal")
@@ -125,7 +125,7 @@ object CompactPlanningPolicy {
         PlanningStrategy.GUIDED -> IncrementalPlanning.continuationProfile(base, guided = true)
         PlanningStrategy.INCREMENTAL -> base.copy(compact = true, singleStep = false, fullGraph = false,
             continuation = false, maxSteps = minOf(decision.maxInitialSteps, MAX_STEPS),
-            maxOutputTokens = minOf(base.maxOutputTokens, 384), maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048))
+            maxOutputTokens = minOf(base.maxOutputTokens, 512), maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048))
         PlanningStrategy.DIRECT -> base.copy(compact = true, singleStep = true, fullGraph = false,
             continuation = false, allowedWorkers = setOf("inference"), exitCodeWorkers = emptySet(), maxSteps = 1)
     }
@@ -176,11 +176,11 @@ object CompactPlanningPolicy {
             appendLine("""{"do":"short executable instructions"}""")
             appendLine("One inference step; no other fields. Output existence is checked, NOT factual correctness. Do not claim tool/file work.")
         } else {
-            appendLine("""{"steps":[{"do":"short executable instructions","worker":"inference"}]}""")
-            appendLine("Use 1-${profile.maxSteps} sequential steps, preferably one. NYX assigns IDs, titles and dependencies. No other fields except check.")
+            appendLine("""{"steps":[{"do":"short executable instructions","worker":"inference","check":{"kind":"artifact_nonempty"}}]}""")
+            appendLine("Use 1-${profile.maxSteps} sequential steps, preferably one. NYX assigns IDs, titles and dependencies. Every step includes check; no other fields.")
             val labels = mapOf("inference" to "text", "filesystem" to "files", "verification" to "inspect", "terminal" to "commands", "development" to "edit/build/test")
             appendLine("Workers: ${selected.sorted().joinToString(", ") { "$it=${labels.getValue(it)}" }}. Only listed workers apply.")
-            appendLine("Inference has no check; output existence is checked, NOT factual correctness.")
+            appendLine("Inference uses only {\"kind\":\"artifact_nonempty\"}; output existence is checked, NOT factual correctness.")
             if (selected.any { it != "inference" }) {
                 appendLine("Every tool step needs a future locally observed check, never a success claim:")
                 if (selected.any { it in setOf("filesystem", "verification", "terminal", "development") })
@@ -295,15 +295,20 @@ object CompactPlanningPolicy {
                 step.opt("check") as? JSONObject ?: invalid("Compact step $index check must be an object.")
             } else null
             if (worker != "inference" && check == null) invalid("Compact tool step $index must declare a local evidence check.")
-            if (worker == "inference" && check != null) invalid("Inference compact steps cannot claim tool or file evidence.")
-            val evidence = if (check != null) {
-                validateCheck(check)
-                if (worker == "filesystem" && check.getString("kind") == "exit_code") invalid("Filesystem steps cannot supply command exit evidence.")
-                JSONArray().put(check)
-            } else JSONArray().put(JSONObject().put("kind", "artifact_nonempty")
-                .put("description", "Only verifies output existence, not semantic correctness."))
-            val verification = if (check == null) "Produce non-empty output; semantic correctness is not proven."
-                else "Require locally observed ${check.getString("kind")} evidence; a model claim is not proof."
+            val evidence = if (worker == "inference") {
+                if (check != null) {
+                    validateCheck(check, inference = true)
+                }
+                JSONArray().put(check ?: JSONObject().put("kind", "artifact_nonempty")
+                    .put("description", "Only verifies output existence, not semantic correctness."))
+            } else {
+                val toolCheck = requireNotNull(check)
+                validateCheck(toolCheck)
+                if (worker == "filesystem" && toolCheck.getString("kind") == "exit_code") invalid("Filesystem steps cannot supply command exit evidence.")
+                JSONArray().put(toolCheck)
+            }
+            val verification = if (worker == "inference") "Produce non-empty output; semantic correctness is not proven."
+                else "Require locally observed ${requireNotNull(check).getString("kind")} evidence; a model claim is not proof."
             tasks.put(JSONObject()
                 .put("id", "step_${index + 1}")
                 .put("title", instruction.lineSequence().first().trim().take(ObjectivePlanValidator.MAX_TITLE_LENGTH))
@@ -316,9 +321,14 @@ object CompactPlanningPolicy {
         return JSONObject().put("tasks", tasks)
     }
 
-    private fun validateCheck(check: JSONObject) {
+    private fun validateCheck(check: JSONObject, inference: Boolean = false) {
         requireFields(check, setOf("kind", "target", "expected"), "Compact evidence check")
         val kind = string(check, "kind", 32)
+        if (inference) {
+            if (kind != "artifact_nonempty") invalid("Inference compact steps cannot claim tool or file evidence.")
+            if (check.has("target") || check.has("expected")) invalid("Inference evidence must not contain a target or expected value.")
+            return
+        }
         if (kind !in fileChecks + outputChecks) invalid("Unsupported compact evidence kind '$kind'.")
         if (kind in fileChecks) string(check, "target", 512)
         else if (check.has("target")) invalid("Evidence '$kind' must not contain a target.")
@@ -354,19 +364,24 @@ object CompactPlanningPolicy {
         val properties = JSONObject()
             .put("do", JSONObject().put("type", "string").put("minLength", 1).put("maxLength", MAX_STEP_CHARS))
             .put("worker", JSONObject().put("enum", JSONArray(workers.sorted())))
-        if (workers.any { it != "inference" }) {
-            val checks = fileChecks + "output_contains" + if (allowExitCode && workers.any { it in setOf("terminal", "development", "verification") }) setOf("exit_code") else emptySet()
-            properties.put("check", JSONObject().put("type", "object").put("additionalProperties", false)
-                .put("required", JSONArray().put("kind"))
-                .put("properties", JSONObject()
-                    .put("kind", JSONObject().put("enum", JSONArray(checks.sorted())))
-                    .put("target", JSONObject().put("type", "string").put("maxLength", 512))
-                    .put("expected", JSONObject().put("type", "string").put("maxLength", 512))))
+        val checks = buildSet {
+            if ("inference" in workers) add("artifact_nonempty")
+            if (workers.any { it != "inference" }) {
+                addAll(fileChecks)
+                add("output_contains")
+                if (allowExitCode && workers.any { it in setOf("terminal", "development", "verification") }) add("exit_code")
+            }
         }
+        properties.put("check", JSONObject().put("type", "object").put("additionalProperties", false)
+            .put("required", JSONArray().put("kind"))
+            .put("properties", JSONObject()
+                .put("kind", JSONObject().put("enum", JSONArray(checks.sorted())))
+                .put("target", JSONObject().put("type", "string").put("maxLength", 512))
+                .put("expected", JSONObject().put("type", "string").put("maxLength", 512))))
         return JSONObject().put("type", "object").put("additionalProperties", false).put("required", JSONArray().put("steps"))
             .put("properties", JSONObject().put("steps", JSONObject().put("type", "array").put("minItems", 1).put("maxItems", maxSteps)
                 .put("items", JSONObject().put("type", "object").put("additionalProperties", false)
-                    .put("required", JSONArray().put("do").put("worker")).put("properties", properties)))).toString()
+                    .put("required", JSONArray().put("do").put("worker").put("check")).put("properties", properties)))).toString()
     }
 
     /** Constrains wire shape and budget; local parser, DAG and worker/evidence checks still apply. */

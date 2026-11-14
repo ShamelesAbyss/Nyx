@@ -1,4 +1,10 @@
-# NYX v0.9.1 — Quick Actions
+# NYX v0.9.2 — Project Relay (published)
+
+v0.9.2 is the current planner-reliability release; v0.9.1 remains the previous stable release. Existing objectives and controls are unchanged. Short conversational/readiness messages such as “hi” or “are you ready?” may answer directly without a planning call. Plans now require each step to declare a check: inference-only steps can only claim `artifact_nonempty`, while filesystem/terminal/development work must name a real future local observation. If a plan omits evidence or claims evidence its worker cannot produce, validation stops it before execution.
+
+Planning adds a `planning_telemetry` event with first-text latency, request wall time, provider-reported model load, prompt evaluation, generation and total duration, token counts, and measured rates. Missing metrics are shown as unavailable; character counts are not treated as tokens. Provider queueing and device load can make wall time differ. These changes do not grant new tools or permissions. Physical device, real Ollama/Termux, keyboard/fold and upgrade behavior remain unverified. See [release notes](RELEASE_NOTES_v0.9.2.md).
+
+## Historical v0.9.1 — Quick Actions
 
 In **Autonomy → Objectives → Quick Actions**, explicitly choose an operation. For project actions first select and authorize the trusted workspace/environment in Terminal. Review the exact saved scope and action permission, check approval and tap **Start Quick Action**. Inspection reads project/build information without running its scripts. Approved tests run only the discovered fixed test procedure; trusted scripts may modify files or access the network with Termux authority. Neither action installs missing tools.
 

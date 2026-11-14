@@ -70,6 +70,31 @@ class ModelCapabilityPolicyTest {
     }
 
     @Test
+    fun `conversational readiness and greeting objectives start directly`() {
+        val profile = ModelCapabilityProfile(identity())
+        listOf("hey are you ready?", "Hello! Are you ready?", "How are you?", "Thanks, that worked.")
+            .forEach { goal ->
+                assertEquals(goal, PlanningStrategy.DIRECT, ModelCapabilityPolicy.decide(profile, goal, toolsAvailable = true).strategy)
+            }
+    }
+
+    @Test
+    fun `greeting with resource or complexity intent is not treated as chat`() {
+        val profile = ModelCapabilityProfile(identity())
+        listOf("hey, create a file in the workspace", "Hello, refactor the architecture")
+            .forEach { goal ->
+                assertTrue(goal, ModelCapabilityPolicy.decide(profile, goal, toolsAvailable = true).strategy != PlanningStrategy.DIRECT)
+            }
+        assertTrue(
+            ModelCapabilityPolicy.decide(
+                profile,
+                "Create a Kotlin command-line calculator with tests and run the suite.",
+                toolsAvailable = true,
+            ).strategy != PlanningStrategy.DIRECT,
+        )
+    }
+
+    @Test
     fun `resource or tool objective is never direct`() {
         val profile = ModelCapabilityProfile(identity())
         val fileGoal = ModelCapabilityPolicy.decide(profile, "Explain how to create a file in the workspace", toolsAvailable = true)

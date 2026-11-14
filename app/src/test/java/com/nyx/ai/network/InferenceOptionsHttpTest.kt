@@ -98,21 +98,22 @@ class InferenceOptionsHttpTest {
     @Test fun ollamaFinalFrameReportsTokenizerCountsAndNanosecondDurations() = runBlocking {
         MockWebServer().use { server ->
             server.start(); server.enqueue(MockResponse().setBody("""{"message":{"content":"ok"},"done":false}
-{"message":{"content":""},"done":true,"prompt_eval_count":12,"eval_count":3,"eval_duration":4000000,"total_duration":9000000,"load_duration":2000000}
+{"message":{"content":""},"done":true,"prompt_eval_count":12,"eval_count":3,"eval_duration":4000000,"prompt_eval_duration":1000000,"total_duration":9000000,"load_duration":2000000}
 """))
             val result = OllamaClient(server.url("/").toString()).chat("m", emptyList())
             assertEquals("ok", result.content)
-            assertEquals(InferenceTokenStats(12, 3, 4_000_000, 9_000_000, 2_000_000), result.stats)
+            assertEquals(InferenceTokenStats(12, 3, 4_000_000, 9_000_000, 2_000_000, 1_000_000), result.stats)
         }
     }
 
     @Test fun absentNullMalformedAndNegativeStatisticsStayUnknownButZeroIsValid() = runBlocking {
         MockWebServer().use { server ->
-            server.start(); server.enqueue(MockResponse().setBody("""{"message":{"content":"ok"},"done":true,"prompt_eval_count":null,"eval_count":0,"eval_duration":"123","total_duration":-1,"load_duration":1.5}
+            server.start(); server.enqueue(MockResponse().setBody("""{"message":{"content":"ok"},"done":true,"prompt_eval_count":null,"eval_count":0,"eval_duration":"123","prompt_eval_duration":-1,"total_duration":-1,"load_duration":1.5}
 """))
             val stats = OllamaClient(server.url("/").toString()).chat("m", emptyList()).stats!!
             assertNull(stats.promptTokens); assertEquals(0L, stats.outputTokens)
-            assertNull(stats.generationDurationNanos); assertNull(stats.totalDurationNanos); assertNull(stats.loadDurationNanos)
+            assertNull(stats.generationDurationNanos); assertNull(stats.promptEvalDurationNanos)
+            assertNull(stats.totalDurationNanos); assertNull(stats.loadDurationNanos)
         }
     }
 

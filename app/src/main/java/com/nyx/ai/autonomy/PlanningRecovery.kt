@@ -99,8 +99,8 @@ object PlanningRecovery {
         appendLine("Return a corrected response as strict JSON only. Do not add prose or Markdown fences.")
         appendLine("The response must match:")
         if (compact) {
-            appendLine("""{"steps":[{"do":"concise instructions","worker":"inference"}]}""")
-            appendLine("Use 1-${CompactPlanningPolicy.MAX_STEPS} sequential steps. Tool workers require a local 'check' from the system prompt; inference has no check. No extra fields.")
+            appendLine("""{"steps":[{"do":"concise instructions","worker":"inference","check":{"kind":"artifact_nonempty"}}]}""")
+            appendLine("Use 1-${CompactPlanningPolicy.MAX_STEPS} sequential steps. Every step includes 'check'; inference uses artifact_nonempty only, while tool workers require a real local check from the system prompt. No extra fields.")
         } else {
             appendLine("""{"tasks":[{"id":"short_key","title":"...","instructions":"...","verification":"...","worker":"inference|terminal|filesystem|verification|development","dependsOn":[],"evidence":[]}]}""")
             appendLine("Preserve the intent, use the smallest graph with unique keys and valid dependencies. Tool tasks require local evidence.")

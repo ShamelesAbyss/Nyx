@@ -28,7 +28,7 @@ object IncrementalPlanning {
         compact = !guided, singleStep = false, maxSteps = 1, continuation = true, fullGraph = false,
         allowedWorkers = if (guided) setOf("inference") else initial.allowedWorkers,
         exitCodeWorkers = if (guided) emptySet() else initial.exitCodeWorkers,
-        maxOutputTokens = minOf(initial.maxOutputTokens, if (guided) 160 else 384),
+        maxOutputTokens = minOf(initial.maxOutputTokens, if (guided) 256 else 512),
         maxContextTokens = minOf(initial.maxContextTokens ?: 2_048, 2_048),
     )
 
@@ -57,8 +57,8 @@ object IncrementalPlanning {
             appendLine("or reply exactly DONE when no further task is needed.")
             appendLine("Allowed workers: inference. Guided mode can only request inference work; tool work needs validated JSON. An instruction is never a permission or a raw shell command.")
         } else {
-            appendLine("""Reply with ONLY one complete JSON object: {"next":{"do":"one concrete instruction","worker":"inference"}} or {"done":true}""")
-            appendLine("""Tool workers need a future local check: "check":{"kind":"file_exists","target":"path"} or, only when command evidence is available, {"kind":"exit_code","expected":"0"}.""")
+            appendLine("""Reply with ONLY one complete JSON object: {"next":{"do":"one concrete instruction","worker":"inference","check":{"kind":"artifact_nonempty"}}} or {"done":true}""")
+            appendLine("""Every step includes check. Inference uses only {"kind":"artifact_nonempty"}. Tool workers need a future local check such as {"kind":"file_exists","target":"path"} or, only when command evidence is available, {"kind":"exit_code","expected":"0"}.""")
             appendLine("Allowed workers: $workers. Use 1 task only, at most $MAX_INSTRUCTION_CHARS instruction characters; no dependencies, identifiers or shell commands. A plan grants no permission.")
         }
     }

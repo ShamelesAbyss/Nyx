@@ -26,6 +26,7 @@ data class InferenceTokenStats(
     val generationDurationNanos: Long? = null,
     val totalDurationNanos: Long? = null,
     val loadDurationNanos: Long? = null,
+    val promptEvalDurationNanos: Long? = null,
 )
 data class ChatResult(
     val content: String,
@@ -239,11 +240,13 @@ class OllamaClient private constructor(baseUrl: String, private val apiKey: Stri
                                         promptTokens = root.nonnegativeLong("prompt_eval_count"),
                                         outputTokens = root.nonnegativeLong("eval_count"),
                                         generationDurationNanos = root.nonnegativeLong("eval_duration"),
+                                        promptEvalDurationNanos = root.nonnegativeLong("prompt_eval_duration"),
                                         totalDurationNanos = root.nonnegativeLong("total_duration"),
                                         loadDurationNanos = root.nonnegativeLong("load_duration"),
                                     ).takeIf { value ->
                                         value.promptTokens != null || value.outputTokens != null ||
-                                            value.generationDurationNanos != null || value.totalDurationNanos != null ||
+                                            value.generationDurationNanos != null || value.promptEvalDurationNanos != null ||
+                                            value.totalDurationNanos != null ||
                                             value.loadDurationNanos != null
                                     }
                                     break

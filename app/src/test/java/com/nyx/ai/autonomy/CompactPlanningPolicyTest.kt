@@ -19,7 +19,24 @@ class CompactPlanningPolicyTest {
         assertTrue(prompt.length < 2_200)
         assertFalse(prompt.contains("dependsOn"))
         assertTrue(prompt.contains("Terminal tools are disabled"))
+        assertTrue(prompt.contains("Every step includes check"))
+        assertTrue(prompt.contains("artifact_nonempty"))
         assertEquals(3, JSONObject(CompactPlanningPolicy.responseSchema).getJSONObject("properties").getJSONObject("steps").getInt("maxItems"))
+    }
+
+    @Test fun compactSchemaRequiresCheckAndAllowsArtifactOnlyForInference() {
+        val item = JSONObject(CompactPlanningPolicy.responseSchemaFor(setOf("inference", "terminal")))
+            .getJSONObject("properties").getJSONObject("steps").getJSONObject("items")
+        assertEquals(listOf("do", "worker", "check"), item.getJSONArray("required").let { required ->
+            (0 until required.length()).map { required.getString(it) }
+        })
+        val kinds = item.getJSONObject("properties").getJSONObject("check")
+            .getJSONObject("properties").getJSONObject("kind").getJSONArray("enum").let { values ->
+                (0 until values.length()).map { values.getString(it) }
+            }
+        assertTrue("artifact_nonempty" in kinds)
+        assertTrue("file_exists" in kinds)
+        assertTrue("exit_code" in kinds)
     }
 
     @Test fun compactPlanExpandsSequentiallyWithCallerIdentityAndEvidence() {
@@ -35,6 +52,15 @@ class CompactPlanningPolicyTest {
         assertTrue(tasks.last().verification.contains("semantic correctness is not proven"))
         assertEquals(tasks.map { it.id }, ObjectivePlanValidator.parse(raw, "objective-a", "another-agent").map { it.id })
         assertNotEquals(tasks.first().id, ObjectivePlanValidator.parse(raw, "objective-b", "authorized-agent").first().id)
+    }
+
+    @Test fun inferenceMayDeclareOnlyOutputExistenceEvidence() {
+        val task = ObjectivePlanValidator.parse(
+            """{"steps":[{"do":"Explain the observed result","worker":"inference","check":{"kind":"artifact_nonempty"}}]}""",
+            "obj", "agent",
+        ).single()
+        assertEquals(EvidenceKind.ARTIFACT_NONEMPTY, task.evidence.single().kind)
+        reject("""{"steps":[{"do":"Explain the observed result","worker":"inference","check":{"kind":"file_exists","target":"x"}}]}""")
     }
 
     @Test fun compactEvidenceNeedsRealObservationNotModelSuccessClaim() = runBlocking {

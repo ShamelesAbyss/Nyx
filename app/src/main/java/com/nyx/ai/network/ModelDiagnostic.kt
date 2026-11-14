@@ -51,6 +51,8 @@ data class ModelDiagnosticResult(
         })
         append("\nFirst text: ${firstResponseLatencyMillis?.let { "$it ms" } ?: "unavailable"} (queue/load included). Total: $totalLatencyMillis ms.")
         append("\nPrompt tokens: ${stats?.promptTokens?.toString() ?: "unavailable"}; output tokens: ${stats?.outputTokens?.toString() ?: "unavailable"}.")
+        append("\nProvider timing: model load ${InferenceTelemetry.duration(stats?.loadDurationNanos)}; prompt eval ${InferenceTelemetry.duration(stats?.promptEvalDurationNanos)}; generation ${InferenceTelemetry.duration(stats?.generationDurationNanos)}; provider total ${InferenceTelemetry.duration(stats?.totalDurationNanos)}.")
+        append("\nMeasured prompt rate: ${InferenceTelemetry.rate(stats?.promptTokens, stats?.promptEvalDurationNanos)}.")
         val tokens = stats?.outputTokens
         val duration = stats?.generationDurationNanos
         val throughput = if (tokens != null && duration != null && duration > 0) tokens.toDouble() * 1_000_000_000.0 / duration else null

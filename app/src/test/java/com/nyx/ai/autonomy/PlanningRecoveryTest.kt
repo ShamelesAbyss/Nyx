@@ -39,6 +39,10 @@ class PlanningRecoveryTest {
         assertTrue(prompt.contains("strict JSON"))
         assertTrue(prompt.contains("Task 'a' must contain a 'title'."))
         assertTrue(prompt.length < 20_000)
+        val compact = PlanningRecovery.repairPrompt("x".repeat(20_000), failure, compact = true)
+        assertTrue(compact.contains("\"check\":{\"kind\":\"artifact_nonempty\"}"))
+        assertTrue(compact.contains("Every step includes 'check'"))
+        assertTrue(compact.length < 20_000)
     }
 
     @Test

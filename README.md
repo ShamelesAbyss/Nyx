@@ -10,7 +10,7 @@
 
 **Local intelligence. Independent execution. Real deliverables.**
 
-[![Release](https://img.shields.io/badge/release-v0.9.1-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.1)
+[![Release](https://img.shields.io/badge/release-v0.9.2-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#%E2%80%8D-build-from-source)
 
@@ -25,29 +25,30 @@
 ---
 
 > [!NOTE]
-> **v0.9.1 — Project Ignition is the latest stable release** (`com.nyx.ai`, versionCode 24): three explicitly approved Quick Actions start fixed operations without model planning. The clean build passed **1,198 JVM tests across 133 suites, with zero failures, errors or skips**, assembled both APKs, matched the established signing certificate, and passed 16 KB ZIP/ELF checks. Exact-commit hosted CI passed. Android/device acceptance remains unverified. See [Ignition release notes](RELEASE_NOTES_v0.9.1.md) and [implementation/verification report](V091_IMPLEMENTATION_REPORT.md).
+> **v0.9.2 — Project Relay is the current release** (`com.nyx.ai`, versionCode 25). It makes compact plans declare real local evidence, routes bounded chat/readiness goals directly, gives planning more room before truncation, and records provider timing/token telemetry in the Live Worker Console. The full JVM suite passed **1,210 tests across 135 suites with zero failures, errors or skips** (including the opt-in real-network acceptance tests), and both APKs assembled with the established signing certificate and 16 KB alignment. **Published:** [GitHub release v0.9.2](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2). See [Relay release notes](RELEASE_NOTES_v0.9.2.md) and [implementation report](V092_IMPLEMENTATION_REPORT.md).
 
 > [!IMPORTANT]
-> **Latest public release: v0.9.1 — Project Ignition.** Package `com.nyx.ai`, versionCode 24; the established debug signing identity and pinned API 37/ARM64 toolchain remain unchanged. This is a development build, not a production-signed Play artifact.
+> **Previous stable release: v0.9.1 — Project Ignition** (`com.nyx.ai`, versionCode 24): three explicitly approved Quick Actions start fixed operations without model planning. The clean build passed **1,198 JVM tests across 133 suites, with zero failures, errors or skips**, assembled both APKs, matched the established signing certificate, and passed 16 KB ZIP/ELF checks. Exact-commit hosted CI passed. Android/device acceptance remains unverified. The established debug signing identity and pinned API 37/ARM64 toolchain remain unchanged; this is a development build, not a production-signed Play artifact. See [Ignition release notes](RELEASE_NOTES_v0.9.1.md) and [implementation/verification report](V091_IMPLEMENTATION_REPORT.md).
 
 > **Historical public v0.9.0 — Project Bedrock** hardened autonomous execution and security boundaries, improved model capability detection, integrated development-to-Workbench artifacts, improved recovery and verification, and documented reproducible build/release infrastructure. Read its [official release notes](RELEASE_NOTES_v0.9.0.md) and [implementation report](V090_IMPLEMENTATION_REPORT.md).
 
 > [!WARNING]
 > **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device. Existing NYX installations signed with the established debug certificate can update in place; back up anything important before experimenting.
 
-## ⬇️ Download NYX v0.9.1 — Project Ignition
+## ⬇️ Download NYX v0.9.2 — Project Relay
 
 <div align="center">
 
-### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.1)
+### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2)
 
 | Asset | What it is |
 | :--- | :--- |
-| **[NYX-v0.9.1.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.1/NYX-v0.9.1.apk)** | Primary installation APK. ARM64, debug-signed with the established NYX certificate. |
-| **[NYX-Source-v0.9.1.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.1/NYX-Source-v0.9.1.zip)** | Source, tests, docs, licenses and Gradle wrapper; excludes private files, models, caches and build outputs. |
-| **[NYX-v0.9.1-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.1/NYX-v0.9.1-androidTest.apk)** | Instrumentation tests for device verification; compiled, not executed on hardware. |
-| **[NYX-v0.9.1-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.1/NYX-v0.9.1-SHA256SUMS.txt)** | Integrity manifest for every release asset except itself. |
-| **[NYX-v0.9.1-VERIFICATION_REPORT.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.1/NYX-v0.9.1-VERIFICATION_REPORT.md)** | Build, signer, test, artifact and remaining-limitation verification report. |
+| **[NYX-v0.9.2.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2/NYX-v0.9.2.apk)** | Primary installation APK. ARM64, debug-signed with the established NYX certificate. |
+| **[NYX-Source-v0.9.2.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2/NYX-Source-v0.9.2.zip)** | Source, tests, docs, licenses and Gradle wrapper; excludes private files, models, caches and build outputs. |
+| **[NYX-v0.9.2-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2/NYX-v0.9.2-androidTest.apk)** | Instrumentation tests for device verification; compiled, not executed on hardware. |
+| **[NYX-v0.9.2-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2/NYX-v0.9.2-SHA256SUMS.txt)** | Integrity manifest for every release asset except itself. |
+| **[NYX-v0.9.2-RELEASE_NOTES.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2/NYX-v0.9.2-RELEASE_NOTES.md)** | Release scope, verification evidence, and known limitations. |
+| **[NYX-v0.9.2-IMPLEMENTATION_REPORT.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2/NYX-v0.9.2-IMPLEMENTATION_REPORT.md)** | Implementation, exact tests, package identity and remaining device checks. |
 
 </div>
 
@@ -66,7 +67,7 @@ It is also a private inference workstation. Run a quantized GGUF through the bun
 | | |
 | :--- | :--- |
 | **Package** | `com.nyx.ai` |
-| **Version** | `0.9.1` (versionCode 24), Project Ignition — latest stable release |
+| **Version** | `0.9.2` (versionCode 25), Project Relay — current release |
 | **Android** | 8.0+ / API 26–37 |
 | **Architecture** | `arm64-v8a` |
 | **Inference** | Native GGUF CPU · Ollama · OpenAI-compatible `/v1` |
@@ -79,6 +80,12 @@ It is also a private inference workstation. Run a quantized GGUF through the bun
 ### ⚡ Quick Actions — Project Ignition
 
 In **Autonomy → Objectives**, explicitly select **Inspect project**, **Run approved project tests**, or **Verify Workbench output**, select its authorized project or retained artifact, review permissions and start. The existing objective engine creates a bounded deterministic task; no model planning or inference occurs. Inspection is read-only; tests use the discovered fixed command and real exit/output; artifact verification checks existing retained bytes and ownership, without claiming a new file or factual accuracy. Missing permissions/tools fail visibly, and interruption requires a new approval. Submission/dispatch/verified-result timing and task evidence are recorded; no real-model or Android speedup is claimed. See [limits and verification](V091_IMPLEMENTATION_REPORT.md).
+
+### 🧭 Project Relay — planning reliability
+
+Compact plans must now carry an explicit evidence check for every step. Inference may declare only `artifact_nonempty`; filesystem, terminal, development and verification steps must name a real future local observation such as `file_exists`, `output_contains` or `exit_code`. This closes the ambiguity that let small models omit evidence and then fail validation after a long generation. Bounded chat/readiness goals such as “hey, are you ready?” take the direct text-only path instead of paying for a planning call, while coding or resource-bearing goals remain planned. Compact initial output room increased to 512 tokens and incremental decisions to 512/256 tokens, reducing avoidable truncation without weakening schema limits.
+
+Planning now publishes a separate `planning_telemetry` event with first-text latency, request wall time, provider-reported model load, prompt evaluation, generation and total durations, prompt/output token counts, and measured prompt/output rates. Missing or malformed metrics remain explicitly unavailable; character counts are never converted into token counts. The existing Live Worker Console displays the event with other plan activity. These are host-side deterministic and HTTP tests; real-device Ollama timing and physical keyboard/fold behavior remain unverified.
 
 ### 🛠️ Project Workbench
 
@@ -510,6 +517,7 @@ The long-term vision is an autonomous assistant that runs on hardware you own, u
 
 | Version | Codename | Focus |
 | :--- | :--- | :--- |
+| **[v0.9.2](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2)** | **Project Relay** | Required compact-plan evidence, direct conversational routing, larger bounded planning output, provider timing/token telemetry |
 | **[v0.9.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.1)** | **Project Ignition** | Explicit deterministic Quick Actions, fixed project tools, retained-artifact verification and timing |
 | **[v0.9.0](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.0)** | **Project Bedrock** | Hardened terminal/autonomy boundaries, exact capability evidence, approved development-to-Workbench artifacts, conservative recovery and reproducible verification |
 | [v0.8.9](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9) | Project Workbench | Objective-specific private workspaces, retained research/imports, validated deliverables, checksums and Android preview/save/share interfaces |
@@ -546,7 +554,9 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 
 | Document | Contents |
 | :--- | :--- |
-| [RELEASE_NOTES_v0.9.1.md](RELEASE_NOTES_v0.9.1.md) | Current Project Ignition release: Quick Actions, evidence, verification and limits |
+| [RELEASE_NOTES_v0.9.2.md](RELEASE_NOTES_v0.9.2.md) | Current Project Relay release: planner evidence, routing, telemetry and limits |
+| [V092_IMPLEMENTATION_REPORT.md](V092_IMPLEMENTATION_REPORT.md) | Relay implementation, exact tests, package identity and remaining device checks |
+| [RELEASE_NOTES_v0.9.1.md](RELEASE_NOTES_v0.9.1.md) | Previous public Project Ignition release: Quick Actions, evidence, verification and limits |
 | [V091_IMPLEMENTATION_REPORT.md](V091_IMPLEMENTATION_REPORT.md) | Ignition implementation, actual verification and signing/device limitations |
 | [BUILD.md](BUILD.md) | Toolchain, reproducible builds, tests, signing, packaging |
 | [USER_GUIDE.md](USER_GUIDE.md) | Setup, models, agents, objectives, terminal, troubleshooting |
@@ -606,6 +616,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.9.1 — Project Ignition · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.9.2 — Project Relay · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

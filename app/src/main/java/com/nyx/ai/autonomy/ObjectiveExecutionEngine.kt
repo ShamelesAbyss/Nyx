@@ -35,6 +35,7 @@ import com.nyx.ai.data.ObjectiveTaskEntity
 import com.nyx.ai.data.TaskEvidenceEntity
 import com.nyx.ai.network.ApiMessage
 import com.nyx.ai.network.InferenceFabric
+import com.nyx.ai.network.InferenceTelemetry
 import com.nyx.ai.network.ModelCapabilities
 import com.nyx.ai.network.ModelCapabilityProfile
 import com.nyx.ai.network.ModelCapabilityPolicy
@@ -285,14 +286,15 @@ class ObjectiveExecutionEngine(
         }
         event(objective.id, null, "planning_input", input.metrics.summary(), status = "waiting")
         var firstTextReported = false
-        suspend fun report(snapshot: PlanningProgress, kind: String = "planning_progress") {
+        suspend fun report(snapshot: PlanningProgress, kind: String = "planning_progress", telemetry: String? = null) {
             if (!firstTextReported && snapshot.firstTokenAfterMs != null) {
                 firstTextReported = true
                 event(objective.id, null, "planning_first_text", "First planning text observed ${snapshot.firstTokenAfterMs}ms after submission. Queue, model load and prompt processing are not separately measured.", status = "running")
             }
             val fabric = InferenceFabric.metrics.value
             val complete = kind == "planning_response"
-            val detail = if (complete) "Provider returned a planning response; validating the entire plan before any task is accepted. ${snapshot.characters} streamed characters observed; elapsed ${snapshot.elapsedMs / 1_000}s."
+            val detail = if (complete) "Provider returned a planning response; validating the entire plan before any task is accepted. ${snapshot.characters} streamed characters observed; elapsed ${snapshot.elapsedMs / 1_000}s." +
+                telemetry?.let { " $it" }.orEmpty()
                 else snapshot.detail(fabric.queued, fabric.active)
             ExecutionMonitor.update { current ->
                 if (current.objectiveId == objective.id) current.copy(phase = if (complete) "planning_validation" else "planning_${snapshot.stage.name.lowercase()}", message = detail)
@@ -335,7 +337,12 @@ class ObjectiveExecutionEngine(
                     val completed = pending.await()
                     val snapshot = lifecycle.progress(clock())
                     snapshot.failure?.let { throw PlanningFailureException(it) }
-                    report(snapshot, "planning_response")
+                    val telemetry = InferenceTelemetry.summary(
+                        completed.stats, snapshot.firstTokenAfterMs, snapshot.elapsedMs,
+                        snapshot.characters.toInt().coerceAtLeast(0), completed.thinkingCharacters,
+                    )
+                    report(snapshot, "planning_response", telemetry)
+                    event(objective.id, null, "planning_telemetry", telemetry, status = "completed")
                     completed
                 } finally {
                     pending.cancel()
@@ -357,7 +364,10 @@ class ObjectiveExecutionEngine(
                 "Provider reasoning stream emitted ${result.thinkingCharacters} characters separately from plan text; reasoning is not executed. Elapsed ${finalSnapshot.elapsedMs / 1_000}s.",
                 status = "completed")
         }
-        return PlanningResponse(result.content, result.thinkingCharacters, result.stats)
+        return PlanningResponse(
+            result.content, result.thinkingCharacters, result.stats,
+            finalSnapshot.firstTokenAfterMs, finalSnapshot.elapsedMs, finalSnapshot.characters,
+        )
     }
 
     private suspend fun planningNeedsAttention(objectiveId: String, failure: PlanningFailure): ObjectiveEntity {
@@ -1266,6 +1276,9 @@ class ObjectiveExecutionEngine(
         val text: String,
         val reasoningCharacters: Int,
         val stats: InferenceTokenStats?,
+        val firstTokenAfterMs: Long?,
+        val elapsedMs: Long,
+        val streamedCharacters: Long,
     )
 
     private fun plannerPrompt(terminalEnabled: Boolean, toolNames: Set<String>): String = buildString {
