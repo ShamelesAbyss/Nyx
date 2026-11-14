@@ -666,7 +666,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             configurationJson = JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads).toString(),
             createdAt = previous?.createdAt ?: System.currentTimeMillis()))
     }
-    private suspend fun snapshotObjective(id: String, s: NyxState, workbench: WorkbenchAuthorization? = null) {
+    private suspend fun snapshotObjective(id: String, s: NyxState, workbench: WorkbenchAuthorization? = null, quickAction: com.nyx.ai.autonomy.QuickAction? = null) {
         persistEndpointNow(s)
         // Workbench authority belongs to the objective, not today's UI/provider settings.
         val previous = WorkbenchExecutionConfiguration.latest(db.objectiveDao().observeEvents(id).first()
@@ -678,6 +678,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             .put(ExecutionTimeoutPolicyStore.SNAPSHOT_KEY, timeoutPolicyStore.snapshot(s.executionTimeoutPolicy))
         WorkbenchExecutionConfiguration.scope(snapshot, approval, id, s.terminalToolsEnabled,
             s.terminalEnvironment, s.guestAlias, s.terminalWorkspace, previous)
+        (quickAction ?: previous?.let { com.nyx.ai.autonomy.QuickAction.fromSnapshot(it) })?.let { action ->
+            action.validate(id)
+            snapshot.put(com.nyx.ai.autonomy.QuickAction.KEY, action.toJson())
+            if (action.type == com.nyx.ai.autonomy.QuickActionType.VERIFY_ARTIFACT) snapshot.put("terminalEnabled", false).put("workspace", "")
+        }
         db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "execution_config", snapshot.toString(), System.currentTimeMillis()))
     }
 
@@ -928,6 +933,43 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Creates and executes a durable objective independently of a chat turn. */
+    fun createQuickAction(type: com.nyx.ai.autonomy.QuickActionType, explicitlyApproved: Boolean, artifactId: String = "") {
+        val s = _state.value
+        if (!explicitlyApproved || s.objectiveRunning || s.diagnosticRunning) { _state.update { it.copy(error = "Review and approve this action before starting.") }; return }
+        val agent = s.agents.firstOrNull { it.id == s.selectedAgentId } ?: run { _state.update { it.copy(error = "Select an enabled agent first.") }; return }
+        val id = UUID.randomUUID().toString()
+        val action = runCatching {
+            if (type == com.nyx.ai.autonomy.QuickActionType.VERIFY_ARTIFACT) {
+                val source = requireNotNull(s.selectedObjectiveId) { "Select a source objective." }
+                require(s.workbenchManifest?.objectiveId == source) { "Artifact selection ownership mismatch." }
+                val record = s.workbenchManifest?.artifacts?.singleOrNull { it.id == artifactId } ?: error("Select an existing Workbench artifact.")
+                com.nyx.ai.autonomy.QuickAction(id, type, true, sourceObjectiveId = source, artifactId = record.id, sha256 = record.sha256)
+            } else {
+                require(s.terminalToolsEnabled) { "Enable and explicitly select an authorized workspace in Terminal." }
+                workspaceProblem(s)?.let { error(it) }
+                com.nyx.ai.autonomy.QuickAction(id, type, true, workspace = s.terminalWorkspace)
+            }.validate(id)
+        }.getOrElse { e -> _state.update { it.copy(error = e.message ?: "Invalid selection.") }; return }
+        if (!reserveInference()) { _state.update { it.copy(error = "Another operation is running.") }; return }
+        viewModelScope.launch {
+            val row = ObjectiveEntity(id = id, title = "Quick Action: ${type.label}", goal = "Explicit deterministic ${type.name}", status = "planning", agentId = agent.id, modelId = "quick-action", parallelism = 1)
+            db.objectiveDao().upsertObjective(row)
+            try {
+                snapshotObjective(id, s, WorkbenchAuthorization(), action)
+                db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null,
+                    "quick_submission", JSONObject().put("submittedAt", row.createdAt).put("action", type.name).toString(), System.currentTimeMillis()))
+                objectiveReservation = true
+                selectObjective(id)
+                _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
+                ObjectiveExecutionService.start(app, id)
+            } catch (e: Exception) {
+                objectiveReservation = false; releaseInference()
+                db.objectiveDao().upsertObjective(row.copy(status = "needs_attention", error = "Quick Action preparation failed: ${e.message?.take(200)}"))
+                _state.update { it.copy(objectiveRunning = false, error = e.message ?: "Could not start Quick Action.") }
+            }
+        }
+    }
+
     fun createObjective(goal: String, development: Boolean = false, workbench: WorkbenchAuthorization = WorkbenchAuthorization()) {
         if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val approval = runCatching { workbench.validate() }.getOrElse { failure ->
@@ -1036,6 +1078,10 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun resumeObjective(id: String, userApprovedRetry: Boolean) {
         if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val s = _state.value
+        if (s.objectiveEvents.any { it.objectiveId == id && (it.kind == "quick_action" || it.kind == "quick_submission" ||
+                it.kind == "execution_config" && runCatching { JSONObject(it.detail ?: "{}").has(com.nyx.ai.autonomy.QuickAction.KEY) }.getOrDefault(false)) }) {
+            _state.update { it.copy(error = "Select and approve a new Quick Action; interrupted tests are never automatically replayed.") }; return
+        }
         if (!s.workbenchApproval.enabled) workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
         val objective = s.objectives.firstOrNull { it.id == id } ?: return
         val agent = s.agents.firstOrNull { it.id == objective.agentId } ?: run { _state.update { it.copy(error = "The objective's agent is unavailable.") }; return }

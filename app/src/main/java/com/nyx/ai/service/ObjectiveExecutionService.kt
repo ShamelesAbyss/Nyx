@@ -111,6 +111,11 @@ class ObjectiveExecutionService : Service() {
             val config = com.nyx.ai.workbench.WorkbenchExecutionConfiguration.latest(database.objectiveDao().observeEvents(objective.id).first()
                 .filter { it.kind == "execution_config" }.map { JSONObject(requireNotNull(it.detail)) })
                 ?: error("Legacy objective has no provider snapshot. Review it and select a provider before resuming.")
+            val quick = com.nyx.ai.autonomy.QuickAction.fromSnapshot(config)
+            if (quick != null) {
+                quick.validate(objective.id)
+                return@InferenceSessionFactory com.nyx.ai.autonomy.quickActionSession(ExecutionTimeoutPolicyStore.fromSnapshot(config))
+            }
             val endpoint = database.modelEndpointDao().getById(config.getString("endpointId"))
                 ?: error("The objective's snapshotted provider was removed.")
             val handle = factory.providerForRecord(endpoint.copy(modelId = config.getString("modelId"), configurationJson = config.optJSONObject("options")?.toString()))
@@ -293,7 +298,11 @@ class ObjectiveExecutionService : Service() {
                 .map { JSONObject(requireNotNull(it.detail)) })
                 ?: error("No approved execution settings for this objective.")
             val timeouts = ExecutionTimeoutPolicyStore.fromSnapshot(snapshot)
+            val quickAction = com.nyx.ai.autonomy.QuickAction.fromSnapshot(snapshot)?.validate(objectiveId)
+            require(quickAction == null || events.none { it.kind == "quick_action" || it.kind == "quick_action_admitted" }) { "Quick Action requires a new explicit selection after interruption." }
             val workbenchApproval = WorkbenchAuthorization.fromSnapshot(snapshot)
+            require(quickAction == null || !workbenchApproval.enabled) { "Unrelated Workbench permissions denied." }
+            if (quickAction != null) recordEvent(objectiveId, "quick_action_admitted", "Single-use explicit action admitted; interruption requires a new selection.")
             val workbenchStore = if (workbenchApproval.enabled) WorkbenchStore(java.io.File(filesDir, "workbench"), objectiveId) else null
             val researchEngine = workbenchStore?.takeIf { workbenchApproval.researchEnabled }?.let { store ->
                 ResearchEngine(store, workbenchApproval.authorizedUrls.toSet()) { AutonomyRuntime.mode() }
@@ -337,6 +346,9 @@ class ObjectiveExecutionService : Service() {
                 .getOrDefault(TerminalEnvironment.TERMUX_HOST)
             val guestAlias = snapshot.optString("guestAlias", "debian")
             val workspace = snapshot.optString("workspace")
+            if (quickAction != null && quickAction.type != com.nyx.ai.autonomy.QuickActionType.VERIFY_ARTIFACT) {
+                require(terminalEnabled() && snapshot.getBoolean("terminalEnabled") && workspace == quickAction.workspace) { "Quick Action project permission revoked or workspace mismatch." }
+            }
             val environmentId = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
             terminalTools = null
             val combined = workbenchApproval.combinedDevelopment
@@ -347,7 +359,7 @@ class ObjectiveExecutionService : Service() {
                     "Saved combined project scope mismatch; create a separately approved objective rather than rebinding."
                 }
             }
-            if ((!workbenchApproval.enabled || combined != null) && terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
+            if ((quickAction == null || quickAction.type != com.nyx.ai.autonomy.QuickActionType.VERIFY_ARTIFACT) && (!workbenchApproval.enabled || combined != null) && terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
                 val environmentProfile = EnvironmentDiscovery(bridge).discover()
                 require(environmentProfile.hostAvailable) { environmentProfile.detail ?: "Termux setup is incomplete." }
                 require(com.nyx.ai.terminal.HostShell.isSafeAlias(guestAlias)) { "The selected PRoot distribution alias is invalid." }
@@ -372,7 +384,7 @@ class ObjectiveExecutionService : Service() {
                     useTimeoutBinary = environmentProfile.timeoutAvailable,
                     workspaceApproved = true,
                     guestAlias = guestAlias,
-                    modelCommandGate = if (combined != null) null else AutonomyModelCommandGate(this, environmentId, workspace, environment,
+                    modelCommandGate = if (combined != null || quickAction != null) null else AutonomyModelCommandGate(this, environmentId, workspace, environment,
                         maximumTimeoutSeconds = (timeouts.terminalMs / 1_000).coerceAtLeast(1)),
                     executionTimeouts = timeouts,
                     outputApproval = outputApproval,
@@ -445,7 +457,7 @@ class ObjectiveExecutionService : Service() {
                     }
                 }
             }
-            val gatewayExtra = if (workbenchTools != null) null else runCatching {
+            val gatewayExtra = if (workbenchTools != null || quickAction != null) null else runCatching {
                 val vault = com.nyx.ai.settings.CredentialVault(this)
                 val repository = com.nyx.ai.gateway.GatewayRepository(
                     root = java.io.File(filesDir, "gateways"),
@@ -475,7 +487,7 @@ class ObjectiveExecutionService : Service() {
                 database = database,
                 sessions = sessions,
                 terminalTools = terminalTools,
-                extraTools = if (workbenchTools != null) workbenchTools else if (gatewayExtra != null) {
+                extraTools = if (quickAction != null) null else if (workbenchTools != null) workbenchTools else if (gatewayExtra != null) {
                     com.nyx.ai.agent.CompositeToolProvider(listOf(NetworkAgentTools(this), gatewayExtra))
                 } else NetworkAgentTools(this),
                 arsenal = com.nyx.ai.skills.ArsenalRepository(this),
@@ -492,7 +504,10 @@ class ObjectiveExecutionService : Service() {
                 workbenchApproval = workbenchApproval,
                 workbenchStore = workbenchStore,
             )
-            val result = if (tasks.isEmpty()) {
+            val result = if (quickAction != null) {
+                require(tasks.isEmpty()) { "Quick Action cannot replay retained tasks; select a new action." }
+                engine.executeQuickAction(objectiveId, quickAction, agent, resourceProfile.policy, executionControl)
+            } else if (tasks.isEmpty()) {
                 engine.planAndExecute(objectiveId, agent, resourceProfile.policy, executionControl)
             } else {
                 engine.resumeAfterReview(objectiveId, agent, resourceProfile.policy, executionControl)

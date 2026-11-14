@@ -1,3 +1,16 @@
+# NYX v0.9.1 — Project Ignition verification
+
+**Verified locally:** clean build passed in **2m 35s**; **1,198 JVM tests across 133 suites, zero failures/errors/skips**, including **16 Ignition regressions**. App and instrumentation APKs compiled. Independent identity (`com.nyx.ai`, 0.9.1/code 24, API 26–37), ARM64, notices and 16 KB ZIP/ELF checks passed with an explicitly build-only local signer. No physical-device test was run.
+
+**Run-local time to first verified action (one WSL host fixture run):** inspect **37.60 ms**, approved tests **43.97 ms**, retained artifact **4.39 ms**. Quick Action model/planning requests: **0**. These measurements use actual Linux processes/bytes with fixture Android Context/DAO transport; they exclude Android service/UI startup and are not real-model/device benchmarks. Complete event timings and raw JUnit output are retained in [host evidence](docs/ignition/host-verification.json) and [Ignition JUnit log](docs/ignition/QuickActionIgnitionTest.xml).
+
+**Publication blocked:** established signer `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55` is unavailable. Actual local signer is `85c5ec6f1483b010f4b864f2c56d5821eb56c0877ff2eb40d236b2d1f1c67747`; the unchanged default continuity gate correctly rejected it. The successful artifact check used the existing explicit ephemeral-signer verification mode, which cannot package a distribution. No public APK, v0.9.1 tag or stable release is created. Hosted CI for the final source commit must be inspected after push; see the repository's [Verify workflow](https://github.com/ShamelesAbyss/Nyx/actions/workflows/verify.yml).
+
+The 16 new tests cover actual project inspection without script execution, approved fixed tests/output/exit/task ownership, a real exit 7 failure, missing approval/tools, the existing unapproved-tool gate, unauthorized workspace, malformed/traversal/foreign ownership, actual retained bytes/no new file, tampered/removed/stale artifacts, pre-submit cancellation, in-flight interruption/no replay, pre-task snapshot recovery rejection, old configuration compatibility, actual engine checksum evidence, ordinary model planning and a rejecting inference session. Existing v0.9.0 suites also ran. `NYX_REAL_NETWORK_TEST=1` and a real checksum-pinned Kotlin compiler were supplied; no JVM tests skipped.
+
+Android/Room/Binder/Termux/PRoot/foldable/installed-data upgrade acceptance is **UNVERIFIED**, not counted as passed or silently omitted. Room entities/schemas/migrations and native/provider dependencies were not changed. A real installed-app upgrade cannot be accepted with an incompatible signing key. Historical evidence below remains distinct.
+
+
 # NYX Test Results
 
 **Final parent verification (2026-11-14): clean BUILD SUCCESSFUL in 2m 21s; 1,182 JVM tests across 132 suites, zero failures/errors/skips, with real-network acceptance enabled. ARM64 app and instrumentation APKs assembled; independent package/version/SDK, established signer, notice, 16 KB ZIP and ELF checks passed. Instrumentation and Android hardware were not executed; hosted CI and real Ollama remain unverified.**

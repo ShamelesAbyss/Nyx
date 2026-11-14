@@ -1,3 +1,7 @@
+# Building NYX 0.9.1 — Project Ignition source candidate
+
+Current source: com.nyx.ai, versionCode 24 / versionName 0.9.1. Toolchain and SDK/native pins below remain unchanged. Run one coordinated clean testDebugUnitTest/assembleDebug/assembleDebugAndroidTest build with a real Kotlin fixture compiler. Use tools/build_release.sh and independent artifact/source gates. A newly generated debug key is build-only: public packaging must reject it because it differs from the established signer. Hosted CI may use --ci-ephemeral-signer for verification only. No public APK/tag/release until all gates pass. Final clean host build: 1,198 tests/133 suites, zero failures/errors/skips, both APKs assembled in 2m 35s. Artifact checks passed in verification-only signer mode; normal continuity verification rejects this machine’s incompatible key. See [Ignition report](V091_IMPLEMENTATION_REPORT.md).
+
 # Building NYX 0.9.0 — Project Bedrock candidate
 
 ## v0.9.0 Project Bedrock — unpublished candidate

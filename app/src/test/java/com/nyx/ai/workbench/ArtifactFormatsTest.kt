@@ -81,7 +81,11 @@ class ArtifactFormatsTest {
     @Test fun zipRequiresCompleteDirectoryAndCorrectCrc() {
         val zip = ZipBundleWriter.write(mapOf("a.txt" to "hello".toByteArray()))
         assertFalse(ArtifactFormats.validate(ArtifactFormat.ZIP, zip.copyOf(zip.size - 5)).valid)
-        val corrupted = zip.copyOf(); corrupted[35] = (corrupted[35].toInt() xor 1).toByte()
+        // ZIP timestamp extra fields vary with the host timezone/JDK. Corrupt data, not an assumed header offset.
+        fun u16(offset: Int) = (zip[offset].toInt() and 255) or ((zip[offset + 1].toInt() and 255) shl 8)
+        val payloadOffset = 30 + u16(26) + u16(28)
+        assertEquals("hello", zip.copyOfRange(payloadOffset, payloadOffset + 5).toString(Charsets.UTF_8))
+        val corrupted = zip.copyOf(); corrupted[payloadOffset] = (corrupted[payloadOffset].toInt() xor 1).toByte()
         assertFalse(ArtifactFormats.validate(ArtifactFormat.ZIP, corrupted).valid)
         assertFalse(ArtifactFormats.validate(ArtifactFormat.ZIP, "PK fake".toByteArray()).valid)
         assertFalse(ArtifactFormats.validate(ArtifactFormat.ZIP, zip + byteArrayOf(1)).valid)

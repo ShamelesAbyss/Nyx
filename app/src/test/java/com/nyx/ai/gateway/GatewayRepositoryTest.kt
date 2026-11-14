@@ -303,7 +303,9 @@ class GatewayRepositoryTest {
         val elapsed = System.currentTimeMillis() - started
 
         assertFalse(result.success)
-        assertTrue(result.content.contains("timed out"))
+        // Either the coroutine deadline or OkHttp's same-duration socket timeout can win.
+        // Both must remain failures within the existing elapsed bound.
+        assertTrue("actual failure: ${result.content}", Regex("(?i)\\b(?:timed out|timeout)\\b").containsMatchIn(result.content))
         assertTrue("elapsed=$elapsed", elapsed < 5_000)
     }
 

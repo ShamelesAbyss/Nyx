@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
-    name: Bedrock verification
+    name: Ignition verification
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -57,7 +57,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: bedrock-verification-evidence
+          name: ignition-verification-evidence
           retention-days: 7
           include-hidden-files: false
           if-no-files-found: warn

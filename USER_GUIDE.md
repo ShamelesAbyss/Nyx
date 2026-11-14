@@ -1,3 +1,11 @@
+# NYX v0.9.1 — Quick Actions
+
+In **Autonomy → Objectives → Quick Actions**, explicitly choose an operation. For project actions first select and authorize the trusted workspace/environment in Terminal. Review the exact saved scope and action permission, check approval and tap **Start Quick Action**. Inspection reads project/build information without running its scripts. Approved tests run only the discovered fixed test procedure; trusted scripts may modify files or access the network with Termux authority. Neither action installs missing tools.
+
+For **Verify Workbench output**, choose an existing objective and its retained artifact, approve its exact selection and start. The existing bytes/format/ownership/digest are checked. This creates an evidence report, not a new copy of that file, and does not establish factual accuracy. Use **Open existing Workbench output** for its ordinary verified preview/save/share controls.
+
+Progress, failures, actual exits and results use the existing mission graph and Live Activity. Pause/cancel use existing service controls. Interrupted/failed actions require a fresh explicit selection and approval; uncertain tests are never replayed automatically. No model connection is required for Quick Actions. Open-ended objectives retain **Plan and execute** and their normal model requirements. Physical Android acceptance remains UNVERIFIED. v0.9.1 is a source candidate while release/signing gates are outstanding.
+
 # NYX User Guide — v0.9.0 Project Bedrock candidate
 
 ## v0.9.0 — Project Bedrock (unpublished candidate)

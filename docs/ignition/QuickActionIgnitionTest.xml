@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.nyx.ai.workbench.QuickActionIgnitionTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-11-14T19:12:45.108Z" hostname="VEYNHLAY2VPOS" time="2.808">
+  <properties/>
+  <testcase name="missingApprovalAndMissingTerminalRejectBeforeDispatch" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.008"/>
+  <testcase name="workspaceRebindingRejectsBeforeAnyFilesystemOrProcessAccess" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.006"/>
+  <testcase name="deterministicSessionRejectsAnyAccidentalInference" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.001"/>
+  <testcase name="cancelBeforeSubmissionCreatesNoTaskAndRunsNoOperation" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.006"/>
+  <testcase name="failingRealTestExitIsRetainedAndNeverClaimedSuccessful" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.059"/>
+  <testcase name="ordinaryPlannerStillRequestsAPlanAndExecutesItsValidatedTask" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="2.536"/>
+  <testcase name="approvedTestsUseActualFixedCommandExitOutputAndOwnedEvidence" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.054"/>
+  <testcase name="tamperedForeignRemovedOrStaleArtifactsNeverVerify" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.022"/>
+  <testcase name="existingTerminalPermissionGateDeniesAnUnapprovedToolInstance" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.011"/>
+  <testcase name="interruptionMarksTaskForReviewAndOrdinaryResumeCannotReplayIt" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.012"/>
+  <testcase name="oldConfigurationRemainsOrdinaryAndSelectedContractRoundTripsExactly" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.0"/>
+  <testcase name="engineInspectsRealProjectWithoutAnyModelRequestOrScriptExecution" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.046"/>
+  <testcase name="malformedPathsOwnersArtifactsAndAdditionalFieldsFailClosed" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.001"/>
+  <testcase name="artifactVerificationUsesRealRegisteredBytesAndDoesNotCreateANewArtifact" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.014"/>
+  <testcase name="interruptedBeforeTaskCreationCannotEnterOrdinaryResumeOrInference" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.006"/>
+  <testcase name="engineVerifiesExistingArtifactWithoutInventingWriteWitnessOrTerminalAccess" classname="com.nyx.ai.workbench.QuickActionIgnitionTest" time="0.026"/>
+  <system-out><![CDATA[IGNITION_ORDINARY_FIXTURE_ONLY totalNanos=2529156813 requests=3
+IGNITION_TEST_TIMINGS=[{"phase":"permission_validated","elapsedNanos":16134,"objectiveElapsedWallMillis":6,"planningInferenceRequests":0}, {"phase":"task_created","elapsedNanos":179112,"objectiveElapsedWallMillis":7,"planningInferenceRequests":0}, {"phase":"execution_dispatch","elapsedNanos":840547,"objectiveElapsedWallMillis":7,"planningInferenceRequests":0}, {"phase":"operation_dispatch","elapsedNanos":2514656,"objectiveElapsedWallMillis":9,"planningInferenceRequests":0}, {"phase":"first_verified_result","elapsedNanos":43970479,"objectiveElapsedWallMillis":50,"planningInferenceRequests":0}, {"phase":"final_completed","elapsedNanos":45845705,"objectiveElapsedWallMillis":52,"planningInferenceRequests":0}]
+IGNITION_INSPECT_TIMINGS=[{"phase":"permission_validated","elapsedNanos":10965,"objectiveElapsedWallMillis":5,"planningInferenceRequests":0}, {"phase":"task_created","elapsedNanos":163583,"objectiveElapsedWallMillis":5,"planningInferenceRequests":0}, {"phase":"execution_dispatch","elapsedNanos":755753,"objectiveElapsedWallMillis":5,"planningInferenceRequests":0}, {"phase":"operation_dispatch","elapsedNanos":1905212,"objectiveElapsedWallMillis":6,"planningInferenceRequests":0}, {"phase":"first_verified_result","elapsedNanos":37601248,"objectiveElapsedWallMillis":42,"planningInferenceRequests":0}, {"phase":"final_completed","elapsedNanos":39233229,"objectiveElapsedWallMillis":44,"planningInferenceRequests":0}]
+IGNITION_ARTIFACT_TIMINGS=[{"phase":"permission_validated","elapsedNanos":16680,"objectiveElapsedWallMillis":18,"planningInferenceRequests":0}, {"phase":"task_created","elapsedNanos":190619,"objectiveElapsedWallMillis":18,"planningInferenceRequests":0}, {"phase":"execution_dispatch","elapsedNanos":587043,"objectiveElapsedWallMillis":19,"planningInferenceRequests":0}, {"phase":"operation_dispatch","elapsedNanos":1928644,"objectiveElapsedWallMillis":20,"planningInferenceRequests":0}, {"phase":"first_verified_result","elapsedNanos":4391672,"objectiveElapsedWallMillis":22,"planningInferenceRequests":0}, {"phase":"final_completed","elapsedNanos":5994431,"objectiveElapsedWallMillis":24,"planningInferenceRequests":0}]
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -302,7 +302,7 @@ private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
             }
         }
         when (mode) {
-            0 -> ObjectivesPanel(state, vm)
+            0 -> ObjectivesPanel(state, vm, openWorkbench = { mode = 2 })
             1 -> TerminalPanel(state, vm)
             else -> com.nyx.ai.ui.WorkbenchScreen(state, vm)
         }
@@ -684,7 +684,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
 }
 
 @Composable
-private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
+private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: () -> Unit) {
     var goal by rememberSaveable { mutableStateOf("") }
     var development by rememberSaveable { mutableStateOf(false) }
     var showConsole by rememberSaveable { mutableStateOf(false) }
@@ -739,6 +739,7 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
                 Text(state.error, color = Color(0xFFFFB3BC), fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.fillMaxWidth().padding(13.dp))
             }
         }
+        com.nyx.ai.ui.QuickActionsCard(state, vm, openWorkbench = openWorkbench)
         NewObjectiveCard(
             goal = goal,
             onGoalChange = { goal = it.take(8_000) },

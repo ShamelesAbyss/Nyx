@@ -59,7 +59,7 @@ class CombinedDevelopmentBedrockTest {
         val terminal = fixture.terminal(project, approval)
         assertFalse(terminal.names.contains("terminal_run"))
         val result = fixture.engine(provider, terminal, approval).resumeAfterReview(CombinedHostFixture.OBJECTIVE, fixture.agent, SchedulingPolicy(), ExecutionControl())
-        assertEquals("Engine rejected real chain: ${result.error}; ${fixture.db.events.map { it.kind to it.detail }}", "completed", result.status)
+        assertEquals("Engine rejected real chain: ${result.error}; actual processes ${fixture.executor.runs.map { listOf(it.identity.operationKind, it.exit, it.startedAt, it.finishedAt) }}; ${fixture.db.events.map { it.kind to it.detail }}", "completed", result.status)
         assertEquals(fixed, File(project, "Main.kt").readText())
         assertEquals(1, provider.requests.size)
         val fixedRuns = fixture.executor.runs.filter { it.identity.operationKind.startsWith("project_run_") }
@@ -225,17 +225,18 @@ internal class CombinedHostFixture(val root: File) {
             "fixed ${kind.name}", TerminalResultKind.SUCCEEDED, 0, index * 10L, index * 10L + 5)
     }
     class HostExecutor : TerminalToolExecutor {
-        data class Run(val id: String, val identity: TerminalCommandIdentity, val exit: Int, val stdout: String, val stderr: String)
+        data class Run(val id: String, val identity: TerminalCommandIdentity, val exit: Int, val stdout: String, val stderr: String, val startedAt: Long, val finishedAt: Long)
         val runs = mutableListOf<Run>()
         override suspend fun run(command: String, environment: TerminalEnvironment, workingDirectory: String, timeoutSeconds: Long, useTimeoutBinary: Boolean): TerminalCommandResult = coroutineScope {
             val dispatch = requireNotNull(currentCoroutineContext()[TerminalCommandDispatchScope])
             val request = ControlledShell.request(command, TerminalEnvironment.DEBIAN_PROOT, workingDirectory, timeoutSeconds, useTimeoutBinary)
+            val startedAt = System.currentTimeMillis()
             val process = ProcessBuilder(listOf(request.commandPath) + request.arguments).apply { environment()["JAVA_HOME"] = "/usr/lib/jvm/java-21-openjdk-amd64" }.start()
             val stdout = async(Dispatchers.IO) { process.inputStream.bufferedReader().readText() }
             val stderr = async(Dispatchers.IO) { process.errorStream.bufferedReader().readText() }
             val exit = withContext(Dispatchers.IO) { process.waitFor() }
             val out = stdout.await(); val err = stderr.await()
-            runs += Run(dispatch.operationId, dispatch.identity, exit, out, err)
+            runs += Run(dispatch.operationId, dispatch.identity, exit, out, err, startedAt, System.currentTimeMillis())
             TerminalCommandResult(dispatch.operationId, if (exit == 0) TerminalResultKind.SUCCEEDED else TerminalResultKind.PROCESS_EXIT, exit, out, err)
         }
     }
@@ -262,6 +263,7 @@ internal fun <T> allocate(type: Class<T>): T {
 internal class HostDatabase private constructor() : NyxDatabase() {
     lateinit var file: File
     lateinit var objective: ObjectiveEntity
+    lateinit var additionalObjectives: MutableMap<String, ObjectiveEntity>
     lateinit var tasks: MutableList<ObjectiveTaskEntity>
     lateinit var events: MutableList<ObjectiveEventEntity>
     lateinit var evidence: MutableList<TaskEvidenceEntity>
@@ -290,7 +292,7 @@ internal class HostDatabase private constructor() : NyxDatabase() {
     }
     companion object {
         fun create(file: File): HostDatabase = allocate(HostDatabase::class.java).apply {
-            this.file = file; objective = ObjectiveEntity(CombinedHostFixture.OBJECTIVE, "Fixture", "Inspect project", status = "paused")
+            this.file = file; additionalObjectives = mutableMapOf(); objective = ObjectiveEntity(CombinedHostFixture.OBJECTIVE, "Fixture", "Inspect project", status = "paused")
             tasks = mutableListOf(); events = mutableListOf(); evidence = mutableListOf(); contexts = mutableListOf()
             if (file.exists()) {
                 val saved = JSONObject(file.readText()); val o = saved.getJSONObject("objective")
@@ -302,7 +304,7 @@ internal class HostDatabase private constructor() : NyxDatabase() {
             }
             objectiveProxy = proxy(ObjectiveDao::class.java) { name, a ->
                 when (name) {
-                    "getObjective" -> objective.takeIf { it.id == a[0] }
+                    "getObjective" -> objective.takeIf { it.id == a[0] } ?: additionalObjectives[a[0]]
                     "getTasks" -> tasks.filter { it.objectiveId == a[0] }.sortedBy { it.ordinal }
                     "getTask" -> tasks.singleOrNull { it.id == a[0] }
                     "upsertObjective" -> { objective = a[0] as ObjectiveEntity; persist(); Unit }

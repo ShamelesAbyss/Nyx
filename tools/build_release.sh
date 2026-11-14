@@ -15,7 +15,7 @@ preflight() {
   python3 tools/check_release_integrity.py --self-test
   python3 tools/check_release_integrity.py --check-repository
   python3 tools/check_release_integrity.py --no-apk \
-    --delivery-file NYX-v0.9.0.apk --delivery-file NYX-Source-v0.9.0.zip \
+    --delivery-file NYX-v0.9.1.apk --delivery-file NYX-Source-v0.9.1.zip \
     --release-doc CHANGELOG.md --release-doc BUILD.md
   command -v kotlinc >/dev/null || { echo 'Real kotlinc on PATH is required; fixture skips are not compiler acceptance.' >&2; exit 1; }
   kotlinc -version
@@ -30,7 +30,7 @@ verify_built() {
     --android-test-apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
     --sdk-root "$ANDROID_HOME" --report-dir "$OUT/artifact-checks" "${signer[@]}"
   python3 tools/check_release_integrity.py --apk app/build/outputs/apk/debug/app-debug.apk \
-    --delivery-file NYX-v0.9.0.apk --delivery-file NYX-Source-v0.9.0.zip --release-doc CHANGELOG.md
+    --delivery-file NYX-v0.9.1.apk --delivery-file NYX-Source-v0.9.1.zip --release-doc CHANGELOG.md
 }
 package_built() {
   # Packaging is separate so a parent can perform its own combined clean build.
@@ -39,10 +39,10 @@ package_built() {
   [[ ! -e "$OUT" ]] || { echo "Refusing to overwrite output: $OUT" >&2; exit 1; }
   mkdir -p "$OUT"
   verify_built
-  cp app/build/outputs/apk/debug/app-debug.apk "$OUT/NYX-v0.9.0.apk"
-  cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$OUT/NYX-v0.9.0-androidTest.apk"
-  python3 tools/check_release_integrity.py --make-source "$OUT/NYX-Source-v0.9.0.zip"
-  (cd "$OUT" && sha256sum NYX-v0.9.0.apk NYX-v0.9.0-androidTest.apk NYX-Source-v0.9.0.zip > NYX-v0.9.0-SHA256SUMS.txt)
+  cp app/build/outputs/apk/debug/app-debug.apk "$OUT/NYX-v0.9.1.apk"
+  cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$OUT/NYX-v0.9.1-androidTest.apk"
+  python3 tools/check_release_integrity.py --make-source "$OUT/NYX-Source-v0.9.1.zip"
+  (cd "$OUT" && sha256sum NYX-v0.9.1.apk NYX-v0.9.1-androidTest.apk NYX-Source-v0.9.1.zip > NYX-v0.9.1-SHA256SUMS.txt)
   python3 tools/check_release_integrity.py --verify-delivery-dir "$OUT"
 }
 case "$MODE" in

@@ -1,0 +1,145 @@
+{
+  "release": "0.9.1",
+  "versionCode": 24,
+  "scope": "WSL Linux real controlled processes/files; Android Context/DAO/provider fixtures. No physical device or real model benchmark.",
+  "suites": 133,
+  "jvm": {
+    "tests": 1198,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "quickActionTests": 16,
+  "cleanBuild": "2m 35s",
+  "metrics": {
+    "TEST": {
+      "events": [
+        {
+          "phase": "permission_validated",
+          "elapsedNanos": 16134,
+          "objectiveElapsedWallMillis": 6,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "task_created",
+          "elapsedNanos": 179112,
+          "objectiveElapsedWallMillis": 7,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "execution_dispatch",
+          "elapsedNanos": 840547,
+          "objectiveElapsedWallMillis": 7,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "operation_dispatch",
+          "elapsedNanos": 2514656,
+          "objectiveElapsedWallMillis": 9,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "first_verified_result",
+          "elapsedNanos": 43970479,
+          "objectiveElapsedWallMillis": 50,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "final_completed",
+          "elapsedNanos": 45845705,
+          "objectiveElapsedWallMillis": 52,
+          "planningInferenceRequests": 0
+        }
+      ],
+      "timeToFirstVerifiedActionRunMillis": 43.970479
+    },
+    "INSPECT": {
+      "events": [
+        {
+          "phase": "permission_validated",
+          "elapsedNanos": 10965,
+          "objectiveElapsedWallMillis": 5,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "task_created",
+          "elapsedNanos": 163583,
+          "objectiveElapsedWallMillis": 5,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "execution_dispatch",
+          "elapsedNanos": 755753,
+          "objectiveElapsedWallMillis": 5,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "operation_dispatch",
+          "elapsedNanos": 1905212,
+          "objectiveElapsedWallMillis": 6,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "first_verified_result",
+          "elapsedNanos": 37601248,
+          "objectiveElapsedWallMillis": 42,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "final_completed",
+          "elapsedNanos": 39233229,
+          "objectiveElapsedWallMillis": 44,
+          "planningInferenceRequests": 0
+        }
+      ],
+      "timeToFirstVerifiedActionRunMillis": 37.601248
+    },
+    "ARTIFACT": {
+      "events": [
+        {
+          "phase": "permission_validated",
+          "elapsedNanos": 16680,
+          "objectiveElapsedWallMillis": 18,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "task_created",
+          "elapsedNanos": 190619,
+          "objectiveElapsedWallMillis": 18,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "execution_dispatch",
+          "elapsedNanos": 587043,
+          "objectiveElapsedWallMillis": 19,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "operation_dispatch",
+          "elapsedNanos": 1928644,
+          "objectiveElapsedWallMillis": 20,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "first_verified_result",
+          "elapsedNanos": 4391672,
+          "objectiveElapsedWallMillis": 22,
+          "planningInferenceRequests": 0
+        },
+        {
+          "phase": "final_completed",
+          "elapsedNanos": 5994431,
+          "objectiveElapsedWallMillis": 24,
+          "planningInferenceRequests": 0
+        }
+      ],
+      "timeToFirstVerifiedActionRunMillis": 4.391672
+    }
+  },
+  "modelPlannedComparison": "Deterministic provider fixture only; ordinary planner still makes planning requests. No real-model/device latency comparison available.",
+  "baseline": "8d46f8720f37af3bfec607c5abb506fb23b9e843",
+  "establishedSigner": "aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55",
+  "localBuildSigner": "85c5ec6f1483b010f4b864f2c56d5821eb56c0877ff2eb40d236b2d1f1c67747",
+  "publication": "BLOCKED: established signing material unavailable. Local APKs are verification only.",
+  "buildLogSha256": "379d079415c90bb3e8093df25f98d0bcd0393c032492cfaa8047cf8e18600966"
+}

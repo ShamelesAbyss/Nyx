@@ -90,6 +90,8 @@ class ObjectiveExecutionEngine(
     // Host regression seam; production continues to use the existing Room transaction owner.
     private val objectiveTransaction: suspend (suspend () -> Unit) -> Unit = { block -> database.withTransaction { block() } },
 ) {
+    private var quickAction: QuickAction? = null
+    private var quickStartedNanos = 0L
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
     private var activeRunId: String? = suppliedRunId
@@ -110,6 +112,7 @@ class ObjectiveExecutionEngine(
         policy: SchedulingPolicy,
         control: ExecutionControl,
     ): ObjectiveEntity {
+        quickAction = null
         activeRunId = suppliedRunId ?: "run-${UUID.randomUUID()}"
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
         val session = sessions.create(objective, agent)
@@ -166,6 +169,45 @@ class ObjectiveExecutionEngine(
         } catch (e: Exception) {
             planningNeedsAttention(objectiveId, PlanningRecovery.classify(e))
         }
+    }
+
+    /** Same scheduler, records, task verifier and recovery; the selected contract replaces planning. */
+    suspend fun executeQuickAction(objectiveId: String, action: QuickAction, agent: AgentEntity,
+                                   policy: SchedulingPolicy, control: ExecutionControl): ObjectiveEntity {
+        activeRunId = suppliedRunId ?: "run-${UUID.randomUUID()}"
+        quickStartedNanos = System.nanoTime()
+        quickAction = action.validate(objectiveId)
+        planningStrategy = PlanningStrategy.DIRECT
+        incrementalDone = true
+        try {
+            control.checkpoint()
+            require(!workbenchApproval.enabled) { "Quick Actions cannot inherit Workbench write/research approval." }
+            require(dao.getTasks(objectiveId).isEmpty()) { "Review existing tasks before retrying." }
+            require(action.type == QuickActionType.VERIFY_ARTIFACT || (terminalTools as? TerminalAgentTools)?.workspaceRoot == action.workspace) { "Authorized project tools unavailable." }
+            quickTiming(objectiveId, null, "permission_validated")
+            val task = taskEntity(objectiveId, action.task(agent.id), 0, now()).copy(maxAttempts = 1)
+            dao.upsertTask(task)
+            quickTiming(objectiveId, task.id, "task_created")
+            event(objectiveId, task.id, "quick_action", action.toJson().toString(), status = "completed")
+            val objective = requireNotNull(dao.getObjective(objectiveId))
+            val session = sessions.create(objective, agent)
+            saveObjective(objective.copy(status = "running", updatedAt = now(), error = null))
+            quickTiming(objectiveId, task.id, "execution_dispatch")
+            val result = execute(objectiveId, agent, session, policy, control)
+            quickTiming(objectiveId, task.id, "final_" + result.status)
+            return result
+        } catch (cancel: CancellationException) {
+            withContext(NonCancellable) { markPaused(objectiveId, "Quick Action interrupted; no automatic replay.") }
+            throw cancel
+        } catch (error: Exception) {
+            return needsAttention(objectiveId, safeError(error))
+        }
+    }
+
+    private suspend fun quickTiming(objectiveId: String, taskId: String?, phase: String) {
+        event(objectiveId, taskId, "quick_timing", JSONObject().put("phase", phase)
+            .put("elapsedNanos", System.nanoTime() - quickStartedNanos)
+            .put("objectiveElapsedWallMillis", now() - requireNotNull(dao.getObjective(objectiveId)).createdAt).put("planningInferenceRequests", 0).toString())
     }
 
     /**
@@ -336,6 +378,10 @@ class ObjectiveExecutionEngine(
     ): ObjectiveEntity {
         activeRunId = suppliedRunId ?: "run-${UUID.randomUUID()}"
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
+        require(dao.observeEvents(objectiveId).first().none { it.kind in setOf("quick_action", "quick_submission", "quick_action_admitted") ||
+                it.kind == "execution_config" && JSONObject(it.detail ?: "{}").has(QuickAction.KEY) }) {
+            "Quick Action interruptions require a new explicit selection; completed or uncertain work is never replayed."
+        }
         val session = sessions.create(objective, agent)
         val tasks = dao.getTasks(objectiveId)
         val savedPlanning = dao.observeEvents(objectiveId).first().filter { it.kind == "planning_checkpoint" || it.kind == "planning_continuation_reserved" }
@@ -600,7 +646,7 @@ class ObjectiveExecutionEngine(
         val objectiveTools: AgentToolProvider = CompositeToolProvider(
             listOfNotNull(builtinProvider, terminalTools, extraTools),
         )
-        val approvedSkills = if (terminalTools != null) {
+        val approvedSkills = if (terminalTools != null && quickAction == null) {
             val project = (terminalTools as? TerminalAgentTools)?.inspectProject()
             val preconditions = setOf(SkillPrecondition.WORKSPACE_SELECTED, SkillPrecondition.TERMINAL_AVAILABLE) +
                 (if (project?.ready == true) setOf(SkillPrecondition.PROJECT_DETECTED) else emptySet())
@@ -627,10 +673,17 @@ class ObjectiveExecutionEngine(
             terminalAvailable = terminalTools != null,
             combinedDevelopment = workbenchApproval.combinedDevelopment != null,
         )
-        val scopedAllowed = toolScope.allowed
+        val quickScope = quickAction?.let { selected ->
+            when (selected.type) {
+                QuickActionType.INSPECT_PROJECT -> setOf("project_inspect")
+                QuickActionType.RUN_TESTS -> setOf("test_run")
+                QuickActionType.VERIFY_ARTIFACT -> emptySet()
+            }
+        }
+        val scopedAllowed = quickScope ?: toolScope.allowed
         if (approvedSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", approvedSkills.joinToString { "${it.manifest.id}@${it.manifest.version}" })
         if (arsenalSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", arsenalSkills.joinToString { "${it.id}@${it.version}" })
-        event(objectiveId, task.id, "tool_scope", "${toolScope.reason} Enabled: ${scopedAllowed.sorted().joinToString(", ").ifBlank { "none" }}.")
+        event(objectiveId, task.id, "tool_scope", "${if (quickScope != null) "Only the explicitly selected Quick Action capability is authorized." else toolScope.reason} Enabled: ${scopedAllowed.sorted().joinToString(", ").ifBlank { "none" }}.")
         val role = WorkerRoles.forTask(task.workerKind, task.title)
         event(objectiveId, task.id, "delegation_role", "${role.label} worker assigned to \"${task.title.take(80)}\".")
         val spec = AgentSpec(
@@ -660,7 +713,24 @@ class ObjectiveExecutionEngine(
         objectiveTools.drainEvidence()
         (terminalTools as? TerminalAgentTools)?.drainProjectExecutions()
         val outcome = try {
-            if (task.workerKind == "development") {
+            if (quickAction != null) {
+                val action = requireNotNull(quickAction)
+                control.checkpoint()
+                quickTiming(objectiveId, task.id, "operation_dispatch")
+                val observed = QuickActionOperation.run(action, toolContext, terminalTools as? TerminalAgentTools,
+                    java.io.File(app.filesDir, "workbench")) { source -> dao.getObjective(source) != null }
+                observed.evidence.forEach { item ->
+                    event(objectiveId, task.id, "quick_operation_evidence", JSONObject().put("tool", item.toolName)
+                        .put("exitCode", item.exitCode ?: JSONObject.NULL).put("startedAt", item.startedAt)
+                        .put("finishedAt", item.finishedAt).put("objectiveId", item.objectiveId).put("taskId", item.taskId).toString(),
+                        item.toolName, "{}", item.stdout + "\n" + item.stderr)
+                }
+                observed.evidence.minOfOrNull { it.startedAt }?.let { first ->
+                    event(objectiveId, task.id, "quick_first_operation", JSONObject().put("observedStartedAt", first)
+                        .put("clock", "wall; tool observation, not model timing").toString())
+                }
+                observed
+            } else if (task.workerKind == "development") {
                 val concrete = terminalTools as? TerminalAgentTools ?: error("Development requires an explicitly approved Termux workspace and available toolchain.")
                 require(scopedAllowed.containsAll(setOf("file_read", "file_write", "build_run", "test_run"))) {
                     "Development requires approved source access and fixed build/test capabilities."
@@ -724,6 +794,12 @@ class ObjectiveExecutionEngine(
             withContext(NonCancellable) { writer.join() }
         }
         if (task.workerKind != "development") projectExecutions = (terminalTools as? TerminalAgentTools)?.drainProjectExecutions().orEmpty()
+        if (quickAction != null) projectExecutions.forEach { actual ->
+            event(objectiveId, task.id, "quick_project_execution", JSONObject().put("operationId", actual.operationId)
+                .put("command", actual.command).put("kind", actual.kind.name).put("workspace", actual.workspaceRoot)
+                .put("objectiveId", actual.objectiveId).put("taskId", actual.taskId).put("exitCode", actual.exitCode ?: JSONObject.NULL)
+                .put("resultKind", actual.resultKind.name).put("startedAt", actual.startedAt).put("finishedAt", actual.finishedAt).toString())
+        }
         control.checkpoint()
 
         check(outcome.evidence.all { it.objectiveId == objectiveId && it.taskId == task.id }) {
@@ -746,7 +822,11 @@ class ObjectiveExecutionEngine(
             EvidenceSpec(EvidenceKind.CHECKSUM_SHA256, target = path, expected = json.getString("sha256"),
                 description = "Actual tool write digest checked against current registered bytes")
         }
-        val mandatorySpecs = (if (task.workerKind == "development") listOf(EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0")) else emptyList()) + artifactChecks
+        val retainedCheck = quickAction?.takeIf { it.type == QuickActionType.VERIFY_ARTIFACT }?.let {
+            listOf(EvidenceSpec(EvidenceKind.CHECKSUM_SHA256, target = "selected-retained-artifact", expected = it.sha256,
+                description = "Current selected source objective artifact bytes; not new task write evidence or factual accuracy"))
+        }.orEmpty()
+        val mandatorySpecs = retainedCheck + (if (task.workerKind == "development") listOf(EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0")) else emptyList()) + artifactChecks
         require(task.workerKind == "inference" || specs.isNotEmpty() || mandatorySpecs.isNotEmpty()) { "Tool task has no declared evidence; no completion can be established." }
         val processEvidence = CombinedExecutionVerification.processEvidence(outcome.evidence, projectExecutions)
         val lastExit = processEvidence.lastOrNull { it.exitCode != null }
@@ -757,7 +837,14 @@ class ObjectiveExecutionEngine(
             agentOutput = outcome.result,
             fileExists = { path -> fileProbe?.exists(path) ?: false },
             fileText = { path, max -> fileProbe?.read(path, max) },
-            checksum = { path -> fileProbe?.sha256(path) },
+            checksum = { path ->
+                val selected = quickAction?.takeIf { it.type == QuickActionType.VERIFY_ARTIFACT && path == "selected-retained-artifact" }
+                if (selected == null) fileProbe?.sha256(path) else {
+                    require(dao.getObjective(selected.sourceObjectiveId) != null) { "Source objective was removed." }
+                    val retained = WorkbenchStore(java.io.File(app.filesDir, "workbench"), selected.sourceObjectiveId)
+                    WorkbenchStore.sha256(retained.readArtifact(selected.artifactId))
+                }
+            },
         )
         val report = CombinedExecutionVerification.verify(specs, mandatorySpecs, observation, toolFailures)
 
@@ -781,6 +868,7 @@ class ObjectiveExecutionEngine(
         )
 
         if (report.passed) {
+            if (quickAction != null) quickTiming(objectiveId, task.id, "first_verified_result")
             for (write in artifactWrites) {
                 val artifactJson = JSONObject(write.stdout)
                 event(objectiveId, task.id, "workbench_artifact_verified", JSONObject()

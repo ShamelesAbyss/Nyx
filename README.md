@@ -24,6 +24,9 @@
 
 ---
 
+> [!NOTE]
+> **v0.9.1 — Project Ignition source candidate** (`com.nyx.ai`, versionCode 24): three explicitly approved Quick Actions start fixed operations without model planning. Clean host verification passed **1,198 JVM tests (zero failures/errors/skips)** and assembled both APKs. The established signing key is unavailable on this desktop, so publication remains blocked; Android/device acceptance is unverified. **The current public stable download remains v0.9.0 below.** See [Ignition release notes](RELEASE_NOTES_v0.9.1.md) and [implementation/verification report](V091_IMPLEMENTATION_REPORT.md).
+
 > [!IMPORTANT]
 > **Latest public release: v0.9.0 — Project Bedrock.** Package `com.nyx.ai`, versionCode 23; the established debug signing identity and pinned API 37/ARM64 toolchain remain unchanged. The clean build passed **1,182 JVM tests across 132 suites**, with zero failures, errors or skips, and independent APK identity, signing, ARM64 and 16 KB ZIP/ELF checks passed. Physical Android execution and hosted CI remain unverified; this is not a production-signed Play artifact.
 
@@ -61,12 +64,12 @@ NYX is not a chat wrapper around a hosted API. It is a local-first Android works
 
 It is also a private inference workstation. Run a quantized GGUF through the bundled llama.cpp CPU runtime, connect to a managed Ollama server, or point NYX at any OpenAI-compatible endpoint. Chat, agents, workflows, and autonomous objectives all resolve through the same provider layer, so no single cloud vendor is the only path.
 
-**Project Workbench adds persistent work products, not just another planning strategy.** Research sources and selected documents become retained inputs; generated files become owned, checksum-verified artifacts with read-only preview, save and share controls. It uses NYX's existing objective engine, task history, checkpoints and verifier. Terminal development remains a separate objective path; one Workbench objective does not yet compile a terminal project and produce app-private deliverables together.
+**Project Workbench adds persistent work products, not just another planning strategy.** Research sources and selected documents become retained inputs; generated files become owned, checksum-verified artifacts with read-only preview, save and share controls. It uses NYX's existing objective engine, task history, checkpoints and verifier. An optional, separately approved combined development path runs fixed build/tests in the original project and registers only selected output snapshots as Workbench artifacts.
 
 | | |
 | :--- | :--- |
 | **Package** | `com.nyx.ai` |
-| **Source candidate** | `0.9.0` (versionCode 23); public release remains `0.8.9` |
+| **Source candidate** | `0.9.1` (versionCode 24), Project Ignition candidate; public stable remains `0.9.0` |
 | **Android** | 8.0+ / API 26–37 |
 | **Architecture** | `arm64-v8a` |
 | **Inference** | Native GGUF CPU · Ollama · OpenAI-compatible `/v1` |
@@ -75,6 +78,10 @@ It is also a private inference workstation. Run a quantized GGUF through the bun
 ---
 
 ## ✨ Current capabilities
+
+### ⚡ Quick Actions — Project Ignition source candidate
+
+In **Autonomy → Objectives**, explicitly select **Inspect project**, **Run approved project tests**, or **Verify Workbench output**, select its authorized project or retained artifact, review permissions and start. The existing objective engine creates a bounded deterministic task; no model planning or inference occurs. Inspection is read-only; tests use the discovered fixed command and real exit/output; artifact verification checks existing retained bytes and ownership, without claiming a new file or factual accuracy. Missing permissions/tools fail visibly, and interruption requires a new approval. Submission/dispatch/verified-result timing and task evidence are recorded; no real-model or Android speedup is claimed. See [limits and verification](V091_IMPLEMENTATION_REPORT.md).
 
 ### 🛠️ Project Workbench
 
@@ -431,7 +438,7 @@ If a LAN server is used on Android 17, the system will also ask for the local-ne
 2. Optionally choose one supported text document and approve the exact public HTTPS URLs to collect. Review the request and any policy prompts before starting.
 3. Inspect the retained source records, task evidence and verified output. Preview the file as inert text, **Save as** to a location you pick, or **Share** its checked snapshot. Reopen the objective to review retained results; review interruptions explicitly rather than assuming they resumed.
 
-The new-objective UI starts with one import draft and one required output; the engine can track up to eight required files. Keep requests small and review generated content yourself. Workbench and terminal-development objectives are currently separate; Android handoff and real-model execution still need device validation.
+The new-objective UI starts with one import draft and one required output; the engine can track up to eight required files. Keep requests small and review generated content yourself. Workbench also offers an explicit combined development approval for the original project and exact selected outputs; Android handoff and real-model execution still need device validation.
 
 See the [user guide](USER_GUIDE.md) for the full setup and safety boundaries.
 
@@ -506,6 +513,7 @@ The long-term vision is an autonomous assistant that runs on hardware you own, u
 
 | Version | Codename | Focus |
 | :--- | :--- | :--- |
+| **v0.9.1 source candidate** | **Project Ignition** | Explicit deterministic Quick Actions, fixed project tools, retained-artifact verification and timing; publication/signing gated |
 | **[v0.9.0](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.0)** | **Project Bedrock** | Hardened terminal/autonomy boundaries, exact capability evidence, approved development-to-Workbench artifacts, conservative recovery and reproducible verification |
 | [v0.8.9](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9) | Project Workbench | Objective-specific private workspaces, retained research/imports, validated deliverables, checksums and Android preview/save/share interfaces |
 | **[v0.8.8](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.8)** | **Project Insight** | Capability-aware planning strategies, direct start for simple goals, bounded incremental continuation, reasoning-stream visibility |
@@ -541,6 +549,8 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 
 | Document | Contents |
 | :--- | :--- |
+| [RELEASE_NOTES_v0.9.1.md](RELEASE_NOTES_v0.9.1.md) | Ignition source candidate: Quick Actions, evidence and publication boundaries |
+| [V091_IMPLEMENTATION_REPORT.md](V091_IMPLEMENTATION_REPORT.md) | Ignition implementation, actual verification and signing/device limitations |
 | [BUILD.md](BUILD.md) | Toolchain, reproducible builds, tests, signing, packaging |
 | [USER_GUIDE.md](USER_GUIDE.md) | Setup, models, agents, objectives, terminal, troubleshooting |
 | [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md) | What was built, what was verified, what remains |

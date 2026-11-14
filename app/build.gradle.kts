@@ -15,8 +15,8 @@ android {
         applicationId = "com.nyx.ai"
         minSdk = 26
         targetSdk = 37
-        versionCode = 23
-        versionName = "0.9.0"
+        versionCode = 24
+        versionName = "0.9.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         ndk { abiFilters += "arm64-v8a" }
