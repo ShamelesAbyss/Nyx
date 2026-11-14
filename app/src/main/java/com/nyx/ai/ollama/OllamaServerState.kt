@@ -54,6 +54,11 @@ data class OllamaServerState(
     val sessionPid: Int? = null,
     val launchMode: OllamaLaunchMode? = null,
     val sessionToken: String = "",
+    /** A persisted guest launch exists and has not been proven healthy or released. */
+    val recoveryRequired: Boolean = false,
+    /** Recovery could not prove absence; Start must remain unavailable. */
+    val recoveryBlocked: Boolean = false,
+    val recoveryState: OllamaRecoveryState? = null,
 ) {
     val isRunning: Boolean get() = status == OllamaServerStatus.RUNNING
 
@@ -70,6 +75,9 @@ data class OllamaServerState(
     /** A detached session can be stopped even when the guest PID record is missing. */
     val canStopSession: Boolean
         get() = launchMode == OllamaLaunchMode.PROOT_DETACHED && sessionPid != null
+
+    /** Start is offered only when no unresolved ownership fence exists. */
+    val canStart: Boolean get() = !recoveryRequired && !recoveryBlocked && !isRunning && !isBusy
 
     val targetLabel: String get() = target.label
 

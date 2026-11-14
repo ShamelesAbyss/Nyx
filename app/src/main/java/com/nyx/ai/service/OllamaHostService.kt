@@ -137,7 +137,7 @@ class OllamaHostService : Service() {
         var consecutiveFailures = 0
         while (true) {
             delay(SUPERVISE_INTERVAL_MS)
-            val next = runCatching { manager.detect() }.getOrElse { error ->
+            val next = runCatching { manager.refresh() }.getOrElse { error ->
                 if (error is CancellationException) throw error
                 consecutiveFailures++
                 operations.withOwner(run) { updateNotification("Recovering · ${error.message?.take(140) ?: "state check failed"}") }
@@ -278,7 +278,7 @@ class OllamaHostService : Service() {
         const val EXTRA_ENVIRONMENT = "terminal_environment"
         private const val CHANNEL_ID = "nyx_ollama_host"
         private const val NOTIFICATION_ID = 4102
-        private const val SUPERVISE_INTERVAL_MS = 20_000L
+        private const val SUPERVISE_INTERVAL_MS = 30_000L
 
         fun start(
             context: Context,

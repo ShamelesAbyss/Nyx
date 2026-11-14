@@ -231,16 +231,71 @@ class OllamaServerManager(
                 targetResolved = true
             }
         }
+        alignTargetWithOwnershipEvidence()
         savedSession = readSavedSession()
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val owned = ownsRecord(snapshot)
-        if (saved != null && isDefinitelyStale(snapshot.ownership)) {
-            // The record no longer names a live server NYX started; drop it rather than keep a
-            // stale kill target around.
-            clearSaved()
-        }
         val healthy = probeApi()
+        var recoveredStale = false
+
+        if (hasGuestLaunchEvidence() && !owned) {
+            val outcome = assessAndMaybeClear(snapshot, healthy)
+            if (outcome?.cleared == true) {
+                recoveredStale = true
+                savedSession = null
+            } else {
+                val assessment = outcome?.assessment ?: OllamaRecoveryAssessment(
+                    OllamaRecoveryState.AMBIGUOUS_OWNERSHIP,
+                    false,
+                    unresolvedLaunchMessage(),
+                )
+                if (healthy) {
+                    val models = fetchModels()
+                    update {
+                        it.copy(
+                            status = OllamaServerStatus.RUNNING,
+                            pid = null,
+                            models = models,
+                            startedByNyx = false,
+                            message = assessment.detail,
+                            logTail = snapshot.logTail,
+                            target = target,
+                            recoveryRequired = true,
+                            recoveryBlocked = false,
+                            recoveryState = assessment.state,
+                        )
+                    }
+                    return state.value
+                }
+                val status = if (assessment.state == OllamaRecoveryState.VERIFIED_LIVE_SESSION &&
+                    savedSession?.mode == OllamaLaunchMode.PROOT_DETACHED &&
+                    savedSession?.sessionPid != null
+                ) {
+                    OllamaServerStatus.STARTING
+                } else {
+                    OllamaServerStatus.ERROR
+                }
+                update {
+                    it.copy(
+                        status = status,
+                        pid = null,
+                        models = emptyList(),
+                        startedByNyx = false,
+                        message = assessment.detail,
+                        logTail = snapshot.logTail,
+                        rssKb = null,
+                        uptimeMillis = null,
+                        target = target,
+                        recoveryRequired = true,
+                        recoveryBlocked = status == OllamaServerStatus.ERROR,
+                        recoveryState = assessment.state,
+                    )
+                }
+                return state.value
+            }
+        }
+
         if (healthy) {
             val models = fetchModels()
             val message = when {
@@ -262,6 +317,9 @@ class OllamaServerManager(
                     target = target,
                     architecture = state.value.architecture,
                     version = state.value.version,
+                    recoveryRequired = hasGuestLaunchEvidence(),
+                    recoveryBlocked = false,
+                    recoveryState = if (hasGuestLaunchEvidence()) OllamaRecoveryState.HEALTHY_EXTERNAL else null,
                 )
             }
             return state.value
@@ -282,6 +340,9 @@ class OllamaServerManager(
                     logTail = snapshot.logTail,
                     rssKb = snapshot.rssKb,
                     uptimeMillis = snapshot.uptimeMillis,
+                    recoveryRequired = hasGuestLaunchEvidence(),
+                    recoveryBlocked = false,
+                    recoveryState = if (hasGuestLaunchEvidence()) OllamaRecoveryState.HEALTHY_OWNED else null,
                 )
             }
             return state.value
@@ -318,12 +379,11 @@ class OllamaServerManager(
                 pid = null,
                 models = emptyList(),
                 startedByNyx = false,
-                message = if (hasGuestLaunchEvidence()) {
-                    unresolvedLaunchMessage()
-                } else if (verifiedDetachedSession) {
-                    "A verified PRoot session is alive, but its guest Ollama API is not ready yet. NYX will not start a second server."
-                } else {
-                    discovery.detail
+                message = when {
+                    recoveredStale -> "Stale PRoot ownership was cleared after verifying that no protected process or session remains. Start is available."
+                    hasGuestLaunchEvidence() -> unresolvedLaunchMessage()
+                    verifiedDetachedSession -> "A verified PRoot session is alive, but its guest Ollama API is not ready yet. NYX will not start a second server."
+                    else -> discovery.detail
                 },
                 logTail = snapshot.logTail,
                 rssKb = null,
@@ -332,6 +392,9 @@ class OllamaServerManager(
                 installations = discovery.installations,
                 architecture = selected?.detection?.architecture.orEmpty(),
                 version = selected?.detection?.version.orEmpty(),
+                recoveryRequired = hasGuestLaunchEvidence(),
+                recoveryBlocked = hasGuestLaunchEvidence(),
+                recoveryState = if (hasGuestLaunchEvidence()) OllamaRecoveryState.AMBIGUOUS_OWNERSHIP else null,
             )
         }
         return state.value
@@ -343,15 +406,55 @@ class OllamaServerManager(
         currentCoroutineContext().ensureActive()
         // Dispatch acknowledgement, missing PID, timeout or restart cannot release this fence.
         // Reconcile read-only: never select another namespace or replay a persistent launch.
+        alignTargetWithOwnershipEvidence()
         savedSession = readSavedSession()
         if (hasGuestLaunchEvidence()) {
             val existing = readSnapshot()
             val healthy = probeApi()
+            if (healthy) return adopt(apiHealthy = true, snapshot = existing)
             if (ownsRecord(existing)) {
                 existing.record?.let { saveRecord(it, startedByNyx = true) }
+                val status = ownedNotReadyStatus(existing.uptimeMillis)
+                update {
+                    it.copy(
+                        status = status,
+                        pid = existing.record?.pid,
+                        models = emptyList(),
+                        startedByNyx = true,
+                        message = "The NYX-started Ollama process is alive; NYX will not launch a duplicate. Stop it or Refresh to adopt it.",
+                        logTail = existing.logTail,
+                        rssKb = existing.rssKb,
+                        uptimeMillis = existing.uptimeMillis,
+                        recoveryRequired = true,
+                        recoveryBlocked = false,
+                        recoveryState = OllamaRecoveryState.HEALTHY_OWNED,
+                    )
+                }
+                return state.value
             }
-            if (healthy) return adopt(apiHealthy = true, snapshot = existing)
-            return fail(unresolvedLaunchMessage(), existing.logTail)
+            val outcome = assessAndMaybeClear(existing, apiHealthy = false)
+            if (outcome?.cleared != true) {
+                val assessment = outcome?.assessment ?: OllamaRecoveryAssessment(
+                    OllamaRecoveryState.AMBIGUOUS_OWNERSHIP,
+                    false,
+                    unresolvedLaunchMessage(),
+                )
+                update {
+                    it.copy(
+                        status = OllamaServerStatus.ERROR,
+                        pid = null,
+                        models = emptyList(),
+                        startedByNyx = false,
+                        message = assessment.detail,
+                        logTail = existing.logTail,
+                        recoveryRequired = true,
+                        recoveryBlocked = true,
+                        recoveryState = assessment.state,
+                    )
+                }
+                return state.value
+            }
+            savedSession = null
         }
         val discovery = discoverInstallations()
         val selected = discovery.selected
@@ -609,9 +712,8 @@ class OllamaServerManager(
         val record = waitForGuestPid()
         if (record == null) {
             val cleaned = stopOwnedSessionIfPossible()
-            if (cleaned) clearSession()
             return fail(
-                if (cleaned) {
+                if (cleaned.stopped) {
                     "The PRoot session was created, but the guest Ollama PID record did not appear. " +
                         "The managed session was stopped; check the guest log."
                 } else {
@@ -773,16 +875,33 @@ class OllamaServerManager(
     // ------------------------------------------------------------------ stop
 
     private suspend fun doStop(): OllamaServerState {
+        alignTargetWithOwnershipEvidence()
         savedSession = readSavedSession()
         val snapshot = readSnapshot()
         val saved = snapshot.record
         val ownedRecord = ownsRecord(snapshot)
         if (hasGuestLaunchEvidence() && !ownedRecord) {
-            if (stopOwnedSessionIfPossible()) {
-                clearSaved()
-            } else {
-                return fail("Stop refused: guest token/PID or session termination is unverified. ${unresolvedLaunchMessage()}", snapshot.logTail)
+            val sessionStop = stopOwnedSessionIfPossible(snapshot)
+            if (!sessionStop.stopped) {
+                return fail("Stop refused: ${sessionStop.detail}", snapshot.logTail)
             }
+            clearSaved()
+            update {
+                it.copy(
+                    status = OllamaServerStatus.STOPPED,
+                    pid = null,
+                    models = emptyList(),
+                    startedByNyx = false,
+                    message = sessionStop.detail,
+                    logTail = snapshot.logTail,
+                    rssKb = null,
+                    uptimeMillis = null,
+                    recoveryRequired = false,
+                    recoveryBlocked = false,
+                    recoveryState = null,
+                )
+            }
+            return state.value
         }
         val plan = OllamaLifecyclePolicy.planStop(
             startedByNyx = ownedRecord,
@@ -818,9 +937,10 @@ class OllamaServerManager(
                                 return fail("Stop remains unverified: shutdown evidence could not be committed.", snapshot.logTail)
                             }
                         }
-                        if (!stopOwnedSessionIfPossible()) {
+                        val sessionStop = stopOwnedSessionIfPossible(snapshot)
+                        if (!sessionStop.stopped) {
                             return fail(
-                                "The guest process ended, but PRoot session termination is unverified. Ownership evidence was retained; no session-tree signal or relaunch is allowed.",
+                                "The guest process ended, but PRoot session termination is unverified: ${sessionStop.detail} Ownership evidence was retained; no session-tree signal or relaunch is allowed.",
                                 readSnapshot().logTail,
                             )
                         }
@@ -876,9 +996,10 @@ class OllamaServerManager(
             }
 
             OllamaStopDecision.NOT_RUNNING -> {
-                if (!stopOwnedSessionIfPossible()) {
+                val sessionStop = stopOwnedSessionIfPossible(snapshot)
+                if (!sessionStop.stopped) {
                     return fail(
-                        "PRoot session termination is unverified. Ownership evidence was retained; NYX will not claim a clean stop or replay a launch.",
+                        "PRoot session termination is unverified: ${sessionStop.detail} Ownership evidence was retained; NYX will not claim a clean stop or replay a launch.",
                         snapshot.logTail,
                     )
                 }
@@ -1181,7 +1302,8 @@ class OllamaServerManager(
             .takeIf { it in 2..OllamaGuestRuntime.MAX_SESSION_PID }
         val start = prefs.getLong(targetKey(KEY_SESSION_START), -1L).takeIf { it >= 0L }
         val container = prefs.getString(targetKey(KEY_SESSION_CONTAINER), "").orEmpty()
-        return SavedOllamaSession(token, mode, pid, start, container)
+        val pendingAt = prefs.getLong(targetKey(KEY_SESSION_PENDING_AT), 0L).takeIf { it > 0L }
+        return SavedOllamaSession(token, mode, pid, start, container, pendingAt ?: 0L)
     }
 
     private fun guestEvidenceAliases(): List<String> {
@@ -1225,6 +1347,7 @@ class OllamaServerManager(
             .putInt(targetKey(KEY_SESSION_PID), 0)
             .putLong(targetKey(KEY_SESSION_START), -1L)
             .putString(targetKey(KEY_SESSION_CONTAINER), session.container)
+            .putLong(targetKey(KEY_SESSION_PENDING_AT), session.pendingAtMillis)
             .putBoolean(targetKey(KEY_GUEST_PROCESS_STOPPED), false)
             .commit()
         if (!committed) ownershipStorageUncertain = true
@@ -1243,6 +1366,7 @@ class OllamaServerManager(
             .putInt(targetKey(KEY_SESSION_PID), session.sessionPid ?: 0)
             .putLong(targetKey(KEY_SESSION_START), session.sessionStartTicks ?: -1L)
             .putString(targetKey(KEY_SESSION_CONTAINER), session.container)
+            .putLong(targetKey(KEY_SESSION_PENDING_AT), 0L)
             .commit()
         if (!committed) ownershipStorageUncertain = true
         check(committed) { "PRoot session identity could not be committed; pending ownership was retained." }
@@ -1264,6 +1388,7 @@ class OllamaServerManager(
             .remove(targetKey(KEY_SESSION_PID))
             .remove(targetKey(KEY_SESSION_START))
             .remove(targetKey(KEY_SESSION_CONTAINER))
+            .remove(targetKey(KEY_SESSION_PENDING_AT))
             .remove(targetKey(KEY_GUEST_PROCESS_STOPPED))
         if (!target.isHost && prefs.getString(KEY_GUEST_LAUNCH_FENCE, null) == target.guestAlias) {
             editor.remove(KEY_GUEST_LAUNCH_FENCE)
@@ -1274,32 +1399,268 @@ class OllamaServerManager(
         committed
     }
 
-    /**
-     * No PRoot tree signal is sent: proot-distro kill accepts a bare PID and has no atomic
-     * token/start-time guard. A separate preflight cannot make that side effect identity-safe.
-     * Unknown identity, failed probes and a live/reused session all refuse within one probe.
-     */
-    private suspend fun stopOwnedSessionIfPossible(): Boolean {
-        val session = savedSession ?: return !hasGuestLaunchEvidence()
-        if (target.isHost) return clearSession()
-        val pid = session.sessionPid ?: return false
-        if (session.sessionStartTicks == null || session.mode != OllamaLaunchMode.PROOT_DETACHED) return false
+    private data class SessionProbe(
+        val available: Boolean,
+        val alive: Boolean?,
+        val matches: Boolean,
+    )
+
+    private data class RecoveryOutcome(
+        val assessment: OllamaRecoveryAssessment,
+        val cleared: Boolean,
+    )
+
+    private data class SessionStopResult(
+        val stopped: Boolean,
+        val detail: String,
+    )
+
+    /** Keep the saved fence's guest namespace in view without selecting a different target. */
+    private fun alignTargetWithOwnershipEvidence() {
+        if (!hasGuestLaunchEvidence()) return
+        val alias = guestEvidenceAliases().singleOrNull() ?: return
+        OllamaTarget.guest(alias)?.let {
+            target = it
+            targetResolved = true
+        }
+    }
+
+    private suspend fun probeSavedSession(session: SavedOllamaSession): SessionProbe {
+        if (session.mode != OllamaLaunchMode.PROOT_DETACHED) return SessionProbe(false, null, false)
+        val pid = session.sessionPid ?: return SessionProbe(false, null, false)
+        val expectedStart = session.sessionStartTicks ?: return SessionProbe(false, null, false)
         val identity = hostIsolated(OllamaGuestRuntime.sessionStateScript(pid), STATE_TIMEOUT_SECONDS)
-        return OllamaPersistentOwnership.canReleaseSession(
-            session, target.guestAlias, prefs.getBoolean(targetKey(KEY_GUEST_PROCESS_STOPPED), false),
-            identity.isSuccess, identity.stdout,
-        ) && clearSession()
+        if (!identity.isSuccess) return SessionProbe(false, null, false)
+        when (OllamaProcess.markerValue(identity.stdout, "NYX_SESSION_ALIVE")) {
+            "0" -> return SessionProbe(true, false, false)
+            "1" -> Unit
+            else -> return SessionProbe(false, null, false)
+        }
+        val matches = OllamaPersistentOwnership.sessionMatchesToken(
+            identity.stdout,
+            session.container,
+            session.token,
+        ) && OllamaGuestRuntime.parseSessionStartTicks(identity.stdout) == expectedStart
+        return SessionProbe(true, true, matches)
+    }
+
+    private suspend fun probeTokenProcess(token: String): Boolean? {
+        val result = hostIsolated(OllamaGuestRuntime.tokenProcessProbeScript(token), STATE_TIMEOUT_SECONDS)
+        if (!result.isSuccess) return null
+        return OllamaGuestRuntime.parseTokenProcess(result.stdout)
+    }
+
+    private suspend fun assessAndMaybeClear(
+        snapshot: OllamaHostSnapshot,
+        apiHealthy: Boolean,
+    ): RecoveryOutcome? {
+        if (!hasGuestLaunchEvidence()) return null
+        val aliases = guestEvidenceAliases()
+        val alias = aliases.singleOrNull()
+        val session = savedSession?.takeIf { alias != null && it.container == alias }
+        val ambiguous = RecoveryOutcome(
+            OllamaRecoveryAssessment(
+                OllamaRecoveryState.AMBIGUOUS_OWNERSHIP,
+                false,
+                if (aliases.size > 1) {
+                    "Multiple guest launch namespaces are present. NYX cannot choose one safely."
+                } else {
+                    "The saved guest launch identity does not match the selected namespace."
+                },
+            ),
+            false,
+        )
+        if (alias == null || session == null || target.guestAlias != alias) return ambiguous
+
+        // Older candidates persisted a pending fence without a timestamp. Record the first
+        // observation, then require the same bounded grace period before releasing it.
+        var effectiveSession = session
+        if (session.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            session.sessionPid == null && session.pendingAtMillis <= 0L
+        ) {
+            val observedAt = System.currentTimeMillis()
+            val committed = prefs.edit()
+                .putLong(targetKey(KEY_SESSION_PENDING_AT), observedAt)
+                .commit()
+            if (!committed) {
+                ownershipStorageUncertain = true
+                return RecoveryOutcome(
+                    OllamaRecoveryAssessment(
+                        OllamaRecoveryState.VERIFICATION_UNAVAILABLE,
+                        false,
+                        "The legacy pending checkpoint could not record a recovery timestamp safely.",
+                    ),
+                    false,
+                )
+            }
+            effectiveSession = session.copy(pendingAtMillis = observedAt)
+            savedSession = effectiveSession
+        }
+        val probe = if (effectiveSession.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            effectiveSession.sessionPid != null && effectiveSession.sessionStartTicks != null
+        ) {
+            probeSavedSession(effectiveSession)
+        } else {
+            null
+        }
+        val needsTokenScan = effectiveSession.sessionPid == null ||
+            effectiveSession.mode != OllamaLaunchMode.PROOT_DETACHED ||
+            probe?.alive == false
+        val tokenProcessFound = if (needsTokenScan) probeTokenProcess(effectiveSession.token) else null
+        val pendingAge = if (effectiveSession.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            effectiveSession.sessionPid == null && effectiveSession.pendingAtMillis > 0L
+        ) {
+            (System.currentTimeMillis() - effectiveSession.pendingAtMillis).coerceAtLeast(0L)
+        } else {
+            null
+        }
+        val assessment = OllamaRecoveryPolicy.assess(
+            OllamaRecoverySignals(
+                apiHealthy = apiHealthy,
+                savedSession = effectiveSession,
+                savedRecord = snapshot.record,
+                guestProbeSucceeded = snapshot.probeSucceeded,
+                guestOwnership = snapshot.ownership,
+                sessionAlive = probe?.alive,
+                sessionIdentityMatches = probe?.matches == true,
+                tokenProcessFound = tokenProcessFound,
+                pendingAgeMillis = pendingAge,
+            ),
+        )
+        if (!assessment.canClearOwnership) return RecoveryOutcome(assessment, false)
+        if (!clearSession()) {
+            return RecoveryOutcome(
+                assessment.copy(
+                    state = OllamaRecoveryState.VERIFICATION_UNAVAILABLE,
+                    canClearOwnership = false,
+                    detail = "${assessment.detail} The ownership store could not be cleared safely.",
+                ),
+                false,
+            )
+        }
+        clearSaved()
+        return RecoveryOutcome(
+            assessment.copy(detail = "${assessment.detail} Stale ownership was cleared."),
+            true,
+        )
+    }
+
+    private suspend fun stopOwnedSessionIfPossible(snapshot: OllamaHostSnapshot? = null): SessionStopResult {
+        val session = savedSession ?: return SessionStopResult(!hasGuestLaunchEvidence(), "No saved PRoot session identity remains.")
+        if (target.isHost) {
+            return if (clearSession()) SessionStopResult(true, "Stale host ownership was cleared.")
+            else SessionStopResult(false, "The ownership store could not be cleared safely.")
+        }
+        val alias = target.guestAlias ?: return SessionStopResult(false, "The selected PRoot guest has no valid namespace.")
+        if (session.container != alias) {
+            return SessionStopResult(false, "The saved session namespace does not match the selected guest.")
+        }
+        val guestStopped = prefs.getBoolean(targetKey(KEY_GUEST_PROCESS_STOPPED), false)
+        val guestGone = snapshot?.probeSucceeded == true && isDefinitelyStale(snapshot.ownership)
+        val detached = session.mode == OllamaLaunchMode.PROOT_DETACHED &&
+            session.sessionPid != null && session.sessionStartTicks != null
+
+        if (detached) {
+            val probe = probeSavedSession(session)
+            if (!probe.available) {
+                return SessionStopResult(false, "The saved PRoot session identity probe did not complete.")
+            }
+            if (probe.alive == true) {
+                if (!probe.matches) {
+                    return SessionStopResult(false, "The live PRoot session does not match the saved token and kernel start token.")
+                }
+                val path = bridge.prootExecutablePath()
+                    ?: return SessionStopResult(false, "The verified proot-distro path is unavailable.")
+                val script = runCatching {
+                    OllamaGuestRuntime.sessionKillScript(
+                        path,
+                        session.sessionPid,
+                        session.token,
+                        session.sessionStartTicks,
+                        alias,
+                    )
+                }.getOrElse { error ->
+                    return SessionStopResult(false, error.message?.take(200) ?: "The session stop script was refused.")
+                }
+                val result = hostIsolated(script, STOP_TIMEOUT_SECONDS)
+                val stopped = result.isSuccess && OllamaProcess.markerValue(result.stdout, "NYX_SESSION_STOPPED") == "1"
+                if (!stopped) {
+                    val reason = OllamaProcess.markerValue(result.stdout, "NYX_SESSION_STOP_REASON")
+                        ?: failureDetail(result)
+                    return SessionStopResult(false, "The verified PRoot session could not be stopped: ${reason.take(200)}")
+                }
+                val after = probeSavedSession(session)
+                if (!after.available || after.alive != false) {
+                    return SessionStopResult(false, "The PRoot session was signalled but its absence was not independently verified.")
+                }
+                val afterSnapshot = readSnapshot()
+                val guestGoneAfter = afterSnapshot.probeSucceeded && isDefinitelyStale(afterSnapshot.ownership)
+                if (!guestStopped && !guestGoneAfter) {
+                    return SessionStopResult(
+                        false,
+                        "The verified PRoot session ended, but the guest Ollama process is not independently verified as gone.",
+                    )
+                }
+                return if (clearSession()) {
+                    SessionStopResult(true, "The verified PRoot session (PID ${session.sessionPid}) was stopped and its absence was confirmed.")
+                } else {
+                    SessionStopResult(false, "The session ended, but the ownership store could not be cleared safely.")
+                }
+            }
+            val tokenProcessFound = probeTokenProcess(session.token)
+            if (tokenProcessFound == true) {
+                return SessionStopResult(false, "A process carrying the saved launch token is still visible.")
+            }
+            if (tokenProcessFound == null) {
+                return SessionStopResult(false, "The token process scan did not complete.")
+            }
+            if (!guestStopped && !guestGone) {
+                return SessionStopResult(false, "The saved PRoot session is gone, but the guest Ollama process is not independently verified as stopped.")
+            }
+            return if (clearSession()) {
+                SessionStopResult(true, "The saved PRoot session is gone and no process carries its launch token. Stale ownership was cleared.")
+            } else {
+                SessionStopResult(false, "The session is gone, but the ownership store could not be cleared safely.")
+            }
+        }
+
+        if (session.mode == OllamaLaunchMode.PROOT_FOREGROUND || session.sessionPid == null) {
+            val tokenProcessFound = probeTokenProcess(session.token)
+            if (tokenProcessFound == true) {
+                return SessionStopResult(false, "A process carrying the saved launch token is still visible.")
+            }
+            if (tokenProcessFound == null) {
+                return SessionStopResult(false, "The token process scan did not complete.")
+            }
+            val pendingAge = if (session.pendingAtMillis > 0L) {
+                (System.currentTimeMillis() - session.pendingAtMillis).coerceAtLeast(0L)
+            } else {
+                null
+            }
+            val pending = (session.mode == OllamaLaunchMode.PROOT_DETACHED && session.sessionPid == null) ||
+                (session.mode == OllamaLaunchMode.PROOT_FOREGROUND && session.pendingAtMillis > 0L)
+            val pendingReady = pending &&
+                (pendingAge == null || pendingAge < OllamaRecoveryPolicy.PENDING_LAUNCH_GRACE_MILLIS)
+            if (pendingReady && !guestStopped) {
+                return SessionStopResult(false, "The pending launch is still inside its verification grace period.")
+            }
+            if (!guestStopped && !guestGone) {
+                return SessionStopResult(false, "No token process is visible, but the guest Ollama process is not independently verified as stopped.")
+            }
+            return if (clearSession()) {
+                SessionStopResult(true, "No token-bearing process remains and the guest process is gone. Stale ownership was cleared.")
+            } else {
+                SessionStopResult(false, "The ownership store could not be cleared safely.")
+            }
+        }
+
+        return SessionStopResult(false, "The saved launch mode does not identify a session that NYX can verify.")
     }
 
     private suspend fun verifySavedSession(): Boolean {
         val session = savedSession ?: return false
-        if (session.mode != OllamaLaunchMode.PROOT_DETACHED) return false
-        val pid = session.sessionPid ?: return false
-        val expectedStart = session.sessionStartTicks ?: return false
-        val identity = hostIsolated(OllamaGuestRuntime.sessionStateScript(pid), STATE_TIMEOUT_SECONDS)
-        return identity.isSuccess &&
-            OllamaPersistentOwnership.sessionMatchesToken(identity.stdout, session.container, session.token) &&
-            OllamaGuestRuntime.parseSessionStartTicks(identity.stdout) == expectedStart
+        val probe = probeSavedSession(session)
+        return probe.available && probe.alive == true && probe.matches
     }
 
     private fun saveTarget(value: OllamaTarget) {
@@ -1398,17 +1759,26 @@ class OllamaServerManager(
             if (target.isHost) it.mode == OllamaLaunchMode.HOST_DETACHED
             else it.container == target.guestAlias.orEmpty()
         }
+        val unresolved = hasGuestLaunchEvidence()
+        val blockedStatus = status in setOf(
+            OllamaServerStatus.ERROR,
+            OllamaServerStatus.UNREACHABLE,
+            OllamaServerStatus.STOPPED,
+            OllamaServerStatus.NOT_INSTALLED,
+        )
         return copy(
             sessionPid = session?.sessionPid,
             launchMode = session?.mode,
             sessionToken = session?.token.orEmpty(),
             // An empty/failed probe cannot turn retained external evidence into a stopped state.
-            status = if (hasGuestLaunchEvidence() && status in setOf(OllamaServerStatus.STOPPED, OllamaServerStatus.NOT_INSTALLED)) {
+            status = if (unresolved && status in setOf(OllamaServerStatus.STOPPED, OllamaServerStatus.NOT_INSTALLED)) {
                 OllamaServerStatus.ERROR
             } else status,
-            message = if (hasGuestLaunchEvidence() && status in setOf(OllamaServerStatus.STOPPED, OllamaServerStatus.NOT_INSTALLED)) {
+            message = if (unresolved && status in setOf(OllamaServerStatus.STOPPED, OllamaServerStatus.NOT_INSTALLED)) {
                 unresolvedLaunchMessage()
             } else message,
+            recoveryRequired = unresolved,
+            recoveryBlocked = unresolved && (recoveryBlocked || blockedStatus),
         )
     }
 
@@ -1425,6 +1795,7 @@ class OllamaServerManager(
         const val KEY_SESSION_PID = "session_pid"
         const val KEY_SESSION_START = "session_start_ticks"
         const val KEY_SESSION_CONTAINER = "session_container"
+        const val KEY_SESSION_PENDING_AT = "session_pending_at"
         const val KEY_GUEST_LAUNCH_FENCE = "guest_launch_fence"
         const val KEY_GUEST_PROCESS_STOPPED = "guest_process_stopped"
 

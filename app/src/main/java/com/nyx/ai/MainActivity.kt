@@ -1484,10 +1484,25 @@ private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
             if (server.logTail.isNotBlank()) Text(server.logTail.takeLast(500), color = TextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, maxLines = 5)
             Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(onClick = vm::detectOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Detect", fontSize = 11.sp) }
-                OutlinedButton(onClick = vm::refreshOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Refresh", fontSize = 11.sp) }
+                OutlinedButton(onClick = vm::refreshOllamaServer, enabled = !state.ollamaOperationRunning) {
+                    Text(if (server.recoveryRequired) "Reconcile" else "Refresh", fontSize = 11.sp)
+                }
                 if (server.canStop || server.canStopSession) OutlinedButton(onClick = vm::stopOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Stop", fontSize = 11.sp) }
-                if (!server.isRunning && !server.isBusy && !state.ollamaOperationRunning) Button(onClick = vm::startOllamaServer) { Text("Start", fontSize = 11.sp) }
+                if (server.canStart && !state.ollamaOperationRunning) Button(onClick = vm::startOllamaServer) { Text("Start", fontSize = 11.sp) }
                 if (server.isRunning && server.startedByNyx) OutlinedButton(onClick = vm::restartOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Restart", fontSize = 11.sp) }
+            }
+            if (server.recoveryRequired) {
+                Text(
+                    if (server.recoveryBlocked) {
+                        "Ownership recovery is unresolved. Reconcile performs only read-only probes; Start stays blocked until NYX can prove that no protected process or session remains."
+                    } else {
+                        "Ownership recovery is in progress. Reconcile is read-only and will release stale evidence only after independent absence checks pass."
+                    },
+                    color = Color(0xFFF2C879), fontSize = 10.sp, lineHeight = 14.sp,
+                )
+            }
+            if (server.recoveryRequired && !server.canStop && !server.canStopSession) {
+                Text("Stop is unavailable because no verified process or session handle exists. Use Reconcile first.", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
             }
             if (state.ollamaOperationRunning) Text("A foreground service is holding the PRoot session open. Progress is also shown in the notification; the controls return when it finishes.", color = Color(0xFFF2C879), fontSize = 10.sp, lineHeight = 14.sp)
             if (server.status == OllamaServerStatus.NOT_INSTALLED) Text("Ollama was not found in the selected host or verified guests. Install it in Termux or the guest, then Detect again. NYX never runs root and never kills an adopted server.", color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)

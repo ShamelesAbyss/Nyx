@@ -116,6 +116,40 @@ class OllamaGuestRuntimeTest {
     }
 
     @Test
+    fun guardedSessionKillRechecksTokenNamespaceAndKernelStartBeforeSignal() {
+        val script = OllamaGuestRuntime.sessionKillScript(
+            "/data/data/com.termux/files/usr/bin/proot-distro",
+            1234,
+            "nyx-abc12345",
+            5678,
+            "debian",
+        )
+        assertTrue(script.contains("expected_token='nyx-abc12345'"))
+        assertTrue(script.contains("expected_alias='debian'"))
+        assertTrue(script.contains("expected_start=5678"))
+        assertTrue(script.indexOf("session token mismatch") < script.indexOf("proot-distro"))
+        assertTrue(script.indexOf("session namespace mismatch") < script.indexOf("proot-distro"))
+        assertTrue(script.indexOf("session PID was reused") < script.indexOf("proot-distro"))
+        assertTrue(script.contains("session process remains after proot-distro kill"))
+        assertTrue(runCatching {
+            OllamaGuestRuntime.sessionKillScript("/data/proot", 1234, "bad token", 5678, "debian")
+        }.isFailure)
+    }
+
+    @Test
+    fun tokenProcessProbeExcludesItsOwnCommandAndRequiresScanCompletion() {
+        val script = OllamaGuestRuntime.tokenProcessProbeScript("nyx-abc12345")
+        assertTrue(script.contains("NYX_TOKEN_PROBE"))
+        assertTrue(script.contains("self=\$\$"))
+        assertTrue(script.contains("parent=\$PPID"))
+        assertTrue(script.contains("NYX_TOKEN_SCAN=1"))
+        assertEquals(true, OllamaGuestRuntime.parseTokenProcess("NYX_TOKEN_PROCESS=1\nNYX_TOKEN_SCAN=1"))
+        assertEquals(false, OllamaGuestRuntime.parseTokenProcess("NYX_TOKEN_PROCESS=0\nNYX_TOKEN_SCAN=1"))
+        assertNull(OllamaGuestRuntime.parseTokenProcess("NYX_TOKEN_PROCESS=0"))
+        assertNull(OllamaGuestRuntime.parseTokenProcess("NYX_TOKEN_SCAN=1"))
+    }
+
+    @Test
     fun guestReadinessHasALongerBoundedGraceThanHost() {
         assertTrue(OllamaReadiness.GUEST_TIMEOUT_MILLIS > OllamaReadiness.DEFAULT_TIMEOUT_MILLIS)
         assertTrue(OllamaReadiness.GUEST_STARTUP_GRACE_MILLIS > OllamaReadiness.STARTUP_GRACE_MILLIS)

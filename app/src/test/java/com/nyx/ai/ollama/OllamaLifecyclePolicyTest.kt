@@ -369,4 +369,13 @@ class OllamaLifecyclePolicyTest {
         assertTrue(running.copy(status = OllamaServerStatus.STARTING).canStop)
         assertTrue(running.copy(status = OllamaServerStatus.STOPPING).isBusy)
     }
+
+    @Test
+    fun `start is unavailable while ownership recovery is blocked`() {
+        val stopped = OllamaServerState(status = OllamaServerStatus.STOPPED)
+        assertTrue(stopped.canStart)
+        assertFalse(stopped.copy(recoveryRequired = true, recoveryBlocked = true).canStart)
+        assertFalse(stopped.copy(status = OllamaServerStatus.ERROR, recoveryRequired = true, recoveryBlocked = true).canStart)
+        assertFalse(stopped.copy(recoveryRequired = true, recoveryBlocked = false).canStart)
+    }
 }

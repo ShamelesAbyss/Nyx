@@ -247,6 +247,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private var agentJob: Job? = null
     private var workflowJob: Job? = null
     private var objectiveJob: Job? = null
+    private var ollamaPollJob: Job? = null
     private var objectiveObservation: Job? = null
     private var messageObservation: Job? = null
     private val inferenceReservationLock = Any()
@@ -922,9 +923,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         var last = snapshot.ollamaServer
-        repeat(60) {
-            delay(3_000L)
-            last = runCatching { ollamaManager.detect() }.getOrDefault(last)
+        repeat(24) {
+            delay(5_000L)
+            last = runCatching { ollamaManager.refresh() }.getOrDefault(last)
             if (last.isRunning || last.status == OllamaServerStatus.ERROR || last.status == OllamaServerStatus.UNREACHABLE) {
                 return last
             }
@@ -1594,6 +1595,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startOllamaServer() {
+        if (_state.value.ollamaOperationRunning) return
         if (AutonomyRuntime.policy().stopped) {
             _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Emergency stop is active; server start is blocked.")) }
             return
@@ -1631,6 +1633,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopOllamaServer() {
+        if (_state.value.ollamaOperationRunning) return
         val snapshot = _state.value
         if (snapshot.terminalEnvironment == TerminalEnvironment.DEBIAN_PROOT) {
             _state.update {
@@ -1650,6 +1653,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun restartOllamaServer() {
+        if (_state.value.ollamaOperationRunning) return
         if (AutonomyRuntime.policy().stopped) {
             _state.update { it.copy(ollamaServer = it.ollamaServer.copy(message = "Emergency stop is active; server restart is blocked.")) }
             return
@@ -1680,13 +1684,19 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** The service owns its own manager instance, so reconcile the visible state from persisted evidence. */
+    /**
+     * The service owns its own manager instance. Reconcile from persisted evidence with a single
+     * bounded poll, never a fresh discovery probe on every tick. This prevents a launch from
+     * opening a stream of short-lived Termux sessions while the managed server is starting.
+     */
     private fun pollManagedOllama() {
-        viewModelScope.launch(Dispatchers.IO) {
+        ollamaPollJob?.cancel()
+        ollamaPollJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                repeat(60) { attempt ->
-                    delay(3_000L)
-                    val result = runCatching { ollamaManager.detect() }.getOrNull() ?: return@repeat
+                val schedule = listOf(2_000L, 3_000L, 5_000L, 5_000L, 10_000L) + List(18) { 15_000L }
+                for ((attempt, waitMillis) in schedule.withIndex()) {
+                    delay(waitMillis)
+                    val result = runCatching { ollamaManager.refresh() }.getOrNull() ?: continue
                     val terminal = result.status == OllamaServerStatus.ERROR ||
                         result.status == OllamaServerStatus.UNREACHABLE ||
                         result.status == OllamaServerStatus.STOPPED ||
@@ -1696,8 +1706,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update { it.copy(ollamaOperationRunning = false) }
                         return@launch
                     }
-                    // Ignore a transient STOPPED while the service is still creating the session.
-                    if (terminal && attempt >= 6) {
+                    if (terminal && attempt >= 3) {
                         _state.update { it.copy(ollamaOperationRunning = false) }
                         return@launch
                     }

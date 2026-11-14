@@ -52,8 +52,10 @@ NOTICE_INPUTS = {
     "NDK-NOTICE.toolchain.txt": "third_party/ndk-r28c/NOTICE.toolchain",
     "THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
 }
-VERSION_RE = re.compile(r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)(?![A-Za-z0-9])")
-CORE_VERSION_RE = re.compile(r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+)(?![A-Za-z0-9])")
+VERSION_RE = re.compile(
+    r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.-]+)?)(?![A-Za-z0-9])"
+)
+CORE_VERSION_RE = re.compile(r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+(?:\.\d+)?)(?![A-Za-z0-9])")
 HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
 CODE_RE = re.compile(r"\bversionCode\s*(?:=|:)?\s*(\d+)\b", re.IGNORECASE)
 
@@ -257,7 +259,12 @@ def check_delivery_name(name: str, expected_version: str) -> None:
         )
     expected_core = expected_version.split("+", 1)[0].split("-", 1)[0]
     versions = CORE_VERSION_RE.findall(filename)
-    mismatches = sorted(set(versions) - {expected_core})
+    # A patch filename such as v0.9.2.1 also contains its own v0.9.2 prefix. That prefix is
+    # the same release line, not a second version label; a genuinely different label is not.
+    mismatches = sorted(
+        version for version in set(versions)
+        if version != expected_core and not expected_core.startswith(version + ".")
+    )
     if mismatches:
         raise CheckError(f"delivery filename {filename!r} also labels another version: {', '.join(mismatches)}")
 
@@ -405,8 +412,8 @@ def source_files(root: Path) -> list[str]:
 
 
 def check_repository(root: Path) -> None:
-    require(read_gradle_version(root / "app/build.gradle.kts") == GradleVersion("0.9.2", 25, "com.nyx.ai"),
-            "candidate must be literal com.nyx.ai / versionCode 25 / versionName 0.9.2")
+    require(read_gradle_version(root / "app/build.gradle.kts") == GradleVersion("0.9.2.1", 26, "com.nyx.ai"),
+            "candidate must be literal com.nyx.ai / versionCode 26 / versionName 0.9.2.1")
     wrapper = root / "gradle/wrapper/gradle-wrapper.jar"
     require(sha256(wrapper.read_bytes()) == WRAPPER_SHA256, "root Gradle wrapper JAR checksum mismatch")
     properties = (root / "gradle/wrapper/gradle-wrapper.properties").read_text()
@@ -432,7 +439,7 @@ def check_repository(root: Path) -> None:
 def parse_badging(text: str, instrumentation: bool = False) -> None:
     package = re.findall(r"^package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'", text, re.M)
     require(len(package) == 1, "missing/ambiguous aapt2 package metadata")
-    expected = ("com.nyx.ai.test", "25", "0.9.2") if instrumentation else ("com.nyx.ai", "25", "0.9.2")
+    expected = ("com.nyx.ai.test", "26", "0.9.2.1") if instrumentation else ("com.nyx.ai", "26", "0.9.2.1")
     # AGP's test APK does not inherit the app's version metadata; enforce identity
     # and target/instrumentation binding, not an invented test version guarantee.
     require(package[0][0] == expected[0], f"unexpected APK package: {package[0][0]}")
@@ -515,7 +522,7 @@ def verify_artifacts(args: argparse.Namespace) -> None:
                 library.write_bytes(archive.read(name))
                 tool([str(objdump), "-p", str(library)], args.report_dir / f"{label}-{Path(name).name}-elf.txt")
     require(signers[0] == signers[1], "app and instrumentation APK signers differ")
-    result = {"package": "com.nyx.ai", "versionCode": 25, "versionName": "0.9.2", "signerSha256": signers[0],
+    result = {"package": "com.nyx.ai", "versionCode": 26, "versionName": "0.9.2.1", "signerSha256": signers[0],
               "signingScope": "ephemeral CI verification only" if args.ci_ephemeral_signer else "established debug distribution identity",
               "androidRuntime": "UNVERIFIED", "apkSha256": sha256(args.apk.read_bytes()),
               "androidTestApkSha256": sha256(args.android_test_apk.read_bytes())}
@@ -557,12 +564,12 @@ def verify_source(root: Path, source: Path) -> None:
 
 
 def verify_delivery(directory: Path, extras: list[str]) -> None:
-    names = {"NYX-v0.9.2.apk", "NYX-v0.9.2-androidTest.apk", "NYX-Source-v0.9.2.zip"}
+    names = {"NYX-v0.9.2.1.apk", "NYX-v0.9.2.1-androidTest.apk", "NYX-Source-v0.9.2.1.zip"}
     for name in extras:
         safe_member(name)
-        require(PurePosixPath(name).name == name and "0.9.2" in name, "extra delivery must be a candidate basename")
+        require(PurePosixPath(name).name == name and "0.9.2.1" in name, "extra delivery must be a candidate basename")
         names.add(name)
-    text = (directory / "NYX-v0.9.2-SHA256SUMS.txt").read_text()
+    text = (directory / "NYX-v0.9.2.1-SHA256SUMS.txt").read_text()
     records = []
     for line in text.splitlines():
         match = re.fullmatch(r"([0-9a-f]{64})  ([^\n]+)", line)
@@ -586,14 +593,14 @@ def self_test() -> None:
             return
         raise AssertionError("invalid fixture accepted: " + label)
 
-    badging = "package: name='com.nyx.ai' versionCode='25' versionName='0.9.2'\nsdkVersion:'26'\ntargetSdkVersion:'37'\n"
+    badging = "package: name='com.nyx.ai' versionCode='26' versionName='0.9.2.1'\nsdkVersion:'26'\ntargetSdkVersion:'37'\n"
     parse_badging(badging)
     parse_badging(badging.replace("sdkVersion:", "minSdkVersion:"))
-    parse_badging(badging.replace("name='com.nyx.ai' versionCode='25' versionName='0.9.2'",
+    parse_badging(badging.replace("name='com.nyx.ai' versionCode='26' versionName='0.9.2.1'",
         "name='com.nyx.ai.test' versionCode='' versionName=''"), instrumentation=True)
     rejected(lambda: parse_badging(badging + "minSdkVersion:'26'\n"), "ambiguous minimum SDK")
-    rejected(lambda: parse_badging(badging.replace("versionCode='25'", "versionCode=''")), "missing app version")
-    for old, new in (("com.nyx.ai", "com.evil.ai"), ("'25'", "'24'"), ("'0.9.2'", "'0.9.1'"), ("'37'", "'36'")):
+    rejected(lambda: parse_badging(badging.replace("versionCode='26'", "versionCode=''")), "missing app version")
+    for old, new in (("com.nyx.ai", "com.evil.ai"), ("'26'", "'25'"), ("'0.9.2.1'", "'0.9.2'"), ("'37'", "'36'")):
         rejected(lambda old=old, new=new: parse_badging(badging.replace(old, new)), "wrong APK metadata " + new)
     signer = "Signer #1 certificate SHA-256 digest: " + ESTABLISHED_SIGNER + "\n"
     parse_signer(signer, ESTABLISHED_SIGNER)
@@ -642,10 +649,12 @@ def self_test() -> None:
             rejected(inspect, label)
         # Real subprocess failures, not synthetic successful alignment output.
         rejected(lambda: tool(["sh", "-c", "exit 7"]), "external verifier nonzero")
-        names = ["NYX-v0.9.2.apk", "NYX-v0.9.2-androidTest.apk", "NYX-Source-v0.9.2.zip"]
+        check_delivery_name("NYX-v0.9.2.1.apk", "0.9.2.1")
+        rejected(lambda: check_delivery_name("NYX-v0.9.2.1-v0.9.1.apk", "0.9.2.1"), "mixed release labels")
+        names = ["NYX-v0.9.2.1.apk", "NYX-v0.9.2.1-androidTest.apk", "NYX-Source-v0.9.2.1.zip"]
         for name in names:
             (root / name).write_bytes(name.encode())
-        sums = root / "NYX-v0.9.2-SHA256SUMS.txt"
+        sums = root / "NYX-v0.9.2.1-SHA256SUMS.txt"
         sums.write_text("".join(f"{sha256((root / name).read_bytes())}  {name}\n" for name in names))
         verify_delivery(root, [])
         (root / names[0]).write_bytes(b"changed")
@@ -653,8 +662,8 @@ def self_test() -> None:
         sums.write_text("")
         rejected(lambda: verify_delivery(root, []), "missing checksum coverage")
         doc = root / "CHANGELOG.md"
-        doc.write_text("# History\n## 0.9.2 candidate\nversionCode 25\n## 0.9.1 historical\nversionCode 24\n")
-        check_release_doc(doc, "0.9.2", 25)
+        doc.write_text("# History\n## 0.9.2.1 candidate\nversionCode 26\n## 0.9.2 historical\nversionCode 25\n")
+        check_release_doc(doc, "0.9.2.1", 26)
         rejected(lambda: check_release_doc(doc, "0.9.1", 24), "stale current release heading")
         source_root = root / "source-fixture"
         source_root.mkdir()

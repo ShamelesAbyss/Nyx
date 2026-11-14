@@ -44,6 +44,8 @@ data class SavedOllamaSession(
     val sessionPid: Int? = null,
     val sessionStartTicks: Long? = null,
     val container: String = "",
+    /** Wall-clock checkpoint time; only used to bound recovery of a pending, PID-less launch. */
+    val pendingAtMillis: Long = 0L,
 )
 
 enum class OllamaStartupStage {
@@ -220,26 +222,119 @@ object OllamaGuestRuntime {
     fun parseSessionCmdline(stdout: String): String =
         OllamaProcess.markerValue(stdout, "NYX_SESSION_CMDLINE").orEmpty().take(MAX_SESSION_COMMAND_CHARS)
 
-    /** Stops one verified session PID with proot-distro's process-tree teardown. */
-    fun sessionKillScript(prootDistroPath: String, sessionPid: Int): String {
+    /**
+     * Read-only scan for a process whose command line carries the saved launch token. The probe
+     * excludes its own shell and parent so the command text itself cannot look like a live session.
+     * A missing `NYX_TOKEN_SCAN=1` marker means the scan is unavailable, never "not found".
+     */
+    fun tokenProcessProbeScript(token: String): String {
+        require(isValidToken(token)) { "Unsafe session token" }
+        return """
+            # NYX token process probe: read-only, excludes this probe's own command line.
+            export LC_ALL=C
+            session_token=${OllamaProcess.quote(token)}
+            self=${'$'}${'$'}
+            parent=${'$'}PPID
+            found=0
+            for proc in /proc/[0-9]*; do
+              pid=${'$'}{proc##*/}
+              [ "${'$'}pid" = "${'$'}self" ] && continue
+              [ "${'$'}pid" = "${'$'}parent" ] && continue
+              [ -r "${'$'}proc/cmdline" ] || continue
+              command_line=${'$'}(tr '\0' ' ' < "${'$'}proc/cmdline" 2>/dev/null)
+              case "${'$'}command_line" in
+                *NYX_TOKEN_PROBE*) continue ;;
+              esac
+              case "${'$'}command_line" in
+                *"${'$'}session_token"*) found=1; break ;;
+              esac
+            done
+            printf 'NYX_TOKEN_PROCESS=%s\n' "${'$'}found"
+            printf 'NYX_TOKEN_SCAN=1\n'
+            exit 0
+        """.trimIndent()
+    }
+
+    fun parseTokenProcess(stdout: String): Boolean? {
+        if (OllamaProcess.markerValue(stdout, "NYX_TOKEN_SCAN") != "1") return null
+        return when (OllamaProcess.markerValue(stdout, "NYX_TOKEN_PROCESS")) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
+    }
+
+    /**
+     * Stops one verified session PID with proot-distro's process-tree teardown.
+     *
+     * When [sessionToken] and [sessionStartTicks] are supplied, the script rechecks the token,
+     * namespace and kernel start token immediately before the signal. The manager always supplies
+     * both for recovery; the two-argument form remains only for script-level regression fixtures.
+     */
+    fun sessionKillScript(
+        prootDistroPath: String,
+        sessionPid: Int,
+        sessionToken: String? = null,
+        sessionStartTicks: Long? = null,
+        container: String? = null,
+    ): String {
         require(prootDistroPath.startsWith('/') && '\u0000' !in prootDistroPath) { "Unsafe proot-distro path" }
         require(sessionPid in 2..MAX_SESSION_PID) { "Unsafe PRoot session PID" }
+        require((sessionToken == null) == (sessionStartTicks == null)) { "Session token and start token must be supplied together" }
+        if (sessionToken != null) require(isValidToken(sessionToken)) { "Unsafe session token" }
+        if (sessionStartTicks != null) require(sessionStartTicks >= 0L) { "Unsafe session start token" }
+        if (container != null) require(isSafeSessionName(container)) { "Unsafe session namespace" }
         val path = OllamaProcess.quote(prootDistroPath)
+        val guarded = if (sessionToken != null && sessionStartTicks != null) {
+            val token = OllamaProcess.quote(sessionToken)
+            val alias = OllamaProcess.quote(container.orEmpty())
+            """
+            expected_token=$token
+            expected_start=$sessionStartTicks
+            expected_alias=$alias
+            if [ ! -d "/proc/$sessionPid" ]; then
+              printf 'NYX_SESSION_STOPPED=1\n'
+              exit 0
+            fi
+            live_cmd=${'$'}(tr '\0' ' ' < "/proc/$sessionPid/cmdline" 2>/dev/null)
+            case "${'$'}live_cmd" in
+              *"${'$'}expected_token"*) ;;
+              *) printf 'NYX_SESSION_STOPPED=0\nNYX_SESSION_STOP_REASON=%s\n' 'session token mismatch'; exit 4 ;;
+            esac
+            case "${'$'}live_cmd" in
+              *"${'$'}expected_alias"*) ;;
+              *) printf 'NYX_SESSION_STOPPED=0\nNYX_SESSION_STOP_REASON=%s\n' 'session namespace mismatch'; exit 5 ;;
+            esac
+            live_start=${'$'}(sed 's/^.*) //' "/proc/$sessionPid/stat" 2>/dev/null | awk '{print ${'$'}20}')
+            if [ "${'$'}live_start" != "${'$'}expected_start" ]; then
+              printf 'NYX_SESSION_STOPPED=0\nNYX_SESSION_STOP_REASON=%s\n' 'session PID was reused'
+              exit 6
+            fi
+            """.trimIndent()
+        } else {
+            ""
+        }
         return """
             # NYX PRoot session stop: one verified session PID only.
             export LC_ALL=C
+            $guarded
             if [ ! -d "/proc/$sessionPid" ]; then
               printf 'NYX_SESSION_STOPPED=1\n'
               exit 0
             fi
             $path kill $sessionPid 2>&1
             status=${'$'}?
-            if [ "${'$'}status" -eq 0 ]; then
-              printf 'NYX_SESSION_STOPPED=1\n'
-            else
+            if [ "${'$'}status" -ne 0 ]; then
               printf 'NYX_SESSION_STOPPED=0\n'
               printf 'NYX_SESSION_STOP_REASON=%s\n' 'proot-distro kill rejected the session'
+              exit 0
             fi
+            if [ -d "/proc/$sessionPid" ]; then
+              printf 'NYX_SESSION_STOPPED=0\n'
+              printf 'NYX_SESSION_STOP_REASON=%s\n' 'session process remains after proot-distro kill'
+              exit 0
+            fi
+            printf 'NYX_SESSION_STOPPED=1\n'
             exit 0
         """.trimIndent()
     }

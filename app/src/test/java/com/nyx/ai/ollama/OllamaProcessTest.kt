@@ -380,11 +380,13 @@ class OllamaProcessTest {
         """.trimIndent()
         val snapshot = OllamaProcess.parseHostSnapshot(missing)
         assertEquals(OllamaOwnership.MISSING, snapshot.ownership)
+        assertTrue(snapshot.probeSucceeded)
         assertEquals("old line", snapshot.logTail)
 
         val empty = OllamaProcess.parseHostSnapshot("nothing useful")
         assertNull(empty.record)
         assertEquals(OllamaOwnership.UNKNOWN, empty.ownership)
+        assertFalse(empty.probeSucceeded)
         assertEquals("", empty.logTail)
     }
 

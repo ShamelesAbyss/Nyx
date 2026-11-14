@@ -76,6 +76,8 @@ data class OllamaHostSnapshot(
     val rssKb: Long? = null,
     val uptimeMillis: Long? = null,
     val logTail: String = "",
+    /** True only when the read-only probe returned an explicit alive/dead marker. */
+    val probeSucceeded: Boolean = false,
 )
 
 /**
@@ -267,7 +269,9 @@ object OllamaProcess {
 
     fun parseHostSnapshot(stdout: String): OllamaHostSnapshot {
         val record = decodeRecord(block(stdout, RECORD_BEGIN, RECORD_END))
-        val alive = markerValue(stdout, "NYX_OLLAMA_ALIVE") == "1"
+        val aliveMarker = markerValue(stdout, "NYX_OLLAMA_ALIVE")
+        val probeSucceeded = aliveMarker == "0" || aliveMarker == "1"
+        val alive = aliveMarker == "1"
         val ownedMarker = markerValue(stdout, "NYX_OLLAMA_OWNED") == "1"
         val cmdline = markerValue(stdout, "NYX_OLLAMA_CMDLINE").orEmpty()
         val startTicks = markerValue(stdout, "NYX_OLLAMA_START")?.toLongOrNull()
@@ -291,6 +295,7 @@ object OllamaProcess {
             rssKb = (procRss ?: psRss)?.takeIf { it > 0 },
             uptimeMillis = uptime,
             logTail = sanitizeLogTail(block(stdout, LOG_BEGIN, LOG_END)),
+            probeSucceeded = probeSucceeded,
         )
     }
 

@@ -14,7 +14,7 @@ Project Relay continues the published v0.9.1 — Project Ignition baseline with 
 3. Give compact and incremental planning more bounded output room.
 4. Expose provider-reported Ollama planning timing and token telemetry.
 
-The candidate does not add a new orchestration framework, change application permissions, replace Room data, alter the signing identity, or modify vendored llama.cpp. Public download URLs remain on v0.9.1.
+The candidate does not add a new orchestration framework, change application permissions, replace Room data, alter the signing identity, or modify vendored llama.cpp. Public download URLs were updated to v0.9.2 when that release was published.
 
 ## Baseline and versioning
 
