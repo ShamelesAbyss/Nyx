@@ -1,5 +1,13 @@
 # NYX Test Results
 
+## 0.8.8 — Project Insight (published)
+
+Executed 2026-11-14 UTC: `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`, Android SDK `/home/ubuntu/Android/Sdk`, Java 21, host Kotlin fixture skipped without a real `kotlinc`.
+
+BUILD SUCCESSFUL in 1m 36s. **934 JVM tests across 96 classes; 0 failures, 0 errors, 1 skipped.** New coverage: capability mapping from bounded probes, throughput calculation, 24-hour/identity cache invalidation and persistence; strategy selection for direct text goals, resource goals, unsupported schema, complex fast models and slow/thinking models; direct plan construction; strict JSON and guided continuation parsing including unavailable-worker, missing-evidence and prose rejection; reasoning-versus-text lifecycle accounting; Ollama `thinking` and OpenAI-compatible `reasoning_content` separation; conditional `think` request control. The skip is the pre-existing host Kotlin compiler fixture when `kotlinc` is unavailable.
+
+APK identity `com.nyx.ai`, versionCode 21, versionName 0.8.8, minSdk 26, compile/target 37, `arm64-v8a` only. APK SHA-256: `e43046bfec8341b6f0ce57df349c8e772797208f261b408279010230ddc0f4c6`. Android test APK SHA-256: `31b13d01dfa7058f4eeea6bb7b2b55604234f1f23fbc417aa2f8a7751b0e4aaf`. Unchanged signer SHA-256: `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. `apksigner` and `zipalign -c -P 16 -v 4` passed.
+
 ## 0.8.7 — Project Breakthrough (published)
 
 Executed 2026-11-14 UTC: ./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest, Android SDK /home/ubuntu/Android/Sdk, Java21 and cached external kotlinc on PATH for the host calculator fixture.

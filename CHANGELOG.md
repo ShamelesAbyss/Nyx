@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.8 — Project Insight (published)
+
+versionCode 21 / versionName 0.8.8, com.nyx.ai. Adds a bounded capability profile per provider/model/context/thread identity (24-hour cache, identity invalidation), a deterministic direct start for short text-only objectives, incremental planning with at most two initial validated steps and one continuation after verified work (six continuations maximum), and guided one-line decisions limited to inference. Ollama `thinking` and OpenAI-compatible `reasoning_content` deltas are counted as activity, never as answer or plan text; structured planning disables thinking only after a reasoning stream was observed for that model. No new permissions or tool authority. Physical-device verification of strategy selection and reasoning behavior remains pending.
+
 ## 0.8.7 — Project Breakthrough (published)
 
 versionCode 20 / versionName 0.8.7, com.nyx.ai. Repairs root/descendant IME inset ownership and bounded draft editing; adds generous selected execution patience with request/tool ceilings and conservative cumulative segment accounting; reduces capability-sensitive planning workloads; adds durable isolated terminal-operation admission, per-task evidence/provider forks, dependency launch reservations and workspace conflict locks. Terminal/Mission Control expose per-operation state/details and guarded uncertainty review. Existing v0.8.6 Kotlin development, permissions, resource/recovery safeguards and signing identity are retained. 909 JVM tests in92 classes pass; clean ARM64 build succeeds. Device keyboard/qwen fixes remain unconfirmed. No AAB or Play publication. See [release notes](RELEASE_NOTES_v0.8.7.md) and [report](V087_IMPLEMENTATION_REPORT.md).

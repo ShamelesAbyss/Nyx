@@ -33,6 +33,14 @@ import com.nyx.ai.data.ObjectiveTaskEntity
 import com.nyx.ai.data.TaskEvidenceEntity
 import com.nyx.ai.network.ApiMessage
 import com.nyx.ai.network.InferenceFabric
+import com.nyx.ai.network.ModelCapabilities
+import com.nyx.ai.network.ModelCapabilityProfile
+import com.nyx.ai.network.ModelCapabilityPolicy
+import com.nyx.ai.network.ModelCapabilityStore
+import com.nyx.ai.network.ModelIdentity
+import com.nyx.ai.network.PlanningDecision
+import com.nyx.ai.network.PlanningStrategy
+import com.nyx.ai.network.InferenceTokenStats
 import com.nyx.ai.performance.PerformanceController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -74,10 +82,17 @@ class ObjectiveExecutionEngine(
     private val onToken: (String) -> Unit = {},
     private val suppliedRunId: String? = null,
     private val beforeTasksExecute: suspend (List<ObjectiveTaskEntity>) -> Boolean = { true },
+    private val capabilityStore: ModelCapabilityStore = ModelCapabilities.store(),
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
     private var activeRunId: String? = suppliedRunId
+    private var planningStrategy: PlanningStrategy = PlanningStrategy.INCREMENTAL
+    private var thinkingDisabled = false
+    private var incrementalExpansions = 0
+    private var incrementalDone = false
+    private var capabilityIdentity: ModelIdentity? = null
+    private var lastPlanningProfile: PlanningProfile? = null
 
     private companion object {
         val builtinToolLocks = mutableMapOf<String, Mutex>()
@@ -96,32 +111,33 @@ class ObjectiveExecutionEngine(
         event(objectiveId, null, "planning", "Generating a bounded task graph; model output is validated before any tool runs.")
         return try {
             control.checkpoint()
-            val parsed = requestValidatedPlan(objective, session, agent.id, control)
+            val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
+            val identity = ModelIdentity(
+                providerId = session.provider.id,
+                providerKind = session.provider.kind,
+                model = session.modelId,
+                contextLength = session.options.contextLength,
+                cpuThreads = session.options.cpuThreads,
+            )
+            capabilityIdentity = identity
+            val capability = capabilityStore.get(identity) ?: ModelCapabilityProfile(identity)
+            val decision = ModelCapabilityPolicy.decide(capability, objective.goal, terminalTools != null)
+            planningStrategy = decision.strategy
+            thinkingDisabled = decision.disableThinking
+            incrementalExpansions = 0
+            incrementalDone = false
+            event(objectiveId, null, "planning_strategy",
+                "Strategy ${decision.strategy.name.lowercase()}: ${decision.reason} Model capabilities: schema ${capability.structuredOutput.name.lowercase()}, native tools ${capability.nativeTools.name.lowercase()}, reasoning ${capability.reasoningStream.name.lowercase()}. Strategy is workload, not permission.",
+                status = "running")
+            val parsed = if (decision.strategy == PlanningStrategy.DIRECT) {
+                event(objectiveId, null, "planning_direct", "Simple text objective: NYX created one inference task deterministically; no planning model call was made.", status = "completed")
+                listOf(IncrementalPlanning.directPlan(objective.goal, agent.id))
+            } else {
+                requestValidatedPlan(objective, session, agent.id, control, decision)
+            }
             control.checkpoint()
             val now = now()
-            dao.upsertTasks(parsed.mapIndexed { index, task ->
-                ObjectiveTaskEntity(
-                    id = task.id,
-                    objectiveId = objective.id,
-                    ordinal = index,
-                    title = task.title,
-                    instructions = task.instructions,
-                    verification = task.verification,
-                    dependsOnJson = JSONArray(task.dependsOn).toString(),
-                    status = "pending",
-                    attemptCount = 0,
-                    maxAttempts = if (task.workerKind == "verification") 3 else 2,
-                    outcome = null,
-                    error = null,
-                    updatedAt = now,
-                    priority = priorityFor(task.workerKind),
-                    workerKind = task.workerKind,
-                    idempotencyKey = if (task.workerKind == "verification") task.id else null,
-                    evidenceJson = encodeSpecs(task.evidence),
-                    startedAt = null,
-                    finishedAt = null,
-                )
-            })
+            dao.upsertTasks(parsed.mapIndexed { index, task -> taskEntity(objective.id, task, index, now) })
             val plannedTasks = dao.getTasks(objectiveId)
             if (!beforeTasksExecute(plannedTasks)) {
                 return requireNotNull(dao.getObjective(objectiveId))
@@ -151,17 +167,47 @@ class ObjectiveExecutionEngine(
         session: InferenceSession,
         agentId: String,
         control: ExecutionControl,
+        decision: PlanningDecision,
     ): List<PlannedObjectiveTask> {
         val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
-        val profile = CompactPlanningPolicy.profile(objective.goal, terminalTools != null, toolNames, session.options.contextLength)
-        event(objective.id, null, "planning_profile", "${if (profile.compact) "Compact sequential" else "Full DAG"} planner; output cap ${profile.maxOutputTokens} tokens. A plan is not permission to execute tools.", status = "running")
+        val base = CompactPlanningPolicy.profile(objective.goal, terminalTools != null, toolNames, session.options.contextLength)
+        val profile = when (decision.strategy) {
+            PlanningStrategy.FULL -> base.copy(maxSteps = decision.maxInitialSteps)
+            PlanningStrategy.GUIDED -> PlanningProfile(
+                compact = false,
+                maxOutputTokens = 160,
+                allowedWorkers = base.allowedWorkers,
+                maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048),
+                singleStep = false,
+                exitCodeWorkers = base.exitCodeWorkers,
+                maxSteps = 1,
+            )
+            else -> base.copy(
+                compact = true,
+                maxOutputTokens = minOf(base.maxOutputTokens, 384),
+                maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048),
+                singleStep = false,
+                maxSteps = decision.maxInitialSteps,
+            )
+        }
+        lastPlanningProfile = profile
+        event(objective.id, null, "planning_profile", "${if (profile.compact) "Compact" else "Guided"} planner; at most ${if (profile.singleStep) 1 else profile.maxSteps} initial step(s), output cap ${profile.maxOutputTokens} tokens. A plan is not permission to execute tools.", status = "running")
+        if (decision.strategy == PlanningStrategy.GUIDED) {
+            val prompt = IncrementalPlanning.prompt(objective.goal, emptyList(), profile.allowedWorkers ?: CompactPlanningPolicy.ALL_WORKERS, guided = true)
+            val response = requestPlanText(objective, session, null, profile, control, prompt)
+            val task = IncrementalPlanning.parseNext(response.text, guided = true, profile = profile,
+                objectiveId = objective.id, agentId = agentId, dependsOn = emptyList())
+                ?: throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
+                    "The guided planner declared completion without a task; no work was accepted."))
+            return listOf(task)
+        }
         return PlanningRecovery.validatedPlan(
             objectiveId = objective.id,
             agentId = agentId,
             request = { attempt, repair ->
                 control.checkpoint()
                 event(objective.id, null, "planning_attempt", "Planning attempt $attempt/${PlanningRecovery.MAX_PLAN_ATTEMPTS}; waiting for a bounded model response.", status = "running")
-                requestPlanText(objective, session, repair, profile, control)
+                requestPlanText(objective, session, repair, profile, control).text
             },
             onRejected = { attempt, failure ->
                 event(objective.id, null, "planning_validation_failed", "Attempt $attempt rejected: ${failure.reason}", status = "failed")
@@ -179,7 +225,8 @@ class ObjectiveExecutionEngine(
         repair: Pair<String, PlanningFailure>?,
         profile: PlanningProfile,
         control: ExecutionControl,
-    ): String {
+        systemPromptOverride: String? = null,
+    ): PlanningResponse {
         if (objective.goal.length > 8_000) {
             throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
                 "Objective exceeds the 8000-character planner input limit. Shorten or split it; no truncated objective was planned."))
@@ -188,7 +235,7 @@ class ObjectiveExecutionEngine(
         val limits = session.timeouts.planningLimits()
         val lifecycle = PlanningLifecyclePolicy(clock(), limits)
         val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
-        val systemPrompt = if (profile.compact) CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)
+        val systemPrompt = systemPromptOverride ?: if (profile.compact) CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)
             else plannerPrompt(terminalTools != null, toolNames)
         val input = CompactPlanningPolicy.prepareInput(objective.goal, systemPrompt, profile, repair)
         val messages = buildList {
@@ -223,7 +270,9 @@ class ObjectiveExecutionEngine(
                         options = session.options.copy(temperature = 0.1,
                             maxOutputTokens = profile.maxOutputTokens, responseSchema = profile.schema,
                             contextLength = profile.maxContextTokens ?: session.options.contextLength,
-                            executionTimeouts = session.timeouts),
+                            executionTimeouts = session.timeouts,
+                            think = if (thinkingDisabled) false else session.options.think,
+                            thinkingObserver = { chunk -> lifecycle.reasoning(clock(), chunk) }),
                         onToken = { chunk -> lifecycle.token(clock(), chunk) })
                 }
                 try {
@@ -261,7 +310,18 @@ class ObjectiveExecutionEngine(
         control.checkpoint()
         if (!result.done) throw PlanningFailureException(PlanningFailure(PlanningFailureKind.INTERRUPTED, "Provider marked the planning response incomplete; no partial plan was accepted."))
         if (result.toolCalls.isNotEmpty()) throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED, "Planning returned tool calls despite a tool-free request; no task was accepted."))
-        return result.content
+        val finalSnapshot = lifecycle.progress(clock())
+        capabilityIdentity?.let { identity ->
+            runCatching {
+                capabilityStore.recordObservation(identity, result.thinkingCharacters > 0, result.stats, finalSnapshot.firstTokenAfterMs)
+            }
+        }
+        if (result.thinkingCharacters > 0) {
+            event(objective.id, null, "planning_reasoning_observed",
+                "Provider reasoning stream emitted ${result.thinkingCharacters} characters separately from plan text; reasoning is not executed. Elapsed ${finalSnapshot.elapsedMs / 1_000}s.",
+                status = "completed")
+        }
+        return PlanningResponse(result.content, result.thinkingCharacters, result.stats)
     }
 
     private suspend fun planningNeedsAttention(objectiveId: String, failure: PlanningFailure): ObjectiveEntity {
@@ -320,6 +380,24 @@ class ObjectiveExecutionEngine(
                     )
                 }
                 if (tasks.isNotEmpty() && tasks.all { it.status == "completed" }) {
+                    if (planningStrategy in setOf(PlanningStrategy.INCREMENTAL, PlanningStrategy.GUIDED) && !incrementalDone) {
+                        val next = try {
+                            requestNextStep(objectiveId, objective, agent, session, control, tasks)
+                        } catch (failure: PlanningFailureException) {
+                            return@coroutineScope planningNeedsAttention(objectiveId, failure.failure)
+                        } catch (e: Exception) {
+                            return@coroutineScope planningNeedsAttention(objectiveId, PlanningRecovery.classify(e))
+                        }
+                        if (next == null) {
+                            incrementalDone = true
+                            event(objectiveId, null, "planning_continuation_done", "The model declared the incremental plan complete after $incrementalExpansions continuation(s); executed tasks passed their local evidence.", status = "completed")
+                        } else {
+                            val ordinal = (tasks.maxOfOrNull { it.ordinal } ?: -1) + 1
+                            dao.upsertTask(taskEntity(objectiveId, next, ordinal, now()))
+                            event(objectiveId, null, "planning_expanded", "Added one validated continuation task (${incrementalExpansions}/${IncrementalPlanning.MAX_EXPANSIONS}); NYX assigned its identifier and dependency.", status = "running")
+                            continue
+                        }
+                    }
                     val done = requireNotNull(dao.getObjective(objectiveId)).copy(
                         status = "completed",
                         updatedAt = now(),
@@ -956,6 +1034,66 @@ class ObjectiveExecutionEngine(
             .take(350)
 
     private fun now(): Long = System.currentTimeMillis()
+
+    private fun taskEntity(objectiveId: String, task: PlannedObjectiveTask, ordinal: Int, now: Long): ObjectiveTaskEntity =
+        ObjectiveTaskEntity(
+            id = task.id,
+            objectiveId = objectiveId,
+            ordinal = ordinal,
+            title = task.title,
+            instructions = task.instructions,
+            verification = task.verification,
+            dependsOnJson = JSONArray(task.dependsOn).toString(),
+            status = "pending",
+            attemptCount = 0,
+            maxAttempts = if (task.workerKind == "verification") 3 else 2,
+            outcome = null,
+            error = null,
+            updatedAt = now,
+            priority = priorityFor(task.workerKind),
+            workerKind = task.workerKind,
+            idempotencyKey = if (task.workerKind == "verification") task.id else null,
+            evidenceJson = encodeSpecs(task.evidence),
+            startedAt = null,
+            finishedAt = null,
+        )
+
+    /**
+     * One bounded next-step decision after every existing task has passed its evidence. A failure
+     * here never invents a task, retries a side effect, or declares the objective complete.
+     */
+    private suspend fun requestNextStep(
+        objectiveId: String,
+        objective: ObjectiveEntity,
+        agent: AgentEntity,
+        session: InferenceSession,
+        control: ExecutionControl,
+        completed: List<ObjectiveTaskEntity>,
+    ): PlannedObjectiveTask? {
+        if (incrementalExpansions >= IncrementalPlanning.MAX_EXPANSIONS) {
+            throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
+                "Bounded incremental planning reached its ${IncrementalPlanning.MAX_EXPANSIONS}-continuation limit; executed tasks were not automatically declared complete."))
+        }
+        val profile = lastPlanningProfile ?: throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
+            "No validated planning profile is available for continuation."))
+        val guided = planningStrategy == PlanningStrategy.GUIDED
+        // A plain-text decision cannot carry validated tool evidence, so guided continuation stays inference-only.
+        val allowed = if (guided) setOf("inference") else profile.allowedWorkers ?: CompactPlanningPolicy.ALL_WORKERS
+        val prompt = IncrementalPlanning.prompt(objective.goal, completed.map { it.title }, allowed, guided)
+        event(objectiveId, null, "planning_continuation",
+            "Requesting one bounded next-step decision (${incrementalExpansions + 1}/${IncrementalPlanning.MAX_EXPANSIONS}).", status = "waiting")
+        val response = requestPlanText(objective, session, null, profile, control, prompt)
+        val task = IncrementalPlanning.parseNext(response.text, guided, profile, objectiveId, agent.id,
+            dependsOn = listOf(completed.last().id))
+        incrementalExpansions++
+        return task
+    }
+
+    private data class PlanningResponse(
+        val text: String,
+        val reasoningCharacters: Int,
+        val stats: InferenceTokenStats?,
+    )
 
     private fun plannerPrompt(terminalEnabled: Boolean, toolNames: Set<String>): String = buildString {
         append(

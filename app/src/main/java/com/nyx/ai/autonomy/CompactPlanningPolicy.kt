@@ -12,6 +12,7 @@ data class PlanningProfile(
     val maxContextTokens: Int? = null,
     val singleStep: Boolean = false,
     val exitCodeWorkers: Set<String>? = null,
+    val maxSteps: Int = CompactPlanningPolicy.MAX_STEPS,
 ) {
     val schema: String? get() = when {
         !compact -> null
@@ -142,7 +143,7 @@ object CompactPlanningPolicy {
             appendLine("One inference step; no other fields. Output existence is checked, NOT factual correctness. Do not claim tool/file work.")
         } else {
             appendLine("""{"steps":[{"do":"short executable instructions","worker":"inference"}]}""")
-            appendLine("Use 1-$MAX_STEPS sequential steps, preferably one. NYX assigns IDs, titles and dependencies. No other fields except check.")
+            appendLine("Use 1-${profile.maxSteps} sequential steps, preferably one. NYX assigns IDs, titles and dependencies. No other fields except check.")
             val labels = mapOf("inference" to "text", "filesystem" to "files", "verification" to "inspect", "terminal" to "commands", "development" to "edit/build/test")
             appendLine("Workers: ${selected.sorted().joinToString(", ") { "$it=${labels.getValue(it)}" }}. Only listed workers apply.")
             appendLine("Inference has no check; output existence is checked, NOT factual correctness.")
@@ -172,7 +173,7 @@ object CompactPlanningPolicy {
         profile.allowedWorkers?.let { selected ->
             if (tasks.any { it.workerKind !in selected }) invalid("Plan selected a worker unavailable in this planning profile.")
         }
-        if (profile.compact && tasks.size > if (profile.singleStep) 1 else MAX_STEPS)
+        if (profile.compact && tasks.size > if (profile.singleStep) 1 else profile.maxSteps)
             invalid("Plan exceeds this profile's validated task limit.")
         for (task in tasks) {
             if (task.workerKind != "inference" && (task.evidence.isEmpty() || task.evidence.any { it.kind == EvidenceKind.ARTIFACT_NONEMPTY }))

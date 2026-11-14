@@ -1,4 +1,15 @@
-# NYX User Guide — v0.8.7 Project Breakthrough
+# NYX User Guide — v0.8.8 Project Insight
+
+## v0.8.8 — Project Insight (published)
+
+NYX now chooses a planning workload instead of always requesting a whole task graph.
+
+- **Direct** — a short, explicitly text-only objective (for example "Explain photosynthesis" or "Write a short poem about rain") becomes one deterministic inference task and starts without a planning call. Any mention of files, commands, builds, tests, installs, browsing or publishing disables this shortcut.
+- **Incremental** — complex, tool-oriented, slow or unproven models get at most two validated steps. After every step passes local evidence, NYX asks for one more step, up to six continuations. The model cannot assign identifiers, dependencies or permissions.
+- **Full** — only a complex objective with demonstrated schema output, measured throughput of at least 6 tokens/s and a 4K+ context requests one full graph.
+- **Guided** — a model without demonstrated constrained JSON can return one validated `NEXT inference: …` line per step. Guided mode cannot request terminal, filesystem or development work because plain text cannot carry the local evidence those workers require.
+
+The Models diagnostic now records the measured capability profile and shows it with the probe summary. Profiles expire after 24 hours or when provider, model, context or thread configuration changes. Reasoning output appears as progress in the Live Worker Console; it is never executed or treated as the plan.
 
 ## v0.8.7 — Project Breakthrough (published)
 

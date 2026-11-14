@@ -1,4 +1,8 @@
-# Building NYX 0.8.7 — Project Breakthrough
+# Building NYX 0.8.8 — Project Insight
+
+## v0.8.8 Project Insight published release
+
+VersionCode 21 / versionName 0.8.8, package com.nyx.ai. Clean `testDebugUnitTest assembleDebug assembleDebugAndroidTest` passed in 1m 36s: 934 tests across 96 classes, zero failures, zero errors, one environment-dependent skip (host Kotlin fixture without a real `kotlinc`). Instrumentation compiled, not run. APK SHA-256 `e43046bfec8341b6f0ce57df349c8e772797208f261b408279010230ddc0f4c6`; unchanged signer SHA-256 `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`; 16 KB ZIP alignment passed. No AAB or Play publication. Release files are `NYX-v0.8.8.apk`, `NYX-v0.8.8-androidTest.apk`, `NYX-Source-v0.8.8.zip` and `NYX-v0.8.8-SHA256SUMS.txt`. Historical instructions below are preserved.
 
 ## v0.8.7 Project Breakthrough published release
 

@@ -82,6 +82,9 @@ import com.nyx.ai.ollama.OllamaServerState
 import com.nyx.ai.ollama.OllamaServerStatus
 import com.nyx.ai.ollama.OllamaProcess
 import com.nyx.ai.network.InferenceProvider
+import com.nyx.ai.network.ModelCapabilities
+import com.nyx.ai.network.ModelCapabilityPolicy
+import com.nyx.ai.network.ModelIdentity
 import com.nyx.ai.nativeinference.*
 import com.nyx.ai.performance.CalibrationPlanner
 import com.nyx.ai.performance.CalibrationRunner
@@ -198,6 +201,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private val nativeRepository = NativeModelRepository(application)
     private val providerFactory = InferenceClientFactory(db, credentialVault, application)
     private val prefs = application.getSharedPreferences("nyx_settings", 0)
+    private val capabilityStore = ModelCapabilities.initialize(File(application.filesDir, "model_capabilities.json"))
     private val timeoutPolicyStore = ExecutionTimeoutPolicyStore(application)
     private val restoredTimeoutPolicy = runCatching { timeoutPolicyStore.selected() }
     private val environmentProfiles = EnvironmentProfileStore(application)
@@ -458,8 +462,19 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(diagnosticRunning = true, diagnosticSummary = "Checking selected model; queue/load timing is unknown.") }
         viewModelScope.launch {
             try {
-                val result = com.nyx.ai.network.ModelDiagnostic.run(inferenceProvider(s.endpoint), s.selectedModel, options())
-                _state.update { it.copy(diagnosticSummary = result.summary) }
+                val provider = inferenceProvider(s.endpoint)
+                val options = options()
+                val result = com.nyx.ai.network.ModelDiagnostic.run(provider, s.selectedModel, options)
+                val identity = ModelIdentity(
+                    providerId = provider.id,
+                    providerKind = provider.kind,
+                    model = s.selectedModel,
+                    contextLength = options.contextLength,
+                    cpuThreads = options.cpuThreads,
+                )
+                val profile = ModelCapabilityPolicy.fromDiagnostic(identity, result)
+                capabilityStore.put(profile)
+                _state.update { it.copy(diagnosticSummary = result.summary + "\n\n" + profile.summary()) }
             } catch (cancel: kotlinx.coroutines.CancellationException) {
                 throw cancel
             } catch (error: Exception) {

@@ -32,6 +32,8 @@ data class ChatResult(
     val toolCalls: List<ToolCall> = emptyList(),
     val done: Boolean = true,
     val stats: InferenceTokenStats? = null,
+    /** Provider reasoning/thinking characters; never part of [content]. */
+    val thinkingCharacters: Int = 0,
 )
 data class ApiMessage(
     val role: String,
@@ -47,6 +49,10 @@ data class InferenceOptions(
     val maxOutputTokens: Int? = null,
     val responseSchema: String? = null,
     val executionTimeouts: ExecutionTimeoutPolicy? = null,
+    /** Ollama-only; sent only when the server is known to accept the parameter. */
+    val think: Boolean? = null,
+    /** Streams reasoning deltas as activity, never as answer text. */
+    val thinkingObserver: ((String) -> Unit)? = null,
 ) {
     init {
         require(maxOutputTokens == null || maxOutputTokens > 0) { "Output token limit must be positive." }
@@ -134,6 +140,7 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
                 require(schema.length <= 16_384) { "Response schema exceeds 16,384 characters." }
                 payload.put("format", parseJsonObject(schema))
             }
+            options.think?.let { payload.put("think", it) }
         }
         if (tools != null && tools.length() > 0) payload.put("tools", tools)
         val url = endpoint(if (openAiCompatible) "/chat/completions" else "/api/chat")
@@ -163,6 +170,7 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
                     try {
                         val source = res.body?.source() ?: throw IOException("Empty response from inference server")
                         val allText = StringBuilder()
+                        var thinkingChars = 0
                         val completedCalls = mutableListOf<ToolCall>()
                         val partialCalls = linkedMapOf<Int, PartialToolCall>()
                         var stats: InferenceTokenStats? = null
@@ -189,6 +197,12 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
                                 val delta = choice?.optJSONObject("delta") ?: continue
                                 val text = delta.optString("content", "")
                                 if (text.isNotEmpty()) { allText.append(text); onToken(text) }
+                                val reasoning = delta.optString("reasoning_content", "")
+                                    .ifBlank { delta.optString("reasoning", "") }
+                                if (reasoning.isNotEmpty()) {
+                                    thinkingChars += reasoning.length
+                                    options.thinkingObserver?.invoke(reasoning)
+                                }
                                 val rawCalls = delta.optJSONArray("tool_calls")
                                 if (rawCalls != null) for (i in 0 until rawCalls.length()) {
                                     val update = rawCalls.optJSONObject(i) ?: continue
@@ -207,6 +221,11 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
                                 val message = root.optJSONObject("message") ?: JSONObject()
                                 val text = message.optString("content", "")
                                 if (text.isNotEmpty()) { allText.append(text); onToken(text) }
+                                val reasoning = message.optString("thinking", "")
+                                if (reasoning.isNotEmpty()) {
+                                    thinkingChars += reasoning.length
+                                    options.thinkingObserver?.invoke(reasoning)
+                                }
                                 val rawCalls = message.optJSONArray("tool_calls")
                                 if (rawCalls != null) for (i in 0 until rawCalls.length()) {
                                     val tc = rawCalls.optJSONObject(i) ?: continue
@@ -235,7 +254,9 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
                                 completedCalls += ToolCall(partial.id.ifBlank { "tool-${completedCalls.size}" }, partial.name.toString(), argumentsObject(partial.arguments.toString()))
                             }
                         }
-                        if (continuation.isActive) continuation.resume(ChatResult(allText.toString(), completedCalls, done = streamDone, stats = stats))
+                        if (continuation.isActive) continuation.resume(
+                            ChatResult(allText.toString(), completedCalls, done = streamDone, stats = stats, thinkingCharacters = thinkingChars),
+                        )
                     } catch (e: Exception) {
                         if (continuation.isActive) continuation.resumeWithException(e)
                     }

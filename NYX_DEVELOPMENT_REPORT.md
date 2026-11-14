@@ -1,5 +1,9 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.8 — Project Insight (published)
+
+Adds measured capability profiles, capability-driven planning strategies (direct, incremental, full, guided), a deterministic zero-call start for simple text objectives, bounded continuation after verified work, and reasoning-stream visibility with evidence-based thinking suppression for planning. 934 JVM tests across 96 classes pass with zero failures and zero errors (one environment-dependent skip); clean ARM64 APK and instrumentation compilation passed. Real-provider strategy selection and device behavior remain unverified. See [implementation report](V088_IMPLEMENTATION_REPORT.md).
+
 ## v0.8.7 — Project Breakthrough (published)
 
 Focused keyboard/draft repair, smaller planning workload, mobile execution patience, isolated concurrent operation evidence and task/workspace conflict protection are integrated. 909 JVM tests across 92 classes and clean ARM64 APK/instrumentation compilation passed. Hardware keyboard/local-model reliability remains unconfirmed. See [implementation report](V087_IMPLEMENTATION_REPORT.md). Local v0.8.6 preserved; published on GitHub.
