@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-11-14T20:40:38.597Z" hostname="VEYNHLAY2VPOS" time="1.476">
+  <properties/>
+  <testcase name="switchingOperationsResetsDetailAndBackRestoresGroupedListPosition" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.22"/>
+  <testcase name="longRunHistoryMenuCanSelectOldestAndNewestRunsWithoutLeakingDetailPosition" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.229"/>
+  <testcase name="detailStartsAtBeginningAndBothEndsOfLongHistoryAreReachable" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.237"/>
+  <testcase name="longPayloadExpandsIntoReachableRowsAndCollapsesWithoutDeletingEvents" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.182"/>
+  <testcase name="liveArrivalPreservesHistoryAndFollowIsExplicitAndStoppedByGesture" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.284"/>
+  <testcase name="copySharePauseCancelAndCloseRemainAvailableThroughScrollableContext" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.11"/>
+  <testcase name="rawAndGroupedNavigationKeepAllEventsAndLatestMeansNewestOperation" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.108"/>
+  <testcase name="expandingAnEventStopsFollowingAndSystemBackReturnsBeforeClosing" classname="com.nyx.ai.ui.ConsolePhoneHostRegressionTest" time="0.101"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

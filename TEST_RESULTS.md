@@ -1,3 +1,7 @@
+# NYX v0.9.1 — Live Worker Console source hotfix
+
+**UI simulation:** 24 tests passed (8 cases × phone, expanded and short windows), zero failures/errors/skips, using the actual Compose dialog with Robolectric API 35 native graphics. The original baseline reproduced a zero-height detail viewport in the short window. Four JVM regressions cover complete text retention, long/newline/Unicode boundaries, ordering and independent event expansion. The eight Android instrumentation cases compile separately; physical Pixel/Fold scrolling, insets and fold transitions remain UNVERIFIED. Clean full build passed in **2m 32s**: **1,202 tests across 134 suites, zero failures/errors/skips**, app and instrumentation assembly, and independent identity/ARM64/notices/16 KB checks in build-only signer mode. Source archive creation/verification passed on retry with the unchanged checker. See the [hotfix report](CONSOLE_UI_HOTFIX_REPORT.md). No app version, README, release tag or published assets change.
+
 # NYX v0.9.1 — Project Ignition verification
 
 **Published build (2026-11-14):** clean build passed in **2m 50s**; full suite reran with `NYX_REAL_NETWORK_TEST=1` in **2m 6s**. Result: **1,198 JVM tests across 133 suites, zero failures, zero errors, zero skipped**, including **16 Ignition regressions**. App and instrumentation APKs assembled. Identity (`com.nyx.ai`, 0.9.1/code 24, API 26–37), ARM64, notices and 16 KB ZIP/ELF checks passed with the original NYX certificate `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`. No physical-device test was run.

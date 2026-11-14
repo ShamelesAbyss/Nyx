@@ -1,3 +1,7 @@
+# NYX v0.9.1 — Live Worker Console source hotfix
+
+Focused console-only layout/navigation repair: scrollable context/headings, compact expandable events with complete lazy-paged text, explicit live-follow and first/latest controls, scoped scroll restoration and preserved actions. Baseline short-window simulation measured a 0 px event viewport; 24 repaired UI simulations passed across three window sizes. Physical Pixel 10 Pro Fold acceptance remains unverified. See [root cause, test evidence and limitations](CONSOLE_UI_HOTFIX_REPORT.md). Clean app/instrumentation build and 1,202 JVM tests passed (zero failures/errors/skips); independent artifact checks passed in build-only signer mode. Version 0.9.1/code 24, README design/downloads, release tag/assets and execution systems remain unchanged.
+
 # NYX v0.9.1 — Project Ignition (published)
 
 Implemented three deterministic, explicitly selected Quick Actions within the existing Kotlin objective engine and Compose Autonomy UI. Fixed project tools, retained Workbench integrity checks, evidence/ownership, cancellation and no-replay review remain enforced. No model planning or inference call occurs on this path. See [scoped implementation and verification report](V091_IMPLEMENTATION_REPORT.md) and [release notes](RELEASE_NOTES_v0.9.1.md). Clean host build passed 1,198 tests/133 suites with no failures/errors/skips and assembled both APKs. The original signing key was verified, certificate continuity and 16 KB checks passed, and exact-commit hosted CI succeeded. v0.9.1 is published as the latest stable release.

@@ -1,0 +1,20 @@
+{
+  "baseline": "8c736932a6f8832c443ab776f502306a9236f41f",
+  "jvm": {
+    "tests": 1202,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": 134,
+  "cleanGradleBuild": "2m 32s",
+  "apkAssembly": "app and instrumentation APKs compiled; not installed or published",
+  "artifactChecks": "identity/SDK/ARM64/notices/16 KB ZIP and ELF passed with existing explicit ephemeral-signer verification mode",
+  "sourceCheck": "4607 exact current-tree files passed creation and independent verification; final evidence/docs source inventory may grow before commit",
+  "sourceArchiveInitialAttempt": "Python pathlib exception; unchanged independent checker retry passed, no release gate changed",
+  "versionName": "0.9.1",
+  "versionCode": 24,
+  "physicalAndroid": "UNVERIFIED",
+  "uiSimulationTests": 24,
+  "buildLogSha256": "b88f6a73b199d9746113d199076513fce87cac0531f64fcf05502b5127d35200"
+}

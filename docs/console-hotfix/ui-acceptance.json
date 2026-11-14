@@ -1,0 +1,32 @@
+{
+  "baseline": "8c736932a6f8832c443ab776f502306a9236f41f",
+  "baselineShortWindowViewportHeightPx": 0,
+  "simulation": "Robolectric 4.16.1 / Android API 35 native graphics; production compile/target remain API 37",
+  "sizesDp": [
+    [
+      360,
+      640
+    ],
+    [
+      840,
+      600
+    ],
+    [
+      640,
+      360
+    ]
+  ],
+  "ui": {
+    "tests": 24,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "physicalAndroid": "UNVERIFIED",
+  "coverage": "8 production-dialog Compose tests repeated in each size; 40-run history, 300 events, 2,000-line output, manual/follow, expansion, system Back, copy/share/pause/cancel/close",
+  "sourceHashes": {
+    "app/src/main/java/com/nyx/ai/ui/WorkerConsoleUi.kt": "98d4393e4682d65e4c39495a8ce4fa1b32ac49bfbb102312277016ea74d5244c",
+    "app/src/main/java/com/nyx/ai/ui/ConsoleTimelinePolicy.kt": "e4129810d32620f75b58256b8bf85bdff72935eea0900f544c35b723093377b1",
+    "app/src/androidTest/java/com/nyx/ai/ui/WorkerConsoleScrollingInstrumentedTest.kt": "927c9d519edb4f1eaba732b0e82e123dc90195a3699c6890b1f85015faaad171"
+  }
+}

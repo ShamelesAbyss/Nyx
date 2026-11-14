@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.nyx.ai.ui.ConsoleTimelinePolicyTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-14T20:47:48.075Z" hostname="VEYNHLAY2VPOS" time="0.011">
+  <properties/>
+  <testcase name="whitespaceUnbrokenTextAndSupplementaryUnicodeAreNotLostOrSplit" classname="com.nyx.ai.ui.ConsoleTimelinePolicyTest" time="0.003"/>
+  <testcase name="extremelyLongOutputIsFullyRetainedInBoundedRows" classname="com.nyx.ai.ui.ConsoleTimelinePolicyTest" time="0.008"/>
+  <testcase name="expandingAndCollapsingOneEventKeepsOtherSelections" classname="com.nyx.ai.ui.ConsoleTimelinePolicyTest" time="0.0"/>
+  <testcase name="latestUsesActualSortDirectionAndHandlesEmptyOrSingleRow" classname="com.nyx.ai.ui.ConsoleTimelinePolicyTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

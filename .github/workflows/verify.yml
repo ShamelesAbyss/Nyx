@@ -53,6 +53,13 @@ jobs:
         env:
           NYX_KOTLINC: ${{ runner.temp }}/nyx-kotlin-2.2.10/kotlinc/bin/kotlinc
         run: bash tools/build_release.sh --build verification-output/ci --ci-ephemeral-signer
+      - name: Compose console regressions (host Android simulation, not device acceptance)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -R app/build/test-results/testDebugUnitTest verification-output/ci/jvm-test-results
+          cp -R app/build/reports/tests/testDebugUnitTest verification-output/ci/jvm-test-report
+          bash tools/console_ui_host_tests.sh current verification-output/console-ui
       - name: Retain bounded verification evidence (never CI-signed installation APKs)
         if: ${{ always() }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -67,3 +74,9 @@ jobs:
             verification-output/ci/artifact-checks/*.txt
             verification-output/ci/artifact-checks/*.json
             verification-output/ci/build-and-dependencies.log
+            verification-output/ci/jvm-test-results/*.xml
+            verification-output/ci/jvm-test-report/**
+            verification-output/console-ui/test-results/*.xml
+            verification-output/console-ui/screenshots/*.png
+            verification-output/console-ui/inputs.json
+            verification-output/console-ui/build.log
