@@ -22,3 +22,10 @@ keystore.properties
 *.aab
 __pycache__/
 *.pyc
+# Local verification/distribution outputs and retired historical root bundles
+verification-output/
+.nyx-verification/
+/NYX.apk
+/NYX-Source.zip
+/NYX-Source-v*.zip
+/NYX-v*-SHA256SUMS.txt

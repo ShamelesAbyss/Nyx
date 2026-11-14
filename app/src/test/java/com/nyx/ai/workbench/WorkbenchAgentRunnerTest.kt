@@ -62,7 +62,8 @@ class WorkbenchAgentRunnerTest {
         val selected = InferenceOptions(temperature = 0.2, contextLength = 8192,
             executionTimeouts = ExecutionTimeoutPolicy.forProfile())
         val provider = FakeInference { request ->
-            assertEquals(selected, request.options)
+            assertNotNull("Runner must supply the active timeout observer", request.options.thinkingObserver)
+            assertEquals(selected, request.options.copy(thinkingObserver = null))
             assertNull(request.tools)
             assertTrue(request.messages.first().content.contains(WorkbenchAgentTools.WRITE))
             assertFalse(request.messages.first().content.contains("\"name\":\"terminal_run\""))

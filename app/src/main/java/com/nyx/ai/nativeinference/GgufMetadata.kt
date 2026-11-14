@@ -27,7 +27,7 @@ data class GgufMetadata(
     val valueLength: Int?,
 ) {
     fun estimate(sizeBytes: Long, contextLength: Int): NativeMemoryEstimate {
-        require(contextLength in 512..32768)
+        val allocatedContext = nativeAllocationContext(contextLength)
         val conventional = architecture in setOf("llama", "qwen2", "qwen3", "smollm3", "phi3", "stablelm")
         val layers = blockCount
         val heads = attentionHeads
@@ -37,14 +37,15 @@ data class GgufMetadata(
         val k = keyLength ?: headDim
         val v = valueLength ?: headDim
         val kvBytes = if (conventional && layers != null && kv != null && k != null && v != null) {
-            checkedMultiply(checkedMultiply(checkedMultiply(layers.toLong(), contextLength.toLong()), kv.toLong()), (k.toLong() + v) * 2)
+            checkedMultiply(checkedMultiply(checkedMultiply(layers.toLong(), allocatedContext.toLong()), kv.toLong()), (k.toLong() + v) * 2)
         } else null
         return NativeMemoryEstimate(
             weightFileBytes = sizeBytes,
             kvCacheBytes = kvBytes,
             computeReserveBytes = 256L * 1024 * 1024,
             contextLength = contextLength,
-            explanation = if (kvBytes != null) "Conservative full weight-file residency plus conventional transformer FP16 K/V estimate. KV = layers × context × KV heads × (key + value head dimensions) × 2 bytes. Includes 256 MiB graph reserve, not a measured peak or a guarantee. mmap page residency varies."
+            allocatedContextLength = allocatedContext,
+            explanation = if (kvBytes != null) "Conservative full weight-file residency plus conventional transformer FP16 K/V estimate. KV = layers × allocated context (256-position padding) × KV heads × (key + value head dimensions) × 2 bytes. Usable context remains requested. Includes 256 MiB graph reserve, not a measured peak or a guarantee. mmap page residency varies."
                 else "KV layout cannot be qualified from this architecture/metadata; load admission is refused. File size is not Android Java heap usage.",
         )
     }
@@ -56,8 +57,15 @@ data class NativeMemoryEstimate(
     val computeReserveBytes: Long,
     val contextLength: Int,
     val explanation: String,
+    val allocatedContextLength: Int = contextLength,
 ) {
     val estimatedWorkingSetBytes: Long? get() = kvCacheBytes?.let { checkedAdd(checkedAdd(weightFileBytes, it), computeReserveBytes) }
+}
+
+/** Must match app-owned nyx_context.h and the pinned llama.cpp single-sequence allocation. */
+internal fun nativeAllocationContext(requested: Int): Int {
+    require(requested in 512..32768) { "Native context is bounded to 512..32768" }
+    return ((requested + 255) / 256) * 256
 }
 
 internal fun checkedMultiply(a: Long, b: Long): Long {

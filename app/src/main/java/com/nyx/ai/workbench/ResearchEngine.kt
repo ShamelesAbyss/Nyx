@@ -2,6 +2,7 @@ package com.nyx.ai.workbench
 
 import com.nyx.ai.autonomy.policy.AutonomyMode
 import com.nyx.ai.network.FetchedPage
+import com.nyx.ai.network.NetworkAddressPolicy
 import com.nyx.ai.network.NetworkDecision
 import com.nyx.ai.network.NetworkPolicy
 import com.nyx.ai.network.NetworkTools
@@ -195,7 +196,9 @@ class ResearchEngine private constructor(
             .followRedirects(false).followSslRedirects(false)
             .dns(object : Dns {
                 override fun lookup(hostname: String): List<InetAddress> = client.dns.lookup(hostname).also { answers ->
-                    if (!(testFixture && NetworkPolicy.isLoopbackHost(hostname)) && (answers.isEmpty() || answers.any { !publicAddress(it) })) {
+                    if (answers.isEmpty() || answers.any {
+                            !(testFixture && NetworkPolicy.isLoopbackHost(hostname) && it.isLoopbackAddress) && !publicAddress(it)
+                        }) {
                         throw IOException("DNS resolved to a non-public address.")
                     }
                 }
@@ -232,7 +235,10 @@ class ResearchEngine private constructor(
                 val remaining = pace.nextNanos - System.nanoTime()
                 if (remaining > 0) delay((remaining / 1_000_000L) + 1)
                 coroutineContext.ensureActive()
-                try { NetworkTools(guarded).fetchText(url, cap) }
+                try {
+                    val tools = if (testFixture) NetworkTools.forTests(guarded) else NetworkTools(guarded)
+                    tools.fetchText(url, cap)
+                }
                 finally { pace.nextNanos = System.nanoTime() + delayMs * 1_000_000L }
             }
         } finally {
@@ -242,7 +248,9 @@ class ResearchEngine private constructor(
     }
 
     private fun assess(url: String) {
-        val assessment = NetworkPolicy.assess(url, upload = false, mode = modeProvider())
+        val localFixture = testFixture && NetworkPolicy.isLoopbackHost(url.toHttpUrlOrNull()?.host.orEmpty())
+        // Only this internal fixture uses a public surrogate for mode checks; production has no bypass.
+        val assessment = NetworkPolicy.assess(if (localFixture) "https://fixture.example/" else url, upload = false, mode = modeProvider())
         if (assessment.decision != NetworkDecision.ALLOW) throw IOException("Network ${assessment.decision.name.lowercase()}: ${assessment.reason}")
     }
 
@@ -257,16 +265,13 @@ class ResearchEngine private constructor(
         require((testFixture && local) || (!local && url.scheme == "https" && !NetworkPolicy.isPrivateHost(url.host) && url.port in setOf(80, 443))) {
             "Research requires a public HTTPS URL; loopback/private hosts are refused."
         }
-        // NetworkPolicy has deliberately broad fc/fd hostname detection; preserve it, not bypass it.
         require(!local || testFixture)
         return url.newBuilder().fragment(null).build().toString()
     }
 
     private fun sameOrigin(a: HttpUrl, b: HttpUrl): Boolean = a.scheme == b.scheme && a.host == b.host && a.port == b.port
 
-    private fun publicAddress(address: InetAddress): Boolean = !address.isAnyLocalAddress && !address.isLoopbackAddress &&
-        !address.isLinkLocalAddress && !address.isSiteLocalAddress && !address.isMulticastAddress &&
-        !NetworkPolicy.isPrivateHost(address.hostAddress.orEmpty())
+    private fun publicAddress(address: InetAddress): Boolean = NetworkAddressPolicy.isPublic(address)
 
     private fun safeFailure(error: Exception): String = when {
         error is IllegalArgumentException -> "URL or response refused by research safety checks."

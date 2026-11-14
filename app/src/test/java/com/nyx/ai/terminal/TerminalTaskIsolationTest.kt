@@ -28,12 +28,12 @@ class TerminalTaskIsolationTest {
             val id = currentCoroutineContext()[TerminalExecutionScope]!!.taskId
             if (id == "sibling") siblingDispatched = true
             if (id == "other") unrelated.complete(Unit)
-            val discovery = "MARKER:Makefile\n" + listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd", "cc", "make").joinToString("\n") { "TOOL:$it=/usr/bin/$it" }
+            val discovery = "MARKER:Makefile\n" + listOf("realpath", "sha256sum", "head", "wc", "stat", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd", "cc", "make").joinToString("\n") { "TOOL:$it=/usr/bin/$it" }
             if (id == "first" && "MARKER:" !in command) { firstBuild.complete(Unit); release.await() }
             TerminalCommandResult(id, TerminalResultKind.SUCCEEDED, 0, if ("MARKER:" in command) discovery else id)
         }
         val root = "/tmp/nyx-build-lease"
-        val template = TerminalAgentTools(executor, root, workspaceApproved = true)
+        val template = TerminalAgentTools(executor, root, TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true)
         val first = launch(TerminalExecutionScope("objective", "first")) {
             template.forTask(context("first")).runProject(com.nyx.ai.development.ProjectRunKind.BUILD)
         }
@@ -43,7 +43,7 @@ class TerminalTaskIsolationTest {
         }
         val other = launch(TerminalExecutionScope("objective", "other")) {
             val otherRoot = "/tmp/nyx-build-unrelated"
-            TerminalAgentTools(executor, otherRoot, workspaceApproved = true, modelCommandGate = gate(otherRoot))
+            TerminalAgentTools(executor, otherRoot, TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true, modelCommandGate = gate(otherRoot))
                 .forTask(context("other")).execute(call("echo independent"))
         }
         withTimeout(3_000) { unrelated.await() }
@@ -133,11 +133,14 @@ class TerminalTaskIsolationTest {
         val observed = mutableListOf<Pair<String, Long>>()
         val tools = TerminalAgentTools(TerminalToolExecutor { command, _, _, timeout, _ ->
             observed += command to timeout
-            val discovery = "MARKER:Makefile\n" + listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd", "cc", "make").joinToString("\n") { "TOOL:$it=/usr/bin/$it" }
+            val discovery = "MARKER:Makefile\n" + listOf("realpath", "sha256sum", "head", "wc", "stat", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd", "cc", "make").joinToString("\n") { "TOOL:$it=/usr/bin/$it" }
             TerminalCommandResult("fixture", TerminalResultKind.SUCCEEDED, 0, if ("MARKER:" in command) discovery else "ok")
-        }, "/tmp/nyx-timeout-isolation", workspaceApproved = true, modelCommandGate = gate("/tmp/nyx-timeout-isolation")).forTask(context("timed", policy))
+        }, "/tmp/nyx-timeout-isolation", TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true, modelCommandGate = gate("/tmp/nyx-timeout-isolation")).forTask(context("timed", policy))
         assertTrue(tools.runProject(com.nyx.ai.development.ProjectRunKind.BUILD).passed)
-        tools.execute(call("echo bounded", Long.MAX_VALUE))
+        val dispatchCount = observed.size
+        assertTrue(tools.execute(call("echo bounded", Long.MAX_VALUE)).startsWith("Tool denied"))
+        assertEquals(dispatchCount, observed.size)
+        tools.execute(call("echo bounded", policy.terminalMs / 1_000))
         assertEquals(policy.buildMs / 1_000, observed.first { "'/usr/bin/make'" in it.first && "MARKER:" !in it.first }.second)
         assertEquals(policy.terminalMs / 1_000, observed.last().second)
         assertTrue(observed.filter { "MARKER:" in it.first }.all { it.second <= 45 })

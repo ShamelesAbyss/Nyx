@@ -80,14 +80,10 @@ class TerminalRepository(
         val syntax = WorkspaceValidator.validateSyntax(WorkspaceRequest(environment, path, authorized = true))
         if (syntax !is WorkspaceCheck.Valid) return syntax
         val script = WorkspaceValidator.probeScript(syntax.normalizedPath)
-        val result = when (environment) {
-            TerminalEnvironment.TERMUX_HOST -> bridge.runHostIsolated(script, timeoutSeconds = 30)
-            TerminalEnvironment.DEBIAN_PROOT -> bridge.runShell(
-                script, environment, workingDirectory = null, timeoutSeconds = 30,
-                useTimeoutBinary = false, approved = true, guestAlias = guestAlias,
-            )
-        }
-        return WorkspaceValidator.parseProbe(result.stdout, result.stderr, result.exitCode)
+        val result = bridge.execute(ControlledShell.request(script, environment, null, 30, false, guestAlias),
+            TerminalOperationContext(namespace = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias",
+                workspace = path, readOnly = false))
+        return WorkspaceValidator.parseProbe(result.stdout, result.stderr, if (result.isSuccess) 0 else null, path, environment)
     }
 
     suspend fun execute(
@@ -101,6 +97,7 @@ class TerminalRepository(
         useTimeoutBinary: Boolean = true,
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
         policyRequest: ActionRequest? = null,
+        controlledMode: Boolean = false,
     ): TerminalCommandResult {
         val assessment = CommandPolicy.assess(command)
         val authorization = policyRequest?.let { AutonomyRuntime.authorize(appContext, it) }
@@ -135,10 +132,11 @@ class TerminalRepository(
         } else if (assessment.requiresConfirmation && !approvedByUser) {
             TerminalCommandResult(null, TerminalResultKind.CONFIRMATION_REQUIRED, message = assessment.reasons.joinToString("; "))
         } else {
-            bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser, guestAlias,
-                TerminalOperationContext(id, objectiveId, taskId,
-                    namespace = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias",
-                    workspace = workingDirectory, readOnly = assessment.risk == CommandRisk.READ_ONLY))
+            val operation = TerminalOperationContext(id, objectiveId, taskId,
+                namespace = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias",
+                workspace = workingDirectory, readOnly = assessment.risk == CommandRisk.READ_ONLY)
+            if (controlledMode) bridge.execute(ControlledShell.request(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, guestAlias), operation)
+            else bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser, guestAlias, operation)
         } } catch (cancel: CancellationException) {
             withContext(NonCancellable) {
                 database.terminalCommandDao().upsert(row.copy(status = "needs_review", finishedAt = System.currentTimeMillis(), error = "Result wait cancelled. Termux process may still run until its timeout; do not replay automatically."))

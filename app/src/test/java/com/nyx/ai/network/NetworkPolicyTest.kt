@@ -22,11 +22,14 @@ class NetworkPolicyTest {
     }
 
     @Test
-    fun `loopback http is allowed`() {
-        val result = NetworkPolicy.assess("http://127.0.0.1:11434/api/tags", upload = false, mode = AutonomyMode.SMART)
-        assertEquals(NetworkDecision.ALLOW, result.decision)
+    fun `public tools deny loopback and emulator host even in full mode`() {
+        listOf("127.0.0.1", "localhost", "service.localhost", "[::1]", "10.0.2.2").forEach { host ->
+            listOf("http", "https").forEach { scheme ->
+                assertEquals(NetworkDecision.DENY, NetworkPolicy.assess("$scheme://$host/api/tags", false, AutonomyMode.FULL).decision)
+            }
+        }
         assertTrue(NetworkPolicy.isLoopbackHost("localhost"))
-        assertTrue(NetworkPolicy.isLoopbackHost("10.0.2.2"))
+        assertFalse(NetworkPolicy.isLoopbackHost("10.0.2.2"))
     }
 
     @Test
@@ -65,6 +68,8 @@ class NetworkPolicyTest {
     fun `redirects cannot downgrade public https or reach private hosts`() {
         assertFalse(NetworkPolicy.redirectAllowed("https://example.com/a", "http://example.com/b"))
         assertFalse(NetworkPolicy.redirectAllowed("https://example.com/a", "https://127.0.0.1/b"))
+        assertFalse(NetworkPolicy.redirectAllowed("https://example.com/a", "https://example.com:8443/b"))
+        assertFalse(NetworkPolicy.redirectAllowed("http://127.0.0.1/a", "http://example.com/b"))
         assertTrue(NetworkPolicy.redirectAllowed("https://example.com/a", "https://example.org/b"))
     }
 }

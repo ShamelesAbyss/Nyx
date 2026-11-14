@@ -87,6 +87,8 @@ class ObjectiveExecutionEngine(
     private val capabilityStore: ModelCapabilityStore = ModelCapabilities.store(),
     private val workbenchApproval: WorkbenchAuthorization = WorkbenchAuthorization(),
     private val workbenchStore: WorkbenchStore? = null,
+    // Host regression seam; production continues to use the existing Room transaction owner.
+    private val objectiveTransaction: suspend (suspend () -> Unit) -> Unit = { block -> database.withTransaction { block() } },
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
@@ -116,16 +118,16 @@ class ObjectiveExecutionEngine(
         return try {
             control.checkpoint()
             val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
-            val identity = ModelIdentity(
-                providerId = session.provider.id,
-                providerKind = session.provider.kind,
-                model = session.modelId,
-                contextLength = session.options.contextLength,
-                cpuThreads = session.options.cpuThreads,
-            )
+            val intendedProfile = CompactPlanningPolicy.profile(objective.goal, terminalTools != null, toolNames, session.options.contextLength)
+            val incremental = CompactPlanningPolicy.forDecision(intendedProfile, PlanningDecision(PlanningStrategy.INCREMENTAL, "candidate", 2, true, false), session.options.contextLength)
+            val full = CompactPlanningPolicy.forDecision(intendedProfile, PlanningDecision(PlanningStrategy.FULL, "candidate", 12, false, false), session.options.contextLength)
+            val fullIdentity = ModelIdentity.fromRequest(session.provider, session.modelId, planningOptions(session, full), null)
+            val fullCapability = capabilityStore.get(fullIdentity) ?: ModelCapabilityProfile(fullIdentity)
+            val fullDecision = ModelCapabilityPolicy.decide(fullCapability, objective.goal, terminalTools != null)
+            val identity = ModelIdentity.fromRequest(session.provider, session.modelId, planningOptions(session, incremental), null)
             capabilityIdentity = identity
-            val capability = capabilityStore.get(identity) ?: ModelCapabilityProfile(identity)
-            val selectedDecision = ModelCapabilityPolicy.decide(capability, objective.goal, terminalTools != null)
+            val capability = if (fullDecision.strategy == PlanningStrategy.FULL) fullCapability else capabilityStore.get(identity) ?: ModelCapabilityProfile(identity)
+            val selectedDecision = if (fullDecision.strategy == PlanningStrategy.FULL) fullDecision else ModelCapabilityPolicy.decide(capability, objective.goal, terminalTools != null)
             val decision = if (workbenchApproval.enabled && selectedDecision.strategy == PlanningStrategy.DIRECT)
                 selectedDecision.copy(strategy = PlanningStrategy.INCREMENTAL, allowExpansion = true,
                     reason = "Explicit requested disk artifacts require a validated tool plan, not direct prose.")
@@ -179,25 +181,7 @@ class ObjectiveExecutionEngine(
     ): List<PlannedObjectiveTask> {
         val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
         val base = CompactPlanningPolicy.profile(objective.goal, terminalTools != null, toolNames, session.options.contextLength)
-        val profile = when (decision.strategy) {
-            PlanningStrategy.FULL -> base.copy(maxSteps = decision.maxInitialSteps)
-            PlanningStrategy.GUIDED -> PlanningProfile(
-                compact = false,
-                maxOutputTokens = 160,
-                allowedWorkers = base.allowedWorkers,
-                maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048),
-                singleStep = false,
-                exitCodeWorkers = base.exitCodeWorkers,
-                maxSteps = 1,
-            )
-            else -> base.copy(
-                compact = true,
-                maxOutputTokens = minOf(base.maxOutputTokens, 384),
-                maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048),
-                singleStep = false,
-                maxSteps = decision.maxInitialSteps,
-            )
-        }
+        val profile = CompactPlanningPolicy.forDecision(base, decision, session.options.contextLength)
         lastPlanningProfile = profile
         event(objective.id, null, "planning_profile", "${if (profile.compact) "Compact" else "Guided"} planner; at most ${if (profile.singleStep) 1 else profile.maxSteps} initial step(s), output cap ${profile.maxOutputTokens} tokens. A plan is not permission to execute tools.", status = "running")
         if (decision.strategy == PlanningStrategy.GUIDED) {
@@ -207,9 +191,10 @@ class ObjectiveExecutionEngine(
                 objectiveId = objective.id, agentId = agentId, dependsOn = emptyList())
                 ?: throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
                     "The guided planner declared completion without a task; no work was accepted."))
+            event(objective.id, null, "planning_checkpoint", planningCheckpoint(0).toString(), status = "completed")
             return listOf(task)
         }
-        return PlanningRecovery.validatedPlan(
+        val validated = PlanningRecovery.validatedPlan(
             objectiveId = objective.id,
             agentId = agentId,
             request = { attempt, repair ->
@@ -225,6 +210,9 @@ class ObjectiveExecutionEngine(
             },
             validate = { tasks -> CompactPlanningPolicy.validateWorkers(tasks, profile) },
         )
+        if (profile.fullGraph) capabilityIdentity?.let { capabilityStore.recordValidatedFullPlan(it) }
+        event(objective.id, null, "planning_checkpoint", planningCheckpoint(0).toString(), status = "completed")
+        return validated
     }
 
     private suspend fun requestPlanText(
@@ -243,8 +231,8 @@ class ObjectiveExecutionEngine(
         val limits = session.timeouts.planningLimits()
         val lifecycle = PlanningLifecyclePolicy(clock(), limits)
         val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
-        val systemPrompt = (systemPromptOverride ?: if (profile.compact) CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)
-            else plannerPrompt(terminalTools != null, toolNames)) +
+        val systemPrompt = (systemPromptOverride ?: if (profile.fullGraph) CompactPlanningPolicy.fullPrompt(profile, terminalTools != null, toolNames)
+            else CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)) +
             workbenchApproval.promptBlock().let { if (it.isNotBlank()) "\n\n$it" else "" }
         val input = CompactPlanningPolicy.prepareInput(objective.goal, systemPrompt, profile, repair)
         val messages = buildList {
@@ -275,13 +263,10 @@ class ObjectiveExecutionEngine(
             coroutineScope {
                 report(lifecycle.progress(clock()), "planning_waiting")
                 val pending = async {
-                    InferenceFabric.wrap(session.provider).chat(session.modelId, messages, tools = null,
-                        options = session.options.copy(temperature = 0.1,
-                            maxOutputTokens = profile.maxOutputTokens, responseSchema = profile.schema,
-                            contextLength = profile.maxContextTokens ?: session.options.contextLength,
-                            executionTimeouts = session.timeouts,
-                            think = if (thinkingDisabled) false else session.options.think,
-                            thinkingObserver = { chunk -> lifecycle.reasoning(clock(), chunk) }),
+                    val outgoing = planningOptions(session, profile).copy(
+                            thinkingObserver = { chunk -> lifecycle.reasoning(clock(), chunk) })
+                    capabilityIdentity = ModelIdentity.fromRequest(session.provider, session.modelId, outgoing, null)
+                    InferenceFabric.wrap(session.provider).chat(session.modelId, messages, tools = null, options = outgoing,
                         onToken = { chunk -> lifecycle.token(clock(), chunk) })
                 }
                 try {
@@ -353,6 +338,16 @@ class ObjectiveExecutionEngine(
         val objective = requireNotNull(dao.getObjective(objectiveId)) { "Objective no longer exists." }
         val session = sessions.create(objective, agent)
         val tasks = dao.getTasks(objectiveId)
+        val savedPlanning = dao.observeEvents(objectiveId).first().filter { it.kind == "planning_checkpoint" || it.kind == "planning_continuation_reserved" }
+            .map { JSONObject(requireNotNull(it.detail)) }
+        val saved = savedPlanning.withIndex().maxWithOrNull(compareBy<IndexedValue<JSONObject>> { it.value.getInt("continuationOrdinal") }.thenBy { it.index })?.value
+        planningStrategy = saved?.let { PlanningStrategy.valueOf(it.getString("strategy")) } ?: PlanningStrategy.DIRECT
+        incrementalExpansions = savedPlanning.maxOfOrNull { it.getInt("continuationOrdinal") } ?: 0
+        incrementalDone = saved?.optBoolean("done", false) ?: false
+        val base = CompactPlanningPolicy.profile(objective.goal, terminalTools != null,
+            AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty(), session.options.contextLength)
+        lastPlanningProfile = saved?.optJSONObject("profile")?.let(::restorePlanningProfile) ?: CompactPlanningPolicy.forDecision(base,
+            PlanningDecision(planningStrategy, "restored legacy checkpoint", if (planningStrategy == PlanningStrategy.FULL) 12 else 2, true, false), session.options.contextLength)
         if (!beforeTasksExecute(tasks)) {
             return requireNotNull(dao.getObjective(objectiveId))
         }
@@ -399,10 +394,14 @@ class ObjectiveExecutionEngine(
                         }
                         if (next == null) {
                             incrementalDone = true
+                            event(objectiveId, null, "planning_checkpoint", planningCheckpoint(incrementalExpansions, true).toString(), status = "completed")
                             event(objectiveId, null, "planning_continuation_done", "The model declared the incremental plan complete after $incrementalExpansions continuation(s); executed tasks passed their local evidence.", status = "completed")
                         } else {
                             val ordinal = (tasks.maxOfOrNull { it.ordinal } ?: -1) + 1
-                            dao.upsertTask(taskEntity(objectiveId, next, ordinal, now()))
+                            objectiveTransaction {
+                                dao.upsertTask(taskEntity(objectiveId, next, ordinal, now()))
+                                event(objectiveId, null, "planning_checkpoint", planningCheckpoint(incrementalExpansions).put("taskId", next.id).toString(), status = "completed")
+                            }
                             event(objectiveId, null, "planning_expanded", "Added one validated continuation task (${incrementalExpansions}/${IncrementalPlanning.MAX_EXPANSIONS}); NYX assigned its identifier and dependency.", status = "running")
                             continue
                         }
@@ -413,7 +412,7 @@ class ObjectiveExecutionEngine(
                             it.kind == "workbench_artifact_verified" && it.taskId != null
                         }.mapNotNull { event -> runCatching {
                             val json = JSONObject(event.detail ?: "{}")
-                            WorkbenchCompletionPolicy.WriteWitness(requireNotNull(event.taskId), json.getString("name"), json.getString("sha256"))
+                            WorkbenchCompletionPolicy.WriteWitness(requireNotNull(event.taskId), json.getString("name"), json.getString("sha256"), json.optString("tool").ifBlank { null })
                         }.getOrNull() }
                         val missing = WorkbenchCompletionPolicy.missing(workbenchApproval, store,
                             tasks.filter { it.status == "completed" }.map { it.id }.toSet(), witnesses)
@@ -626,6 +625,7 @@ class ObjectiveExecutionEngine(
             configured = allowed,
             available = availableTools,
             terminalAvailable = terminalTools != null,
+            combinedDevelopment = workbenchApproval.combinedDevelopment != null,
         )
         val scopedAllowed = toolScope.allowed
         if (approvedSkills.isNotEmpty()) event(objectiveId, task.id, "skill_scope", approvedSkills.joinToString { "${it.manifest.id}@${it.manifest.version}" })
@@ -655,11 +655,17 @@ class ObjectiveExecutionEngine(
         }
         var developmentPassed: Boolean? = null
         var developmentFinalCommands: List<DevelopmentCommand>? = null
+        var projectExecutions = emptyList<com.nyx.ai.terminal.FixedProjectExecution>()
         // Skill/toolchain preflight is not execution evidence for a worker's completion claim.
-        objectiveTools?.drainEvidence()
+        objectiveTools.drainEvidence()
+        (terminalTools as? TerminalAgentTools)?.drainProjectExecutions()
         val outcome = try {
             if (task.workerKind == "development") {
                 val concrete = terminalTools as? TerminalAgentTools ?: error("Development requires an explicitly approved Termux workspace and available toolchain.")
+                require(scopedAllowed.containsAll(setOf("file_read", "file_write", "build_run", "test_run"))) {
+                    "Development requires approved source access and fixed build/test capabilities."
+                }
+                val development: suspend () -> AgentOutcome = {
                 val preferences = app.getSharedPreferences("nyx_settings", 0)
                 val budget = DevelopmentBudget(
                     maxIterations = preferences.getInt("repair_iterations", 3).coerceIn(1, 5),
@@ -674,6 +680,17 @@ class ObjectiveExecutionEngine(
                 }
                 developmentPassed = report.passed
                 developmentFinalCommands = report.iterations.lastOrNull()?.commands
+                projectExecutions = concrete.drainProjectExecutions()
+                val registered = if (report.passed && workbenchApproval.combinedDevelopment != null) {
+                    CombinedDevelopmentRegistration.register(workbenchApproval, requireNotNull(workbenchStore), toolContext,
+                        concrete, projectExecutions) { phase, detail ->
+                        val record = contextStore.write(objectiveId, task.id, "observation", phase, detail)
+                        database.contextRecordDao().insert(ContextRecordEntity(record.id, record.objectiveId, record.taskId,
+                            record.kind, record.title, record.filePath, record.summary, record.createdAt))
+                        contextStore.checkpoint(objectiveId, task.id, phase)
+                        event(objectiveId, task.id, phase, detail)
+                    }
+                } else emptyList()
                 val journal = JSONObject().put("passed", report.passed).put("reason", report.reason).put("calls", report.inferenceCalls).put("elapsedMillis", report.elapsedMillis)
                     .put("commands", JSONArray().apply { report.commands.forEach { put(JSONObject().put("command", it.command).put("exit", it.exitCode).put("stdout", it.stdout).put("stderr", it.stderr)) } })
                     .put("files", JSONArray(report.files)).put("diff", report.diff).put("checkpointIds", JSONArray(report.checkpoints.map { it.id }))
@@ -683,7 +700,11 @@ class ObjectiveExecutionEngine(
                     "Inference calls: ${report.inferenceCalls} · elapsed ${report.elapsedMillis}ms\n" +
                     report.commands.joinToString("\n") { "${it.kind}: ${it.command} -> exit ${it.exitCode}" } +
                     "\nChanged files: ${report.files.joinToString()}\nCheckpoints: ${report.checkpoints.joinToString { it.id }}\nDiff:\n${report.diff}"
-                AgentOutcome(text, emptyList(), report.inferenceCalls, report.evidence)
+                AgentOutcome(text + registered.joinToString("\n", prefix = if (registered.isEmpty()) "" else "\nRegistered output snapshots:\n") { it.stdout },
+                    emptyList(), report.inferenceCalls, report.evidence + registered)
+                }
+                workbenchApproval.combinedDevelopment?.let { CombinedDevelopmentTransaction.run(it, toolContext, development) }
+                    ?: development()
             } else AgentRunner(app, InferenceFabric.wrap(session.provider), objectiveTools).run(
                 spec = spec,
                 task = task.instructions,
@@ -702,6 +723,7 @@ class ObjectiveExecutionEngine(
             eventChannel.close()
             withContext(NonCancellable) { writer.join() }
         }
+        if (task.workerKind != "development") projectExecutions = (terminalTools as? TerminalAgentTools)?.drainProjectExecutions().orEmpty()
         control.checkpoint()
 
         check(outcome.evidence.all { it.objectiveId == objectiveId && it.taskId == task.id }) {
@@ -724,19 +746,20 @@ class ObjectiveExecutionEngine(
             EvidenceSpec(EvidenceKind.CHECKSUM_SHA256, target = path, expected = json.getString("sha256"),
                 description = "Actual tool write digest checked against current registered bytes")
         }
-        val effectiveSpecs = (if (task.workerKind == "development") specs + EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0") else specs) + artifactChecks
-        require(task.workerKind == "inference" || effectiveSpecs.isNotEmpty()) { "Tool task has no declared evidence; no completion can be established." }
-        val lastExit = outcome.evidence.lastOrNull { it.exitCode != null }
+        val mandatorySpecs = (if (task.workerKind == "development") listOf(EvidenceSpec(EvidenceKind.EXIT_CODE, expected = "0")) else emptyList()) + artifactChecks
+        require(task.workerKind == "inference" || specs.isNotEmpty() || mandatorySpecs.isNotEmpty()) { "Tool task has no declared evidence; no completion can be established." }
+        val processEvidence = CombinedExecutionVerification.processEvidence(outcome.evidence, projectExecutions)
+        val lastExit = processEvidence.lastOrNull { it.exitCode != null }
         val observation = ObservationBundle(
             exitCode = developmentFinalCommands?.lastOrNull()?.exitCode ?: lastExit?.exitCode,
-            stdout = (developmentFinalCommands?.joinToString("\n") { it.stdout } ?: outcome.evidence.joinToString("\n") { it.stdout }).take(64_000),
-            stderr = (developmentFinalCommands?.joinToString("\n") { it.stderr } ?: outcome.evidence.joinToString("\n") { it.stderr }).take(16_000),
+            stdout = (developmentFinalCommands?.joinToString("\n") { it.stdout } ?: processEvidence.joinToString("\n") { it.stdout }).take(64_000),
+            stderr = (developmentFinalCommands?.joinToString("\n") { it.stderr } ?: processEvidence.joinToString("\n") { it.stderr }).take(16_000),
             agentOutput = outcome.result,
             fileExists = { path -> fileProbe?.exists(path) ?: false },
             fileText = { path, max -> fileProbe?.read(path, max) },
             checksum = { path -> fileProbe?.sha256(path) },
         )
-        val report = TaskVerifier.verify(effectiveSpecs, observation, toolFailures)
+        val report = CombinedExecutionVerification.verify(specs, mandatorySpecs, observation, toolFailures)
 
         val verifying = task.copy(
             status = "verifying",
@@ -889,7 +912,7 @@ class ObjectiveExecutionEngine(
         }
     }
 
-    private suspend fun saveObjective(row: ObjectiveEntity) = database.withTransaction {
+    private suspend fun saveObjective(row: ObjectiveEntity) = objectiveTransaction {
         val current = dao.getObjective(row.id)
         dao.upsertObjective(row.copy(leaseOwner = current?.leaseOwner, leaseExpiresAt = current?.leaseExpiresAt))
     }
@@ -1112,19 +1135,43 @@ class ObjectiveExecutionEngine(
             throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
                 "Bounded incremental planning reached its ${IncrementalPlanning.MAX_EXPANSIONS}-continuation limit; executed tasks were not automatically declared complete."))
         }
-        val profile = lastPlanningProfile ?: throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
+        val previous = lastPlanningProfile ?: throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
             "No validated planning profile is available for continuation."))
         val guided = planningStrategy == PlanningStrategy.GUIDED
+        val profile = IncrementalPlanning.continuationProfile(previous, guided)
+        require(completed.isNotEmpty() && completed.all { it.objectiveId == objectiveId && it.status == "completed" }) { "Continuation dependencies must be completed same-objective tasks." }
         // A plain-text decision cannot carry validated tool evidence, so guided continuation stays inference-only.
         val allowed = if (guided) setOf("inference") else profile.allowedWorkers ?: CompactPlanningPolicy.ALL_WORKERS
         val prompt = IncrementalPlanning.prompt(objective.goal, completed.map { it.title }, allowed, guided)
+        val ordinal = incrementalExpansions + 1
+        event(objectiveId, null, "planning_continuation_reserved", planningCheckpoint(ordinal).toString(), status = "waiting")
         event(objectiveId, null, "planning_continuation",
             "Requesting one bounded next-step decision (${incrementalExpansions + 1}/${IncrementalPlanning.MAX_EXPANSIONS}).", status = "waiting")
         val response = requestPlanText(objective, session, null, profile, control, prompt)
         val task = IncrementalPlanning.parseNext(response.text, guided, profile, objectiveId, agent.id,
-            dependsOn = listOf(completed.last().id))
-        incrementalExpansions++
+            dependsOn = listOf(completed.maxBy { it.ordinal }.id), decisionKey = "continuation_$ordinal",
+            existingTaskIds = dao.getTasks(objectiveId).map { it.id }.toSet())
+        incrementalExpansions = ordinal
         return task
+    }
+
+    private fun planningOptions(session: InferenceSession, profile: PlanningProfile) = session.options.copy(
+        temperature = 0.1, maxOutputTokens = profile.maxOutputTokens, responseSchema = profile.schema,
+        contextLength = profile.maxContextTokens ?: session.options.contextLength, executionTimeouts = session.timeouts)
+
+    private fun planningCheckpoint(ordinal: Int, done: Boolean = false): JSONObject = JSONObject()
+        .put("strategy", planningStrategy.name).put("continuationOrdinal", ordinal).put("done", done)
+        .put("profile", lastPlanningProfile?.let { p -> JSONObject().put("compact", p.compact).put("maxOutputTokens", p.maxOutputTokens)
+            .put("allowedWorkers", p.allowedWorkers?.let { JSONArray(it.sorted()) } ?: JSONObject.NULL)
+            .put("maxContextTokens", p.maxContextTokens ?: JSONObject.NULL).put("singleStep", p.singleStep)
+            .put("exitCodeWorkers", p.exitCodeWorkers?.let { JSONArray(it.sorted()) } ?: JSONObject.NULL)
+            .put("maxSteps", p.maxSteps).put("continuation", p.continuation).put("fullGraph", p.fullGraph) } ?: JSONObject.NULL)
+
+    private fun restorePlanningProfile(json: JSONObject): PlanningProfile {
+        fun workers(key: String): Set<String>? = json.optJSONArray(key)?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
+        return PlanningProfile(json.getBoolean("compact"), json.getInt("maxOutputTokens"), workers("allowedWorkers"),
+            if (json.isNull("maxContextTokens")) null else json.getInt("maxContextTokens"), json.getBoolean("singleStep"),
+            workers("exitCodeWorkers"), json.getInt("maxSteps"), json.getBoolean("continuation"), json.getBoolean("fullGraph"))
     }
 
     private data class PlanningResponse(

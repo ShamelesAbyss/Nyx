@@ -41,6 +41,8 @@ data class GatewayServerConfig(
         if (!ID_PATTERN.matches(id)) add("id must match ${ID_PATTERN.pattern}")
         if (name.isBlank() || name.length > 80) add("name must be 1..80 characters")
         if (endpoint.isBlank() || endpoint.length > 2048) add("endpoint must be 1..2048 characters")
+        if (hasEmbeddedCredentials()) add("endpoint must not contain credentials, queries or fragments")
+        if (kind == GatewayKind.MCP_HTTP && runCatching { McpEndpointPolicy.validate(endpoint) }.isFailure) add("MCP endpoint is invalid or unsafe")
         if (timeoutSeconds !in MIN_TIMEOUT_SECONDS..MAX_TIMEOUT_SECONDS) {
             add("timeoutSeconds must be in $MIN_TIMEOUT_SECONDS..$MAX_TIMEOUT_SECONDS")
         }
@@ -59,8 +61,9 @@ data class GatewayServerConfig(
 
     /** Credentials must never ride in a URL; the token provider supplies them per call. */
     fun hasEmbeddedCredentials(): Boolean = runCatching {
-        !java.net.URI(endpoint.trim()).userInfo.isNullOrEmpty()
-    }.getOrDefault(false)
+        val uri = java.net.URI(endpoint.trim())
+        uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null
+    }.getOrDefault(true)
 
     fun withEnabled(value: Boolean): GatewayServerConfig = copy(enabled = value)
 

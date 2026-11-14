@@ -54,7 +54,8 @@ class IgnitionAgentRunnerTest {
             executionTimeouts = ExecutionTimeoutPolicy.forProfile())
         val provider = object : InferenceProvider by FakeInference(reply = { ChatResult("unused") }) {
             override suspend fun chat(model: String, messages: List<ApiMessage>, tools: JSONArray?, options: InferenceOptions, onToken: (String) -> Unit): ChatResult {
-                assertEquals(selected, options)
+                assertNotNull(options.thinkingObserver)
+                assertEquals(selected, options.copy(thinkingObserver = null))
                 entered.complete(Unit)
                 try { awaitCancellation() } finally { stopped.complete(Unit) }
             }
@@ -399,7 +400,7 @@ class IgnitionAgentRunnerTest {
         override val kind: String = "native-gguf",
         private val reply: (Request) -> ChatResult,
     ) : InferenceProvider {
-        override val id = "ignition-fixture"
+        override val id = "ignition-fixture-${java.util.UUID.randomUUID()}"
         override val displayName = "Deterministic ignition fixture"
         override val local = true
         val requests = mutableListOf<Request>()

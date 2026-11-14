@@ -124,10 +124,12 @@ class DistroListingTest {
     fun `isolated request bypasses profile scripts`() {
         val request = HostShell.isolatedRequest("printf ok", 30)
         assertEquals(TerminalEnvironment.TERMUX_HOST, request.environment)
-        assertEquals(HostShell.SHELL_PATH, request.commandPath)
+        assertEquals("${HostShell.TERMUX_PREFIX}/bin/env", request.commandPath)
+        assertEquals("-i", request.arguments.first())
+        assertTrue(request.arguments.contains("${HostShell.TERMUX_PREFIX}/bin/bash"))
         assertTrue(request.arguments.contains("--noprofile"))
         assertTrue(request.arguments.contains("--norc"))
-        assertTrue(request.arguments.last().startsWith("unset BASH_ENV ENV;"))
+        assertTrue(request.arguments.none { it.startsWith("BASH_ENV=") || it.startsWith("ENV=") })
     }
 
     @Test

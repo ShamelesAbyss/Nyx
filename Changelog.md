@@ -1,10 +1,10 @@
 # Changelog
 
-> **Legacy filename:** this file is retained for existing links. The canonical, maintained release history is [CHANGELOG.md](CHANGELOG.md). Current release: **v0.8.9 — Project Workbench** ([published](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9)).
+> **Legacy filename:** this file is retained for existing links. The canonical, maintained release history is [CHANGELOG.md](CHANGELOG.md). Current release: **v0.9.0 — Project Workbench** ([published](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.0)).
 >
-> Historical v0.1.0 notes are retained from the initial project publication. The current, canonical release history through v0.8.9 is in [CHANGELOG.md](CHANGELOG.md).
+> Historical v0.1.0 notes are retained from the initial project publication. The current, canonical release history through v0.9.0 is in [CHANGELOG.md](CHANGELOG.md).
 
-## 0.8.9 — Project Workbench
+## 0.9.0 — Project Workbench
 
 Measured capability profiles per provider/model/context/thread identity, 24-hour local caching with identity invalidation, four planning strategies (direct, incremental, full, guided), bounded continuation after verified work, separate reasoning-stream progress, and evidence-based thinking suppression for structured planning. No new permissions or tool authority; signing identity, llama.cpp source and user data are unchanged.
 

@@ -157,6 +157,7 @@ data class NyxState(
     val workbenchPreviewText: String = "",
     val workbenchDraftImportName: String = "",
     val workbenchImporting: Boolean = false,
+    val recoveryFailure: String? = null,
     val terminalHistory: List<TerminalCommandEntity> = emptyList(),
     val terminalOperations: List<com.nyx.ai.terminal.TerminalOperationEvidence> = emptyList(),
     val requestedTerminalContexts: Int = 3,
@@ -668,15 +669,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun snapshotObjective(id: String, s: NyxState, workbench: WorkbenchAuthorization? = null) {
         persistEndpointNow(s)
         // Workbench authority belongs to the objective, not today's UI/provider settings.
-        val existing = db.objectiveDao().observeEvents(id).first().lastOrNull { it.kind == "execution_config" }
-            ?.detail?.let { WorkbenchAuthorization.fromSnapshot(JSONObject(it)) } ?: WorkbenchAuthorization()
-        val approval = (workbench ?: existing).validate()
+        val previous = WorkbenchExecutionConfiguration.latest(db.objectiveDao().observeEvents(id).first()
+            .filter { it.kind == "execution_config" }.map { JSONObject(requireNotNull(it.detail)) })
+        val existing = previous?.let { WorkbenchAuthorization.fromSnapshot(it) } ?: WorkbenchAuthorization()
+        val approval = (workbench ?: existing).bindObjective(id)
         val snapshot = JSONObject().put("endpointId", endpointRecordId(s.endpoint)).put("modelId", s.selectedModel)
             .put("options", JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads))
-            .put("terminalEnabled", s.terminalToolsEnabled && !approval.enabled).put("workspace", if (approval.enabled) "" else s.terminalWorkspace)
-            .put("environment", s.terminalEnvironment.name).put("guestAlias", s.guestAlias)
             .put(ExecutionTimeoutPolicyStore.SNAPSHOT_KEY, timeoutPolicyStore.snapshot(s.executionTimeoutPolicy))
-            .put(WorkbenchAuthorization.SNAPSHOT_KEY, approval.toJson())
+        WorkbenchExecutionConfiguration.scope(snapshot, approval, id, s.terminalToolsEnabled,
+            s.terminalEnvironment, s.guestAlias, s.terminalWorkspace, previous)
         db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "execution_config", snapshot.toString(), System.currentTimeMillis()))
     }
 
@@ -932,12 +933,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         val approval = runCatching { workbench.validate() }.getOrElse { failure ->
             _state.update { it.copy(error = failure.message ?: "Invalid Workbench approval.") }; return
         }
-        require(!development || !approval.enabled) { "Workbench is not a development workspace." }
+        if (development && approval.enabled && approval.combinedDevelopment == null) {
+            _state.update { it.copy(error = "Development with Workbench requires a separate explicit combined project/output approval.") }; return
+        }
+        val developmentRequested = development || approval.combinedDevelopment != null
         if (goal.length > 8_000) { _state.update { it.copy(error = "Objective exceeds 8,000 characters; shorten it rather than executing a truncated request.") }; return }
         val clean = goal.trim()
         if (clean.isBlank()) return
-        if (development && !_state.value.terminalToolsEnabled) { _state.update { it.copy(error = "Enable an approved development workspace first.") }; return }
-        if (development) {
+        if (developmentRequested && !_state.value.terminalToolsEnabled) { _state.update { it.copy(error = "Enable an approved development workspace first.") }; return }
+        if (developmentRequested) {
             val pre = preflightDevelopment()
             if (!pre.ready) {
                 _state.update {
@@ -991,7 +995,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(error = error.message?.take(240) ?: "Could not prepare objective storage.") }
                 return@launch
             }
-            if (development) {
+            if (developmentRequested) {
                 require(s.terminalToolsEnabled) { "Enable an approved development workspace first." }
                 db.objectiveDao().upsertTask(ObjectiveTaskEntity(objectiveId = row.id, ordinal = 0, title = "Inspect, establish baseline, repair and retest", instructions = clean, workerKind = "development", maxAttempts = 1, evidenceJson = "[]"))
             }
@@ -1070,7 +1074,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             _state.update { it.copy(objectiveRunning = true, objectiveStreaming = "", error = "") }
-            snapshotObjective(id, s)
+            try { snapshotObjective(id, s) } catch (error: Exception) {
+                releaseInference()
+                _state.update { it.copy(objectiveRunning = false, error = "Resume approval blocked: ${error.message?.take(240)}") }
+                return@launch
+            }
             objectiveReservation = true
             try { ObjectiveExecutionService.start(app, id) } catch (e: Exception) {
                 objectiveReservation = false; releaseInference()
@@ -1087,7 +1095,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun refreshWorkbenchNow(id: String, events: List<ObjectiveEventEntity>) {
         try {
-            val snapshot = events.lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) } ?: return
+            val snapshot = WorkbenchExecutionConfiguration.latest(events.filter { it.kind == "execution_config" }
+                .map { JSONObject(requireNotNull(it.detail)) }) ?: return
             val approval = WorkbenchAuthorization.fromSnapshot(snapshot)
             val manifest = if (approval.enabled) withContext(Dispatchers.IO) {
                 WorkbenchStore(File(app.filesDir, "workbench"), id).readManifest()
@@ -1137,9 +1146,11 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun approvedWorkbenchStore(id: String): WorkbenchStore {
         requireNotNull(db.objectiveDao().getObjective(id)) { "Objective no longer exists." }
-        val snapshot = db.objectiveDao().observeEvents(id).first().lastOrNull { it.kind == "execution_config" }
-            ?.detail?.let { JSONObject(it) } ?: error("Missing objective approval.")
-        require(WorkbenchAuthorization.fromSnapshot(snapshot).enabled) { "Workbench was not approved for this objective." }
+        val snapshot = WorkbenchExecutionConfiguration.latest(db.objectiveDao().observeEvents(id).first()
+            .filter { it.kind == "execution_config" }.map { JSONObject(requireNotNull(it.detail)) }) ?: error("Missing objective approval.")
+        val approval = WorkbenchAuthorization.fromSnapshot(snapshot)
+        require(approval.enabled) { "Workbench was not approved for this objective." }
+        approval.combinedDevelopment?.terminalApproval(id)
         return WorkbenchStore(File(app.filesDir, "workbench"), id)
     }
 
@@ -1181,14 +1192,15 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     /** The selected objective may change while the picker is open; use the original full record. */
     fun saveWorkbenchExport(uri: Uri?) {
         val selection = pendingWorkbenchExport
-        pendingWorkbenchExport = null
         if (uri == null) return
         if (selection == null) { _state.update { it.copy(workbenchMessage = "No artifact selection survived; nothing was exported. Select it again.") }; return }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 AndroidArtifactHandoff.save(app, uri, approvedWorkbenchStore(selection.objectiveId), selection.artifact)
-                _state.update { it.copy(workbenchMessage = "Saved ${selection.artifact.fileName}; verified digest ${selection.artifact.sha256.take(16)}…") }
-            } catch (error: Exception) { _state.update { it.copy(workbenchMessage = "Save rejected: ${error.message?.take(240)}") } }
+                if (pendingWorkbenchExport == selection) pendingWorkbenchExport = null
+                _state.update { it.copy(workbenchMessage = "Export stream completed for ${selection.artifact.fileName}; local snapshot SHA-256 ${selection.artifact.sha256.take(16)}… Destination readback/durability was not verified.") }
+            } catch (cancel: CancellationException) { throw cancel
+            } catch (error: Exception) { _state.update { it.copy(workbenchMessage = "Save failed: ${error.message?.take(240)}. The destination may be partial; local bytes remain available. Select Save as… again to retry.") } }
         }
     }
 
@@ -1222,6 +1234,9 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        viewModelScope.launch {
+            ExecutionRecovery.failure.collect { failure -> _state.update { it.copy(recoveryFailure = failure) } }
+        }
         viewModelScope.launch {
             ExecutionMonitor.state.collect { snapshot ->
                 _state.update { it.copy(objectiveRunning = snapshot.running, objectivePhase = snapshot.phase) }

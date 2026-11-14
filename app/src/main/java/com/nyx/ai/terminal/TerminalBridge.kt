@@ -21,9 +21,9 @@ import kotlin.coroutines.resume
  * Application-facing terminal bridge. It adds policy enforcement, safe shell construction, and
  * coroutine cancellation on top of the Termux RUN_COMMAND adapter, and it never grants privileges.
  *
- * Cancellation stops NYX from waiting and marks the record cancelled. Because Termux does not expose
- * the child PID through RUN_COMMAND, a hard timeout is enforced inside the command itself with
- * coreutils `timeout` whenever that binary is available.
+ * Cancellation stops NYX from waiting and retains uncertain ownership. Coreutils `timeout`, when
+ * available, bounds the observed wrapper; neither its exit nor callback cancellation proves every
+ * external descendant stopped. Conflicting operations remain reserved until explicit review.
  */
 class TerminalBridge(
     context: Context,
@@ -146,8 +146,8 @@ class TerminalBridge(
         ),
     ): TerminalCommandResult {
         val scope = coroutineContext[TerminalExecutionScope]
-        return executeOwned(request, operation.copy(objectiveId = operation.objectiveId ?: scope?.objectiveId,
-            taskId = operation.taskId ?: scope?.taskId))
+        val identity = coroutineContext[TerminalCommandDispatchScope]?.identity
+        return executeOwned(request, TerminalDispatchBinding.bind(request, operation, scope, identity))
     }
 
     private suspend fun executeOwned(request: TerminalCommandRequest, operation: TerminalOperationContext): TerminalCommandResult = withContext(Dispatchers.IO) {
@@ -176,8 +176,7 @@ class TerminalBridge(
             val remainingMs = (request.timeoutMillis - (System.nanoTime() - queuedAt) / 1_000_000L).coerceAtLeast(1L)
             val result = awaitResult(request.copy(timeoutMillis = remainingMs), operation.operationId, epoch)
             registry.finish(operation.operationId, result.kind.name, result.exitCode, result.stdout, result.stderr,
-                result.message, uncertain = result.kind in setOf(TerminalResultKind.TIMEOUT, TerminalResultKind.CANCELLED,
-                    TerminalResultKind.UNKNOWN_RESULT, TerminalResultKind.TERMUX_INFRASTRUCTURE_ERROR))
+                result.message, uncertain = TerminalOwnershipPolicy.requiresReservation(result.kind.name, result.exitCode))
             result
         } catch (cancel: CancellationException) {
             withContext(NonCancellable) {

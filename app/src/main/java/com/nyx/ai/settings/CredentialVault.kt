@@ -52,7 +52,17 @@ class CredentialVault(context: Context) {
         requireValid(reference)
         val file = atomicFile(reference)
         if (!file.baseFile.exists()) return null
-        val blob = file.openRead().use { it.readBytes() }
+        val blob = file.openRead().use { input ->
+            val output = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(1024)
+            while (true) {
+                val count = input.read(chunk)
+                if (count < 0) break
+                require(output.size() + count <= 16_413) { "Credential data exceeds its size limit." }
+                output.write(chunk, 0, count)
+            }
+            output.toByteArray()
+        }
         require(blob.size > 1 + ivLength + 16 && blob[0].toInt() == 1) { "Credential data is invalid." }
         val iv = blob.copyOfRange(1, 1 + ivLength)
         val cipher = Cipher.getInstance(transformation)
@@ -66,10 +76,10 @@ class CredentialVault(context: Context) {
         atomicFile(reference).delete()
     }
 
-    private fun atomicFile(reference: String) = AtomicFile(File(directory, "$reference.bin"))
+    private fun atomicFile(reference: String) = AtomicFile(File(directory, "${CredentialReferencePolicy.fileStem(reference)}.bin"))
 
     private fun requireValid(reference: String) {
-        require(reference.matches(Regex("[A-Za-z0-9_-]{1,80}"))) { "Invalid credential reference." }
+        CredentialReferencePolicy.fileStem(reference)
     }
 
     @Synchronized

@@ -93,8 +93,8 @@ data: [DONE]
             server.start(); server.enqueue(MockResponse().setBody("{\"models\":[{\"name\":\"tiny\"}]}"))
             server.enqueue(MockResponse().setBody("{\"message\":{\"content\":\"{\\\"ok\\\":true}\"},\"done\":false}\n"))
             val result = ModelDiagnostic.run(ProviderFactory.from("local", "Local", server.url("/").toString(), null), "tiny")
-            assertEquals(DiagnosticCheck.FAILED, result.tinyJsonResponse)
-            assertEquals(DiagnosticFormatCompatibility.INVALID_RESPONSE, result.formatCompatibility)
+            assertEquals(DiagnosticCheck.NOT_TESTED, result.tinyJsonResponse)
+            assertEquals(DiagnosticFormatCompatibility.INCOMPLETE_RESPONSE, result.formatCompatibility)
         }
     }
 
@@ -115,18 +115,18 @@ data: [DONE]
             server.enqueue(MockResponse().setBody(JSONObject().put("message", JSONObject().put("content", "x".repeat(2049))).put("done", false).toString() + "\n"))
             val result = ModelDiagnostic.run(ProviderFactory.from("local", "Local", server.url("/").toString(), null), "tiny")
             assertEquals(2, server.requestCount)
-            assertEquals(DiagnosticCheck.FAILED, result.tinyJsonResponse)
+            assertEquals(DiagnosticCheck.NOT_TESTED, result.tinyJsonResponse)
             assertTrue(result.summary.contains("size limit"))
         }
     }
 
-    @Test fun uppercaseCompatiblePathAndQueryDoNotLeakOllamaFields() = runBlocking {
+    @Test fun uppercaseCompatiblePathDoesNotLeakOllamaFields() = runBlocking {
         MockWebServer().use { server ->
             server.start(); server.enqueue(MockResponse().setBody("data: [DONE]\n\n"))
-            val provider = ProviderFactory.from("compat", "Compatible", server.url("/V1///?routing=local").toString(), "key")
+            val provider = ProviderFactory.from("compat", "Compatible", server.url("/V1///").toString(), "key")
             provider.chat("m", emptyList(), null, InferenceOptions(maxOutputTokens = 12, responseSchema = "ignored"))
             val request = server.takeRequest(2, TimeUnit.SECONDS)!!
-            assertEquals("/V1/chat/completions?routing=local", request.path)
+            assertEquals("/V1/chat/completions", request.path)
             assertEquals("Bearer key", request.getHeader("Authorization"))
             val body = JSONObject(request.body.readUtf8())
             assertEquals(12, body.getInt("max_tokens"))

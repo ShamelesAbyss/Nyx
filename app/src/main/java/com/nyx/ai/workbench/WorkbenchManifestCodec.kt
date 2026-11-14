@@ -24,22 +24,36 @@ internal object WorkbenchManifestCodec {
 
     fun decode(bytes: ByteArray): WorkbenchManifest {
         val text = ArtifactFormats.utf8(bytes)
-        StrictJson(text).parse()
+        // Inspect original tokens before org.json can round an overflowing integer to Double.
+        // Version 1 emits only integral JSON numbers, never decimal/exponent/string encodings.
+        StrictJson(text) { token -> require(token.toLongOrNull() != null) { "Manifest numbers must be exact signed 64-bit integers" } }.parse()
         val o = JSONObject(text)
-        require(o.getInt("version") == 1) { "Unsupported manifest version" }
+        require(integer(o, "version") == 1L) { "Unsupported manifest version" }
         val sources = o.getJSONArray("sources"); val artifacts = o.getJSONArray("artifacts"); val imports = o.getJSONArray("imports")
         require(sources.length() <= 60 && artifacts.length() <= 40 && imports.length() <= 20) { "Manifest count bounds exceeded" }
-        return WorkbenchManifest(o.getString("objectiveId"), o.getLong("createdAt"), o.getLong("updatedAt"),
+        return WorkbenchManifest(string(o, "objectiveId"), integer(o, "createdAt"), integer(o, "updatedAt"),
             (0 until sources.length()).map { n -> sources.getJSONObject(n).let { s -> ResearchSource(
-                s.getString("url"), s.getString("finalUrl"), s.getString("title"), s.getLong("fetchedAt"),
-                s.getString("contentType"), s.getLong("bytes"), s.getString("sha256"), s.getString("status"), s.getString("note"), s.getString("id")) } },
+                string(s, "url"), string(s, "finalUrl"), string(s, "title"), integer(s, "fetchedAt"),
+                string(s, "contentType"), integer(s, "bytes"), string(s, "sha256"), string(s, "status"), string(s, "note"), string(s, "id")) } },
             (0 until artifacts.length()).map { n -> artifacts.getJSONObject(n).let { a -> ArtifactRecord(
-                a.getString("id"), a.getString("fileName"), ArtifactFormat.valueOf(a.getString("format")), a.getLong("bytes"),
-                a.getString("sha256"), a.getLong("createdAt"), ArtifactStatus.valueOf(a.getString("status")),
-                a.getString("validationNote"), a.getString("relativePath")) } },
+                string(a, "id"), string(a, "fileName"), ArtifactFormat.valueOf(string(a, "format")), integer(a, "bytes"),
+                string(a, "sha256"), integer(a, "createdAt"), ArtifactStatus.valueOf(string(a, "status")),
+                string(a, "validationNote"), string(a, "relativePath")) } },
             (0 until imports.length()).map { n -> imports.getJSONObject(n).let { i -> ImportRecord(
-                i.getString("id"), i.getString("fileName"), i.getLong("bytes"), i.getString("sha256"),
-                i.getLong("importedAt"), i.getString("contentType"), i.getString("relativePath")) } },
-            o.getString("status"), o.getInt("version"))
+                string(i, "id"), string(i, "fileName"), integer(i, "bytes"), string(i, "sha256"),
+                integer(i, "importedAt"), string(i, "contentType"), string(i, "relativePath")) } },
+            string(o, "status"), 1)
+    }
+
+    private fun integer(o: JSONObject, key: String): Long {
+        val value = o.get(key)
+        require(value is Int || value is Long) { "Manifest $key must be an integral JSON number" }
+        return (value as Number).toLong()
+    }
+
+    private fun string(o: JSONObject, key: String): String {
+        val value = o.get(key)
+        require(value is String) { "Manifest $key must be a JSON string" }
+        return value
     }
 }

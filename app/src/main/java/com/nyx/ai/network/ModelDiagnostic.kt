@@ -13,6 +13,9 @@ enum class DiagnosticFormatCompatibility {
     OLLAMA_SCHEMA_SAMPLE_PASSED,
     PROMPT_JSON_SAMPLE_PASSED,
     INVALID_RESPONSE,
+    INCOMPLETE_RESPONSE,
+    RESPONSE_LIMIT_REACHED,
+    SCHEMA_EXPLICITLY_REJECTED,
     NOT_TESTED,
 }
 
@@ -29,6 +32,8 @@ data class ModelDiagnosticResult(
     val stats: InferenceTokenStats? = null,
     val timedOut: Boolean = false,
     val detail: String? = null,
+    val requestIdentity: ModelIdentity? = null,
+    val thinkingCharacters: Int = 0,
 ) {
     /** Never includes raw model output, endpoint URL, credentials, or server error body. */
     val summary: String get() = buildString {
@@ -39,6 +44,9 @@ data class ModelDiagnosticResult(
             DiagnosticFormatCompatibility.OLLAMA_SCHEMA_SAMPLE_PASSED -> "Ollama schema-requested sample passed (not proof of general schema enforcement)."
             DiagnosticFormatCompatibility.PROMPT_JSON_SAMPLE_PASSED -> "prompt-only JSON sample passed; enforced schema support was not tested."
             DiagnosticFormatCompatibility.INVALID_RESPONSE -> "sample did not match the required tiny JSON object."
+            DiagnosticFormatCompatibility.INCOMPLETE_RESPONSE -> "generation did not complete; format capability remains unverified."
+            DiagnosticFormatCompatibility.RESPONSE_LIMIT_REACHED -> "bounded response limit reached; format capability remains unverified."
+            DiagnosticFormatCompatibility.SCHEMA_EXPLICITLY_REJECTED -> "adapter explicitly rejected the requested schema feature."
             DiagnosticFormatCompatibility.NOT_TESTED -> "not verified."
         })
         append("\nFirst text: ${firstResponseLatencyMillis?.let { "$it ms" } ?: "unavailable"} (queue/load included). Total: $totalLatencyMillis ms.")
@@ -47,6 +55,7 @@ data class ModelDiagnosticResult(
         val duration = stats?.generationDurationNanos
         val throughput = if (tokens != null && duration != null && duration > 0) tokens.toDouble() * 1_000_000_000.0 / duration else null
         append("\nProvider-reported generation throughput: ${throughput?.let { String.format(java.util.Locale.ROOT, "%.2f tokens/s", it) } ?: "unavailable"}; short sample, not a workload benchmark.")
+        append("\nReasoning characters observed: $thinkingCharacters (separate from answer text; not tokenizer counts).")
         if (timedOut) append("\nStopped at the diagnostic time limit.")
         detail?.let { append("\n$it") }
     }
@@ -89,6 +98,7 @@ object ModelDiagnostic {
         fun elapsedMillis(since: Long): Long = ((nanoTime() - since) / 1_000_000).coerceAtLeast(0)
         var result = ModelDiagnosticResult(providerId = provider.id, model = model)
         val firstTextNanos = AtomicReference<Long?>(null)
+        val thinkingCharacters = AtomicInteger()
         var inferenceStarted: Long? = null
         val completed = withTimeoutOrNull(timeoutMillis) {
             try {
@@ -103,7 +113,12 @@ object ModelDiagnostic {
                 val schemaRequested = provider.kind == "ollama"
                 val diagnosticOptions = options.copy(temperature = 0.0, maxOutputTokens = MAX_OUTPUT_TOKENS,
                     responseSchema = if (schemaRequested) RESPONSE_SCHEMA else null,
-                    executionTimeouts = null) // A user-selected long run never widens the small diagnostic budget.
+                    executionTimeouts = null,
+                    thinkingObserver = { chunk ->
+                        thinkingCharacters.updateAndGet { old -> (old.toLong() + chunk.length).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
+                        options.thinkingObserver?.invoke(chunk)
+                    }) // A user-selected long run never widens the small diagnostic budget.
+                result = result.copy(requestIdentity = ModelIdentity.fromRequest(provider, model, diagnosticOptions))
                 val receivedCharacters = AtomicInteger()
                 val prompt = "Return exactly {\"ok\":true}, with no other text. JSON schema: $RESPONSE_SCHEMA"
                 inferenceStarted = nanoTime()
@@ -115,14 +130,17 @@ object ModelDiagnostic {
                     }
                 }
                 val valid = chat.done && chat.toolCalls.isEmpty() && isExpectedTinyJson(chat.content)
-                result = result.copy(modelAccessible = DiagnosticCheck.PASSED,
-                    tinyJsonResponse = if (valid) DiagnosticCheck.PASSED else DiagnosticCheck.FAILED,
+                result = result.copy(modelAccessible = if (chat.done) DiagnosticCheck.PASSED else DiagnosticCheck.NOT_TESTED,
+                    tinyJsonResponse = if (!chat.done) DiagnosticCheck.NOT_TESTED else if (valid) DiagnosticCheck.PASSED else DiagnosticCheck.FAILED,
                     formatCompatibility = when {
+                        !chat.done -> DiagnosticFormatCompatibility.INCOMPLETE_RESPONSE
                         !valid -> DiagnosticFormatCompatibility.INVALID_RESPONSE
                         schemaRequested -> DiagnosticFormatCompatibility.OLLAMA_SCHEMA_SAMPLE_PASSED
                         else -> DiagnosticFormatCompatibility.PROMPT_JSON_SAMPLE_PASSED
                     }, stats = chat.stats,
-                    detail = if (valid) null else "The model responded, but the diagnostic JSON sample was not valid.")
+                    thinkingCharacters = maxOf(chat.thinkingCharacters, thinkingCharacters.get()),
+                    detail = when { !chat.done -> "The stream ended before completion; retry the explicit check when the provider is available."
+                        valid -> null; else -> "The completed sample did not match the requested JSON. This does not prove constrained decoding unsupported." })
                 true
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -131,8 +149,12 @@ object ModelDiagnostic {
                 result = result.copy(
                     providerReachable = if (duringGeneration || error is InferenceHttpException) DiagnosticCheck.PASSED else DiagnosticCheck.FAILED,
                     modelAccessible = if (duringGeneration) DiagnosticCheck.FAILED else DiagnosticCheck.NOT_TESTED,
-                    tinyJsonResponse = if (error is DiagnosticResponseLimitException) DiagnosticCheck.FAILED else DiagnosticCheck.NOT_TESTED,
-                    formatCompatibility = if (error is DiagnosticResponseLimitException) DiagnosticFormatCompatibility.INVALID_RESPONSE else DiagnosticFormatCompatibility.NOT_TESTED,
+                    tinyJsonResponse = DiagnosticCheck.NOT_TESTED,
+                    formatCompatibility = when {
+                        error is DiagnosticResponseLimitException -> DiagnosticFormatCompatibility.RESPONSE_LIMIT_REACHED
+                        error is InferenceFeatureUnsupportedException && error.feature == ObservedCapability.STRUCTURED_OUTPUT && result.requestIdentity?.responseSchemaHash != null -> DiagnosticFormatCompatibility.SCHEMA_EXPLICITLY_REJECTED
+                        else -> DiagnosticFormatCompatibility.NOT_TESTED
+                    },
                     detail = safeDiagnosticFailure(error, duringGeneration),
                 )
                 true
@@ -144,6 +166,7 @@ object ModelDiagnostic {
         }
         return result.copy(firstResponseLatencyMillis = latency, totalLatencyMillis = elapsedMillis(started),
             timedOut = completed == null,
+            thinkingCharacters = maxOf(result.thinkingCharacters, thinkingCharacters.get()),
             detail = if (completed == null) "The check did not finish within its time budget; unfinished checks remain unverified." else result.detail)
     }
 
@@ -157,6 +180,7 @@ object ModelDiagnostic {
 private class DiagnosticResponseLimitException : IOException("Diagnostic response exceeded its size limit")
 
 private fun safeDiagnosticFailure(error: Exception, duringGeneration: Boolean): String = when {
+    error is InferenceFeatureUnsupportedException -> "The adapter explicitly rejected the requested feature; choose a compatible format or provider."
     error is InferenceHttpException && error.statusCode in listOf(401, 403) -> "Provider denied access (HTTP ${error.statusCode}). Check configured access credentials."
     error is InferenceHttpException -> "Provider returned HTTP ${error.statusCode}; ${if (duringGeneration) "generation/format compatibility" else "model inventory"} could not be verified."
     error is DiagnosticResponseLimitException -> "The response exceeded the diagnostic size limit; generation was stopped."

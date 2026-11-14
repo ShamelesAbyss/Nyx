@@ -163,6 +163,10 @@ object CommandPolicy {
             val raw = tokens[index]
             val name = raw.substringAfterLast('/').lowercase()
             if (executable == null) executable = name
+            if (index > 0 || '/' in raw || name in setOf("env", "command", "type", "sed", "awk", "xargs")) {
+                risk = maxRisk(risk, CommandRisk.MUTATING)
+                reasons += "executable override, environment or programmable utility requires explicit confirmation"
+            }
 
             if (name in alwaysBlocked) {
                 blocked = true
@@ -222,14 +226,14 @@ object CommandPolicy {
     private fun isMutationInvocation(name: String, args: List<String>): Boolean {
         val first = args.firstOrNull { !it.startsWith("-") }?.lowercase()
         return when (name) {
-            "git" -> first in setOf("commit", "add", "checkout", "switch", "merge", "rebase", "cherry-pick", "apply", "am", "stash", "tag", "push", "pull", "fetch", "clone", "init", "clean", "reset", "rm", "mv", "restore")
+            // Aliases, global options and config can execute helpers; fixed repo tools are separate.
+            "git" -> true
             "gradle" -> true
             "npm" -> first in setOf("install", "i", "ci", "update", "run", "publish", "uninstall", "link")
             "node" -> true
             "python3" -> true
             "java", "javac", "kotlinc", "cargo", "rustc", "go" -> true
-            "sed" -> args.any { it == "-i" || it.startsWith("-i") }
-            "awk" -> args.any { it.startsWith("inplace") }
+            "sed", "awk" -> true
             "find" -> args.any { it == "-delete" || it == "-exec" || it == "-execdir" }
             "tar", "zip", "unzip", "gzip", "gunzip", "patch", "make", "cmake" -> true
             "pkg", "apt", "apt-get", "dpkg", "pip", "pip3", "yarn", "pnpm", "gem" -> first in setOf("install", "remove", "uninstall", "update", "upgrade", "purge", "autoremove", "add")

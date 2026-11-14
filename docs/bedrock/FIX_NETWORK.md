@@ -1,0 +1,33 @@
+# Bedrock network and authentication — final disposition
+
+Documentation synthesis, 2026-11-14, for `/home/ubuntu/nyx-bedrock`. Original findings and baseline source anchors are in `/home/ubuntu/bedrock-audit-network.md` at `d35d4d679711614b3d07b8e8b8de16140ae6b71a`. This report reconstructs the missing repair handoff from the existing contract, actual source and retained evidence; its author made no runtime/test changes and ran no Gradle, provider or device acceptance.
+
+## Evidence actually retained
+
+`/tmp/nyx-bedrock-network.sYCU4G/tests.log` records **OK (106 tests)**, JUnit 4.13.2, 8.901 seconds. `compile.log`, `sources.txt`, `source-sha256.txt` and `classpath.txt` retain the scoped compile inputs. Runner: `tools/bedrock_network_regression.sh`. These are isolated Kotlin/JVM application-policy, fake-DNS and local HTTP/server tests, not a clean current whole-app run. The source list includes shared capability/integrity helpers; 106 is not a network-only new-test count and must not be added to other scoped totals.
+
+MockWebServer logged one connection that did not make an HTTP request. The defensible refusal assertion is **zero forbidden HTTP requests**, not zero TCP connections or an Android-wide firewall. Later source changes, including the parent's direct reasoning watchdog migration and stronger query-bearing URL rejection, require the final parent suite; the earlier source hashes do not attest those later edits.
+
+## All nine numbered findings
+
+Paths use `app/src/main/java/com/nyx/ai/` unless stated otherwise.
+
+| Original ID / severity | Disposition and implemented boundary | Executed scope / remaining limitation |
+|---|---|---|
+| NET-01 HIGH | **MITIGATED.** `network/InferenceEndpointPolicy.kt:10–43`, `NetworkTransportGuard.kt:34–54` reject public HTTP inference, pin the selected origin and require actual HTTP addresses to be loopback/private LAN. | Scoped public-HTTP refusal and local inference compatibility passed. Global platform cleartext remains enabled for explicitly selected arbitrary LAN endpoints using standard OkHttp. Application gating is not OS isolation/firewall; an authorized endpoint may forward prompts. |
+| NET-02 HIGH | **FIXED at the public application-transport boundary.** `NetworkTransportGuard.kt:14–32` and `NetworkPolicy.kt` separate public HTTPS tools/research from selected local inference. | Local/emulator/private destination rejection and permitted separate loopback inference exercised with fake servers. Android routing/permissions remain UNVERIFIED. |
+| NET-03 HIGH | **FIXED in scoped address classification and routing checks.** `NetworkAddressPolicy.kt` classifies numeric/address bytes; `NetworkTransportGuard.kt:57–65` checks every DNS answer and the network interceptor checks the connected address. | Expanded/mapped IPv6, private/mixed DNS and rebinding fixtures passed. Resolver/OS compromise and forwarding by an authorized server are not contained. |
+| NET-04 MEDIUM | **FIXED in public redirect validation.** `NetworkTools.kt` reapplies full policy to every hop; inference and gateway clients disable automatic redirects. | Port/downgrade/credential/DNS and second-request refusal regressions passed. No real remote-provider redirect campaign. |
+| AUTH-01 MEDIUM | **FIXED logical reference contract; Android vault execution UNVERIFIED.** `settings/CredentialReferencePolicy.kt` maps supported `gateway:<valid-id>` references to disjoint hashed safe filenames; `CredentialVault.kt` retains reference-bound AES-GCM AAD and existing key alias/simple reference filenames. | Reference tests passed. Exact gateway save/read/delete/tamper instrumentation is supplied/compiled, not executed on Android. No at-rest leak or destructive credential migration is claimed. |
+| AUTH-02 MEDIUM | **MITIGATED at direct inference-client transport.** `OllamaClient.kt`, `InferenceEndpointPolicy.kt:25–43`, `NetworkTransportGuard.kt:34–54` enforce safe origin, normal TLS, loopback-only HTTP credential routing and no redirects. | Direct-client/auth/locality regressions passed. Existing production caller consent remains required; malicious authorized endpoints, compromised application/OS and same-UID code remain outside containment. |
+| AUTH-03 MEDIUM | **FIXED configuration/client input path.** `gateway/McpClient.kt`, `GatewayModels.kt`, `GatewayRepository.kt` refuse query/userinfo/fragment endpoints and unresolved configured tokens. Unsafe persisted entries are skipped non-destructively. | Gateway client/save/reload regressions passed. Historical external logs/configuration are not inspected or scrubbed. |
+| NET-05 MEDIUM | **FIXED wrapper-format defect.** `network/NetworkTools.kt` uses bounded `UntrustedEvidence` escaping from `workbench/HtmlTextExtractor.kt`. | Delimiter/role-marker/Unicode/output-cap regressions passed. Escaping does not establish semantic prompt-injection immunity or factual accuracy. |
+| NET-06 LOW | **FIXED numeric-versus-hostname classification.** `NetworkAddressPolicy.kt` no longer treats every fc/fd-prefixed DNS name as an IPv6 address. | Hostname/ULA paired fixtures passed; no actual fda.gov visit is implied. |
+
+## Parent follow-through and residual boundaries
+
+The current `OllamaClient.chat` uses `withInferenceActivityTimeouts(options, onToken)` and passes its effective outgoing options into streaming (`OllamaClient.kt:110–111`). `BedrockDirectReasoningTimeoutTest.kt` contains two direct-client methods: actual throttled local Ollama NDJSON and OpenAI-compatible SSE reasoning with answer separation, and no-activity timeout. The parent reports these passed in the first whole-suite attempt; that **attempt failed overall: 1182 tests, six failures, two skips**. This is not an additional passing 106-test run or final clean-build proof. The parent repaired six expectation/fixture mismatches without relaxing policy; the final clean build with `NYX_REAL_NETWORK_TEST=1` is pending at this synthesis.
+
+Permissions, merged/installed component exposure, Android Keystore security level, API-37 LAN grant/deny/revoke, actual Termux loopback/LAN, real Ollama/OpenAI/gateways and physical-device execution remain **UNVERIFIED**. Existing non-exported services/receiver/FileProvider, narrow artifact paths, disabled backup, TLS validation and credential handling are preserved in source. No new permissions, vendor/model/user-data/credential changes, signer changes, commits/tags/push/publication or AAB were made by this documentation author.
+
+The stable compatibility decision and caller obligations are in `/home/ubuntu/bedrock-network-manifest-contract.md`. Device acceptance and final artifact gates are in `docs/BEDROCK_DEVICE_ACCEPTANCE.md`; final dispositions are in `BEDROCK_SECURITY_AUDIT.md`.

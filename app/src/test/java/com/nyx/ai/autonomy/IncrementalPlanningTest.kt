@@ -30,7 +30,7 @@ class IncrementalPlanningTest {
     @Test
     fun `guided prompt states the single-line contract and completion`() {
         val prompt = IncrementalPlanning.prompt("Summarize findings", listOf("Read notes"), setOf("inference"), guided = true)
-        assertTrue(prompt.contains("NEXT <worker>"))
+        assertTrue(prompt.contains("NEXT inference:"))
         assertTrue(prompt.contains("DONE"))
         assertTrue(prompt.contains("Read notes"))
     }

@@ -15,7 +15,12 @@ object ZipBundleWriter {
     fun write(entries: Map<String, ByteArray>): ByteArray {
         require(entries.isNotEmpty() && entries.size <= MAX_ENTRIES)
         require(entries.values.sumOf { it.size.toLong() } <= MAX_EXPANDED)
-        entries.forEach { (name, data) -> safeEntry(name); require(data.size.toLong() <= MAX_ENTRY) }
+        val namespace = mutableMapOf<String, Boolean>()
+        entries.forEach { (name, data) ->
+            safeEntry(name); require(data.size.toLong() <= MAX_ENTRY)
+            require(!name.endsWith('/') || data.isEmpty()) { "ZIP directory contains data" }
+            registerName(namespace, name)
+        }
         val output = ByteArrayOutputStream()
         ZipOutputStream(output, Charsets.UTF_8).use { zip ->
             entries.toSortedMap().forEach { (name, data) ->
@@ -33,7 +38,19 @@ object ZipBundleWriter {
     internal fun safeEntry(name: String) {
         require(name.length in 1..240 && !name.startsWith('/') && '\\' !in name && ':' !in name)
         val parts = name.removeSuffix("/").split('/')
-        require(parts.all { it.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,79}")) && ".." !in it && !reserved(it) }) { "Unsafe ZIP entry path" }
+        require(parts.all { it.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,79}")) && ".." !in it && !it.endsWith('.') && !reserved(it) }) { "Unsafe ZIP entry path" }
+    }
+
+    private fun registerName(namespace: MutableMap<String, Boolean>, name: String) {
+        val key = name.removeSuffix("/").lowercase()
+        val directory = name.endsWith('/')
+        require(key !in namespace) { "Duplicate ZIP file/directory name" }
+        val parts = key.split('/')
+        for (n in 1 until parts.size) {
+            require(namespace[parts.take(n).joinToString("/")] != false) { "ZIP ancestor is a file" }
+        }
+        require(directory || namespace.keys.none { it.startsWith("$key/") }) { "ZIP file conflicts with child entries" }
+        namespace[key] = directory
     }
 
     internal fun reserved(name: String): Boolean {
@@ -57,7 +74,7 @@ object ZipBundleWriter {
         val centralSize = u32(eocd + 12)
         val centralStart = index(u32(eocd + 16))
         require(centralStart.toLong() + centralSize == eocd.toLong()) { "ZIP directory bounds mismatch" }
-        val names = mutableSetOf<String>()
+        val names = mutableMapOf<String, Boolean>()
         val ranges = mutableListOf<Pair<Int, Int>>()
         var pos = centralStart
         var expandedTotal = 0L
@@ -77,9 +94,10 @@ object ZipBundleWriter {
             require(u16(pos + 34) == 0 && pos.toLong() + 46 + nl + xl + cl <= eocd) { "ZIP central entry truncated" }
             val rawName = b.copyOfRange(pos + 46, pos + 46 + nl)
             val name = ArtifactFormats.utf8(rawName)
-            safeEntry(name); require(names.add(name.lowercase())) { "Duplicate ZIP entry" }
+            safeEntry(name); registerName(names, name)
             val mode = (u32(pos + 38) shr 16).toInt() and 0xf000
             require(mode == 0 || mode == 0x8000 || mode == 0x4000) { "ZIP symlink or special file forbidden" }
+            require((mode != 0x4000 || name.endsWith('/')) && (mode != 0x8000 || !name.endsWith('/'))) { "ZIP directory mode/name mismatch" }
             require(!name.endsWith('/') || expanded == 0L) { "ZIP directory contains data" }
             val local = index(u32(pos + 42))
             require(local + 30 <= centralStart && u32(local) == 0x04034b50L) { "ZIP local header missing" }

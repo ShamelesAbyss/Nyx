@@ -79,13 +79,15 @@ class OllamaProcessTest {
         for ((name, script) in scripts) {
             val request = HostShell.isolatedRequest(script)
             assertEquals("$name must target the Termux host", TerminalEnvironment.TERMUX_HOST, request.environment)
-            assertEquals("$name must use the Termux bash", HostShell.SHELL_PATH, request.commandPath)
-            assertEquals("$name must pass the script as one argv element", "-c", request.arguments[2])
+            assertEquals("$name must sanitize before starting bash", "${HostShell.TERMUX_PREFIX}/bin/env", request.commandPath)
+            assertEquals("-i", request.arguments.first())
+            assertTrue(request.arguments.contains("${HostShell.TERMUX_PREFIX}/bin/bash"))
+            assertEquals("$name must pass the script as one argv element", "-c", request.arguments[request.arguments.lastIndex - 1])
             assertTrue("$name must disable profile loading", request.arguments.contains("--noprofile"))
             assertTrue("$name must disable rc files", request.arguments.contains("--norc"))
             assertFalse("$name must never use a login shell", request.arguments.contains("-l"))
             assertFalse("$name must never use -lc", request.arguments.contains("-lc"))
-            assertTrue("$name must unset BASH_ENV", request.arguments[3].startsWith("unset BASH_ENV ENV;"))
+            assertTrue("$name must not inherit startup environment", request.arguments.none { it.startsWith("BASH_ENV=") || it.startsWith("ENV=") })
             assertFalse("$name must never enter a PRoot guest", script.contains("proot-distro login"))
             assertTrue("$name must stay under the policy limit", script.length < CommandPolicy.MAX_COMMAND_CHARS)
         }

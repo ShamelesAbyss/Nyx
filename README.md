@@ -10,7 +10,7 @@
 
 **Local intelligence. Independent execution. Real deliverables.**
 
-[![Release](https://img.shields.io/badge/release-v0.8.9-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9)
+[![Release](https://img.shields.io/badge/release-v0.9.0-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.0)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#%E2%80%8D-build-from-source)
 
@@ -25,24 +25,29 @@
 ---
 
 > [!IMPORTANT]
-> **NYX v0.8.9 — Project Workbench** connects guarded research, objective-specific private workspaces, generated files and verification into retained work products. Markdown/text, CSV, JSON, static HTML and artifact ZIPs can be inspected and handed back through Android save/share controls. **1,034 JVM tests across 107 classes pass, with zero failures, errors or skips; the clean build completed in 1m 53s.** Read the [official release notes](RELEASE_NOTES_v0.8.9.md) and [implementation report, format matrix and device procedure](V089_IMPLEMENTATION_REPORT.md). Host verification is not physical-device or real-model validation; see [known limitations](#-known-limitations).
+> **Latest public release: v0.9.0 — Project Bedrock.** Package `com.nyx.ai`, versionCode 23; the established debug signing identity and pinned API 37/ARM64 toolchain remain unchanged. The clean build passed **1,182 JVM tests across 132 suites**, with zero failures, errors or skips, and independent APK identity, signing, ARM64 and 16 KB ZIP/ELF checks passed. Physical Android execution and hosted CI remain unverified; this is not a production-signed Play artifact.
+
+Bedrock strengthens NYX's foundations for 1.0: hardened autonomous execution and security boundaries, improved model capability detection, integrated development-to-Workbench artifact workflows, better recovery and verification, and reproducible build/release infrastructure. Android/Room/Binder/provider execution and real-device Ollama/Termux behavior remain unverified. See [release notes](RELEASE_NOTES_v0.9.0.md), [implementation/evidence report](V090_IMPLEMENTATION_REPORT.md) and [security dispositions](BEDROCK_SECURITY_AUDIT.md).
+
+> **Historical public v0.8.9 — Project Workbench** connects guarded research, objective-specific private workspaces, generated files and verification into retained work products. Markdown/text, CSV, JSON, static HTML and artifact ZIPs can be inspected and handed back through Android save/share controls. **1,034 JVM tests across 107 classes passed, with zero failures, errors or skips; that clean build completed in 1m 53s.** Read its [official release notes](RELEASE_NOTES_v0.8.9.md) and [implementation report, format matrix and device procedure](V089_IMPLEMENTATION_REPORT.md). Host verification is not physical-device or real-model validation; see [known limitations](#-known-limitations).
 
 > [!WARNING]
 > **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device. Existing NYX installations signed with the established debug certificate can update in place; back up anything important before experimenting.
 
-## ⬇️ Download NYX v0.8.9 — Project Workbench
+## ⬇️ Download NYX v0.9.0 — Project Bedrock
 
 <div align="center">
 
-### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9)
+### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.0)
 
 | Asset | What it is |
 | :--- | :--- |
-| **[NYX-v0.8.9.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.9/NYX-v0.8.9.apk)** | Primary installation APK. ARM64, debug-signed. |
-| **[NYX-Source-v0.8.9.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.9/NYX-Source-v0.8.9.zip)** | Source, tests, docs, licenses and Gradle wrapper; excludes private files, models, caches and build outputs. |
-| **[NYX-v0.8.9-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.9/NYX-v0.8.9-androidTest.apk)** | Instrumentation tests for device verification; compiled, not executed on hardware. |
-| **[NYX-v0.8.9-acceptance.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.9/NYX-v0.8.9-acceptance.zip)** | Deterministic Linux-host acceptance evidence: retained public sources and validated outputs, **not real-model synthesis or Android hardware execution**. |
-| **[NYX-v0.8.9-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.8.9/NYX-v0.8.9-SHA256SUMS.txt)** | Integrity manifest for this five-asset release: SHA-256 digests for both APKs, the source archive and acceptance bundle. |
+| **[NYX-v0.9.0.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.0/NYX-v0.9.0.apk)** | Primary installation APK. ARM64, debug-signed. |
+| **[NYX-Source-v0.9.0.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.0/NYX-Source-v0.9.0.zip)** | Source, tests, docs, licenses and Gradle wrapper; excludes private files, models, caches and build outputs. |
+| **[NYX-v0.9.0-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.0/NYX-v0.9.0-androidTest.apk)** | Instrumentation tests for device verification; compiled, not executed on hardware. |
+| **[NYX-v0.9.0-acceptance.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.0/NYX-v0.9.0-acceptance.zip)** | Host acceptance evidence: real Kotlin/JNI/files/processes plus labeled provider and Android seams; **not Android hardware or real-model proof**. |
+| **[NYX-v0.9.0-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.0/NYX-v0.9.0-SHA256SUMS.txt)** | Integrity manifest for every release asset except itself. |
+| **[NYX-v0.9.0-VERIFICATION_REPORT.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.0/NYX-v0.9.0-VERIFICATION_REPORT.md)** | Build, artifact, acceptance and remaining-limitation verification report. |
 
 </div>
 
@@ -61,7 +66,7 @@ It is also a private inference workstation. Run a quantized GGUF through the bun
 | | |
 | :--- | :--- |
 | **Package** | `com.nyx.ai` |
-| **Version** | `0.8.9` (versionCode 22) |
+| **Source candidate** | `0.9.0` (versionCode 23); public release remains `0.8.9` |
 | **Android** | 8.0+ / API 26–37 |
 | **Architecture** | `arm64-v8a` |
 | **Inference** | Native GGUF CPU · Ollama · OpenAI-compatible `/v1` |
@@ -501,7 +506,7 @@ The long-term vision is an autonomous assistant that runs on hardware you own, u
 
 | Version | Codename | Focus |
 | :--- | :--- | :--- |
-| **[v0.8.9](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.9)** | **Project Workbench** | Objective-specific private workspaces, retained research/imports, validated deliverables, checksums and Android preview/save/share interfaces |
+| **[v0.8.9](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.0)** | **Project Workbench** | Objective-specific private workspaces, retained research/imports, validated deliverables, checksums and Android preview/save/share interfaces |
 | **[v0.8.8](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.8)** | **Project Insight** | Capability-aware planning strategies, direct start for simple goals, bounded incremental continuation, reasoning-stream visibility |
 | **[v0.8.7](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.7)** | **Project Breakthrough** | Keyboard/draft repair, patient inference, compact planning, isolated terminal workers; includes unpublished Project Ignition |
 | **[v0.8.5](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5)** | **Project Sovereign** | Adaptive deliberation budgets, durable working state, task-scoped tools, false-success guard, bounded self-repair, two-hour checkpointed execution |
@@ -591,6 +596,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.8.9 — Project Workbench · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.9.0 — Project Bedrock · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

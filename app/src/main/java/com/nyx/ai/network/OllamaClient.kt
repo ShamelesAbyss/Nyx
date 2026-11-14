@@ -61,12 +61,13 @@ data class InferenceOptions(
 class ToolCallingUnsupportedException(message: String) : IOException(message)
 class InferenceHttpException(val statusCode: Int, message: String) : IOException(message)
 
-/** Local HTTP client for Ollama and OpenAI-compatible APIs. Requests go only to this configured base URL. */
-class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
-    val baseUrl: String = baseUrl.trim().trimEnd('/')
+/** Endpoint-bound client: remote HTTPS or explicitly selected, credential-free private LAN HTTP. */
+class OllamaClient private constructor(baseUrl: String, private val apiKey: String?, transport: OkHttpClient) {
+    constructor(baseUrl: String, apiKey: String? = null) : this(baseUrl, apiKey, sharedHttp)
+    private val parsedBase = InferenceEndpointPolicy.parse(baseUrl)
+    val baseUrl: String = parsedBase.toString().trimEnd('/')
     private val openAiCompatible = ProviderFactory.isOpenAiCompatible(this.baseUrl)
-    // A process-wide client shares its dispatcher and connection pool across endpoint/client instances.
-    private val http = sharedHttp
+    private val http = NetworkTransportGuard.inferenceClient(transport, parsedBase, !apiKey.isNullOrBlank())
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
     suspend fun listModels(): List<LocalModel> {
@@ -106,8 +107,8 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
         tools: JSONArray? = null,
         options: InferenceOptions = InferenceOptions(),
         onToken: (String) -> Unit = {}
-    ): ChatResult = withExecutionTimeouts(options, onToken) { observedText ->
-        chatStream(model, messages, tools, options, observedText)
+    ): ChatResult = withInferenceActivityTimeouts(options, onToken) { outgoingOptions, observedText ->
+        chatStream(model, messages, tools, outgoingOptions, observedText)
     }
 
     private suspend fun chatStream(
@@ -355,5 +356,9 @@ class OllamaClient(baseUrl: String, private val apiKey: String? = null) {
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
+
+        /** Fake server/DNS transport only; the production endpoint/route guards still apply. */
+        internal fun forTests(baseUrl: String, apiKey: String? = null, httpClient: OkHttpClient): OllamaClient =
+            OllamaClient(baseUrl, apiKey, httpClient)
     }
 }

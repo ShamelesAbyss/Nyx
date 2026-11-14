@@ -118,6 +118,10 @@ object WorkspaceValidator {
                 "Use letters, digits, '.', '_', '-', '+', '@' and '/'.",
             )
         }
+        if (path.split('/').any { it == "." || it.lowercase() in setOf(".ssh", ".aws", ".gnupg", ".git", ".nyx-checkpoints") } ||
+            listOf("/proc", "/sys", "/dev", "/etc", "/system").any { path == it || path.startsWith("$it/") }) {
+            return invalid("private_or_system_path", "Private credential and system trees are not project workspaces.", "Choose an explicitly approved project directory.")
+        }
         if (request.environment == TerminalEnvironment.DEBIAN_PROOT && isAndroidPath(path)) {
             return invalid(
                 "android_path_in_guest",
@@ -146,16 +150,15 @@ object WorkspaceValidator {
         ws=${shellQuote(path)}
         if [ -e "${'$'}ws" ]; then printf 'NYX_WS_EXISTS=1\n'; else printf 'NYX_WS_EXISTS=0\n'; fi
         if [ -d "${'$'}ws" ]; then printf 'NYX_WS_DIR=1\n'; else printf 'NYX_WS_DIR=0\n'; fi
+        _real=${'$'}(cd "${'$'}ws" 2>/dev/null && pwd -P)
         _writable=0
-        if [ -d "${'$'}ws" ] && [ -w "${'$'}ws" ]; then
-          _probe_file="${'$'}ws/.nyx_ws_probe_${'$'}${'$'}"
-          if ( : > "${'$'}_probe_file" ) 2>/dev/null; then
+        if [ "${'$'}_real" = "${'$'}ws" ] && [ ! -L "${'$'}ws" ] && [ -d "${'$'}ws" ] && [ -w "${'$'}ws" ]; then
+          if _probe_file=${'$'}(umask 077; mktemp "${'$'}ws/.nyx-ws-probe-XXXXXXXX") 2>/dev/null; then
             _writable=1
-            rm -f "${'$'}_probe_file" 2>/dev/null
+            rm -f -- "${'$'}_probe_file" 2>/dev/null || exit 1
           fi
         fi
         printf 'NYX_WS_WRITABLE=%s\n' "${'$'}_writable"
-        _real=${'$'}(cd "${'$'}ws" 2>/dev/null && pwd -P)
         printf 'NYX_WS_REALPATH=%s\n' "${'$'}_real"
         exit 0
     """.trimIndent()
@@ -165,7 +168,8 @@ object WorkspaceValidator {
      * reported flags decide between a missing path, a non-directory, an unwritable folder, and a
      * canonical path.
      */
-    fun parseProbe(stdout: String, stderr: String, exitCode: Int?): WorkspaceCheck {
+    fun parseProbe(stdout: String, stderr: String, exitCode: Int?, expectedPath: String? = null,
+                   environment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST): WorkspaceCheck {
         if (exitCode != 0) {
             val detail = sanitizeDetail(stderr.ifBlank { stdout })
             val suffix = if (detail == null) "" else ": $detail"
@@ -176,6 +180,7 @@ object WorkspaceValidator {
             )
         }
         val flags = parseFlags(stdout)
+            ?: return invalid("probe_failed", "The workspace probe returned duplicate fields.", "Run the workspace check again.")
         when (flags["NYX_WS_EXISTS"].toFlag()) {
             null -> return invalid(
                 "probe_failed",
@@ -229,10 +234,15 @@ object WorkspaceValidator {
                 "Run the workspace check again.",
             )
         }
+        val syntax = validateSyntax(WorkspaceRequest(environment, realPath, authorized = true))
+        if (syntax !is WorkspaceCheck.Valid) return syntax
+        if (expectedPath != null && realPath != expectedPath) {
+            return invalid("canonical_scope_changed", "The resolved workspace differs from the approved path; no alias is adopted.", "Select and explicitly approve the canonical project directory.")
+        }
         return WorkspaceCheck.Valid(realPath)
     }
 
-    private fun parseFlags(stdout: String): Map<String, String> {
+    private fun parseFlags(stdout: String): Map<String, String>? {
         val flags = HashMap<String, String>()
         for (line in stdout.lineSequence()) {
             val text = line.trim()
@@ -240,6 +250,7 @@ object WorkspaceValidator {
             if (separator <= 0) continue
             val key = text.substring(0, separator)
             if (key !in FLAG_KEYS) continue
+            if (key in flags) return null
             flags[key] = text.substring(separator + 1).trim()
         }
         return flags

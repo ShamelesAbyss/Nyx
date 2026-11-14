@@ -21,13 +21,16 @@ import com.nyx.ai.terminal.TerminalBridge
 import com.nyx.ai.terminal.TerminalEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Keeps a managed guest Ollama session alive while the NYX activity is in the background.
@@ -37,14 +40,16 @@ import kotlinx.coroutines.launch
  * sees a server that started and then vanished. This service deliberately declares the bounded
  * `dataSync` type for a user-started local model-serving session; it is not a way to claim unlimited
  * background execution. Android's own foreground-service timeout still applies, and the server
- * remains independently owned and stoppable through its verified PID.
+ * retains independent ownership evidence. Stop can refuse when token/PID/session identity is
+ * unresolved; ending this service or cancelling its callback wait does not prove server shutdown.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class OllamaHostService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var bridge: TerminalBridge
     private lateinit var manager: OllamaServerManager
-    private var runJob: Job? = null
-    private var latestStartId = 0
+    private class HostRun { lateinit var job: Job }
+    private val operations = ServiceOperationSlot<HostRun>()
 
     override fun onCreate() {
         super.onCreate()
@@ -54,26 +59,38 @@ class OllamaHostService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Foreground admission/replacement and old finalization share the same generation lock.
+        synchronized(operations) {
         val action = intent?.action ?: ACTION_START
-        latestStartId = startId
-        startForegroundSafely("Preparing the managed Ollama session…")
-        if (runJob?.isActive == true) {
-            if (action == ACTION_START) return START_NOT_STICKY
-            // Stop or restart must be able to supersede a startup that is still discovering the
-            // guest. The old job's finally block is start-id guarded, so it cannot remove this
-            // service's newer notification.
-            runJob?.cancel()
+        operations.attachStart(startId)
+        // Duplicate START belongs to the existing generation even while its finalizer is running.
+        if (action == ACTION_START && operations.current() != null) return START_NOT_STICKY
+        try {
+            startForegroundSafely("Preparing the managed Ollama session…")
+        } catch (failure: Exception) {
+            // No lifecycle command is dispatched if Android rejects foreground admission.
+            android.util.Log.w("NyxOllamaHost", "Foreground start rejected: ${failure.javaClass.simpleName}")
+            operations.current()?.job?.cancel()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
         val aliases = intent?.getStringArrayListExtra(EXTRA_GUEST_ALIASES).orEmpty()
         val selected = intent?.getStringExtra(EXTRA_SELECTED_GUEST)
         val environment = intent?.getStringExtra(EXTRA_ENVIRONMENT)
             ?.let { runCatching { TerminalEnvironment.valueOf(it) }.getOrNull() }
             ?: TerminalEnvironment.TERMUX_HOST
-        runJob = scope.launch {
-            val notifier = launch {
-                manager.state.collect { updateNotification(it) }
-            }
+        val run = HostRun()
+        val previous = operations.replace(run)
+        previous?.job?.cancel()
+        run.job = scope.launch(start = CoroutineStart.ATOMIC) {
+            var notifier: Job? = null
             try {
+                // Never invoke start/stop/restart while predecessor cancellation cleanup is active.
+                previous?.job?.join()
+                notifier = launch {
+                    manager.state.collect { state -> operations.withOwner(run) { updateNotification(state) } }
+                }
                 if (action != ACTION_STOP) {
                     manager.configureGuests(aliases, selected, environment)
                 }
@@ -82,9 +99,9 @@ class OllamaHostService : Service() {
                     ACTION_RESTART -> manager.restart()
                     else -> manager.start()
                 }
-                updateNotification(state)
+                operations.withOwner(run) { updateNotification(state) }
                 if (state.startedByNyx && (state.isRunning || state.sessionPid != null)) {
-                    supervise()
+                    supervise(run)
                 } else {
                     // Give the notification a moment to show the final message before the service ends.
                     delay(1_200L)
@@ -92,17 +109,23 @@ class OllamaHostService : Service() {
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (e: Exception) {
-                updateNotification(e.message?.take(160) ?: "The Ollama lifecycle operation failed.")
+                operations.withOwner(run) { updateNotification(e.message?.take(160) ?: "The Ollama lifecycle operation failed.") }
                 delay(800L)
             } finally {
-                notifier.cancel()
-                if (startId == latestStartId) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf(startId)
+                notifier?.cancel()
+                withContext(NonCancellable) {
+                    // A cancelled middle generation must still drain A before C can join B.
+                    previous?.job?.join()
+                    notifier?.join()
+                    operations.finish(run) { latestStartId ->
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelfResult(latestStartId)
+                    }
                 }
             }
         }
         return START_NOT_STICKY
+        }
     }
 
     /**
@@ -110,18 +133,19 @@ class OllamaHostService : Service() {
      * server is active. This is deliberately a bounded poll, not a promise of indefinite execution:
      * Android's foreground-service timeout still applies.
      */
-    private suspend fun supervise() {
+    private suspend fun supervise(run: HostRun) {
         var consecutiveFailures = 0
         while (true) {
             delay(SUPERVISE_INTERVAL_MS)
             val next = runCatching { manager.detect() }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 consecutiveFailures++
-                updateNotification("Recovering · ${error.message?.take(140) ?: "state check failed"}")
+                operations.withOwner(run) { updateNotification("Recovering · ${error.message?.take(140) ?: "state check failed"}") }
                 if (consecutiveFailures >= 6) return
                 continue
             }
             consecutiveFailures = 0
-            updateNotification(next)
+            operations.withOwner(run) { updateNotification(next) }
             val managed = next.startedByNyx || next.sessionPid != null
             if (!managed) return
             if (!next.isRunning && next.sessionPid == null &&
@@ -135,14 +159,16 @@ class OllamaHostService : Service() {
     override fun onTimeout(startId: Int) = onTimeout(startId, 0)
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        runJob?.cancel()
+        // Android foreground lifetime ends here, not external process ownership. The manager's
+        // synchronous pending-launch fence survives cancellation; never infer a clean child stop.
+        operations.current()?.job?.cancel()
         bridge.cancelAll()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf(startId)
     }
 
     override fun onDestroy() {
-        runJob?.cancel()
+        operations.current()?.job?.cancel()
         bridge.cancelAll()
         manager.close()
         scope.cancel()

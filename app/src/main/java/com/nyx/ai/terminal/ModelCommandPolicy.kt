@@ -35,12 +35,11 @@ data class ModelCommandRequest(
 )
 
 /**
- * Pure validation for a model-proposed command. It confines the initial working directory to the
- * approved workspace and classifies the command with the existing conservative [CommandPolicy].
+ * Pure validation for a model-proposed command. Only a narrow executable/argument catalog is
+ * admitted; every file operand is workspace-relative. Execution rechecks canonical paths.
  *
- * This is a policy boundary, not an OS sandbox: a shell command can still invoke tools that read or
- * write outside the workspace when the underlying environment permits it. Credential paths and
- * destructive operations are denied here rather than pretending the command is contained.
+ * This is an application policy boundary, not an OS sandbox. Trusted fixed project build/test
+ * scripts are separately approved code execution and retain the underlying environment authority.
  */
 object ModelCommandPolicy {
     const val DEFAULT_TIMEOUT_SECONDS = 120L
@@ -131,6 +130,9 @@ object ModelCommandPolicy {
             )
         }
 
+        if (StructuredTerminalCommands.parse(command) == null) {
+            return denied("Unsupported executable, argument or workspace operand. Use structured file tools or explicitly approved fixed build/test commands.", workingDirectory)
+        }
         val timeout = (request.timeoutSeconds ?: DEFAULT_TIMEOUT_SECONDS).coerceIn(1L, request.maximumTimeoutSeconds)
         return ModelCommandDecision(
             allowed = true,
@@ -158,6 +160,7 @@ object ModelCommandPolicy {
         }
         if (!DevelopmentPaths.isAbsoluteNormalizedWorkspace(candidate)) return null
         if (candidate != workspaceRoot && !candidate.startsWith("$workspaceRoot/")) return null
+        if (candidate != workspaceRoot && !WorkspaceSourcePaths.isSafeRelative(candidate.removePrefix("$workspaceRoot/"))) return null
         return candidate
     }
 

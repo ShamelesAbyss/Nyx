@@ -36,12 +36,7 @@ object ProviderFactory {
 
     private fun parseHttpUri(baseUrl: String): URI? {
         return try {
-            val uri = URI(baseUrl.trim())
-            val scheme = uri.scheme?.lowercase(Locale.ROOT)
-            val host = uri.host
-            if ((scheme != "http" && scheme != "https") || host.isNullOrBlank()) return null
-            if (uri.port !in -1..65535) return null
-            uri
+            URI(InferenceEndpointPolicy.parse(baseUrl).toString())
         } catch (_: Exception) {
             null
         }

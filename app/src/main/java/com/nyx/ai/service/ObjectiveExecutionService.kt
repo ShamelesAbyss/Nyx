@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.room.withTransaction
 import com.nyx.ai.MainActivity
 import com.nyx.ai.R
 import com.nyx.ai.autonomy.DeviceResourceReader
@@ -54,6 +55,7 @@ import com.nyx.ai.development.DevelopmentPaths
 import com.nyx.ai.workbench.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -76,22 +78,27 @@ import java.util.UUID
  * notification and no claim of unlimited background execution. If the process is killed, durable
  * checkpoints are recovered conservatively and uncertain tasks require review.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ObjectiveExecutionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val ownerId = UUID.randomUUID().toString()
     private lateinit var database: NyxDatabase
     private lateinit var contextStore: ContextStore
     private lateinit var bridge: TerminalBridge
     private lateinit var sessions: InferenceSessionFactory
     private var terminalTools: TerminalAgentTools? = null
 
-    private var runJob: Job? = null
-    private var control: ExecutionControl? = null
-    private var cancelRequested = false
-    private var currentObjectiveId: String? = null
-    private var currentRunId: String? = null
-    private var currentTitle: String = "Objective"
+    private class ObjectiveRun(val objectiveId: String) {
+        val ownerId = UUID.randomUUID().toString()
+        val runId = "run-${UUID.randomUUID()}"
+        val control = ExecutionControl()
+        lateinit var job: Job
+        @Volatile var cancelRequested = false
+        @Volatile var leaseAcquired = false
+        @Volatile var leaseLost = false
+        @Volatile var title = "Objective"
+    }
+    private val operations = ServiceOperationSlot<ObjectiveRun>()
 
     override fun onCreate() {
         super.onCreate()
@@ -101,9 +108,9 @@ class ObjectiveExecutionService : Service() {
         bridge = TerminalBridge(this)
         val factory = InferenceClientFactory(database, CredentialVault(this), this)
         sessions = InferenceSessionFactory { objective, agent ->
-            val saved = database.objectiveDao().observeEvents(objective.id).first().lastOrNull { it.kind == "execution_config" }
+            val config = com.nyx.ai.workbench.WorkbenchExecutionConfiguration.latest(database.objectiveDao().observeEvents(objective.id).first()
+                .filter { it.kind == "execution_config" }.map { JSONObject(requireNotNull(it.detail)) })
                 ?: error("Legacy objective has no provider snapshot. Review it and select a provider before resuming.")
-            val config = JSONObject(saved.detail ?: "{}")
             val endpoint = database.modelEndpointDao().getById(config.getString("endpointId"))
                 ?: error("The objective's snapshotted provider was removed.")
             val handle = factory.providerForRecord(endpoint.copy(modelId = config.getString("modelId"), configurationJson = config.optJSONObject("options")?.toString()))
@@ -114,27 +121,34 @@ class ObjectiveExecutionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Do not let an IO finalizer consume this start ID between attachment and admission.
+        synchronized(operations) {
+        operations.attachStart(startId)
         val action = intent?.action ?: ACTION_START
         when (action) {
             ACTION_PAUSE -> {
-                if (runJob == null) { stopSelf(startId); return START_NOT_STICKY }
-                control?.requestPause()
-                runJob?.cancel(PauseRequested())
+                val run = operations.current() ?: run { stopSelf(startId); return START_NOT_STICKY }
+                run.control.requestPause()
+                run.job.cancel(PauseRequested())
                 bridge.cancelAll()
                 updateNotification("Pausing after the current step…")
             }
             ACTION_CANCEL -> {
-                if (runJob == null) { stopSelf(startId); return START_NOT_STICKY }
-                cancelRequested = true
-                control?.requestCancel()
-                runJob?.cancel(CancellationException("Cancelled by user"))
+                val run = operations.current() ?: run { stopSelf(startId); return START_NOT_STICKY }
+                run.cancelRequested = true
+                run.control.requestCancel()
+                run.job.cancel(CancellationException("Cancelled by user"))
                 bridge.cancelAll()
                 updateNotification("Cancelling…")
             }
             ACTION_START -> {
                 val objectiveId = intent?.getStringExtra(EXTRA_OBJECTIVE_ID)
                 if (objectiveId.isNullOrBlank()) {
-                    stopSelf()
+                    if (operations.current() == null) stopSelf(startId)
+                    return START_NOT_STICKY
+                }
+                if (operations.current() != null) {
+                    updateNotification("An objective is running or checkpointing. Retry after it finishes.")
                     return START_NOT_STICKY
                 }
                 AutonomyRuntime.initialize(this)
@@ -143,33 +157,30 @@ class ObjectiveExecutionService : Service() {
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
-                if (runJob?.isActive == true) {
-                    updateNotification("Another objective is already running.")
-                    return START_NOT_STICKY
-                }
                 try {
                     startForegroundSafely("Starting objective…")
                     launchObjective(objectiveId)
                 } catch (failure: Exception) {
                     ExecutionMonitor.finish("Foreground-service startup rejected: ${failure.javaClass.simpleName}")
                     scope.launch {
-                        database.objectiveDao().getObjective(objectiveId)?.let { database.objectiveDao().upsertObjective(it.copy(status = "needs_attention", error = "Android refused foreground-service start: ${failure.javaClass.simpleName}")) }
-                        stopSelf(startId)
+                        // No lease was acquired: a rejected contender must not rewrite another owner.
+                        recordEvent(objectiveId, "foreground_start_rejected", "Android refused foreground-service start: ${failure.javaClass.simpleName}")
                     }
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf(startId)
                 }
             }
         }
         return START_NOT_STICKY
+        }
     }
 
     private fun launchObjective(objectiveId: String) {
-        val executionControl = ExecutionControl()
-        control = executionControl
-        cancelRequested = false
-        currentObjectiveId = objectiveId
-        currentRunId = "run-${UUID.randomUUID()}"
+        val run = ObjectiveRun(objectiveId)
+        check(operations.admit(run)) { "The previous objective is still checkpointing" }
+        val executionControl = run.control
         ExecutionMonitor.begin(objectiveId)
-        runJob = scope.launch {
+        run.job = scope.launch(start = CoroutineStart.ATOMIC) {
             val before = InferenceFabric.metrics.value
             val began = System.currentTimeMillis()
             var sampledPeakPssKb = 0
@@ -182,27 +193,26 @@ class ObjectiveExecutionService : Service() {
             val watchdog = scope.launch {
                 delay(MAX_RUN_MILLIS)
                 executionControl.requestPause()
-                runJob?.cancel(PauseRequested())
+                run.job.cancel(PauseRequested())
                 bridge.cancelAll()
             }
             var finalStatus: String? = null
             try {
-                finalStatus = execute(objectiveId, executionControl)
+                finalStatus = execute(run)
             } catch (pause: PauseRequested) {
                 finalStatus = "paused"
             } catch (cancel: CancellationException) {
-                finalStatus = if (cancelRequested) "cancelled" else "paused"
+                finalStatus = if (run.cancelRequested) "cancelled" else "paused"
             } catch (e: Exception) {
                 finalStatus = "needs_attention"
-                database.objectiveDao().getObjective(objectiveId)?.let {
-                    database.objectiveDao().upsertObjective(
-                        it.copy(status = "needs_attention", error = (e.message ?: "Execution failed").take(350), updatedAt = System.currentTimeMillis())
-                    )
-                }
+                withContext(NonCancellable) { markNeedsAttention(run, e.message ?: "Execution failed") }
             } finally {
                 watchdog.cancel(); sampler.cancel()
-                withContext(NonCancellable) {
-                    checkpointInterrupted(objectiveId, finalStatus ?: "paused")
+                var checkpointSaved = false
+                try { withContext(NonCancellable) {
+                    watchdog.join(); sampler.join()
+                    checkpointInterrupted(run, finalStatus ?: "paused")
+                    checkpointSaved = true
                     val after = InferenceFabric.metrics.value
                     val tasks = database.objectiveDao().getTasks(objectiveId)
                     val metrics = JSONObject().put("status", finalStatus).put("elapsedMillis", System.currentTimeMillis() - began)
@@ -213,42 +223,64 @@ class ObjectiveExecutionService : Service() {
                         .put("verifiedTasks", tasks.count { it.verificationStatus == "passed" })
                     database.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), objectiveId, null, "execution_metrics", metrics.toString(), System.currentTimeMillis()))
                     if (finalStatus != "completed") NativeRuntime.unload()
+                } } finally {
+                    // Cleanup failures must not strand the service; persisted ownership stays uncertain.
+                    try {
+                        withContext(NonCancellable) {
+                            if (run.leaseAcquired && checkpointSaved) database.objectiveDao().releaseLease(objectiveId, run.ownerId)
+                        }
+                    } finally {
+                        operations.finish(run) { latestStartId ->
+                            ExecutionMonitor.finish(finalStatus)
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelfResult(latestStartId)
+                        }
+                    }
                 }
-                ExecutionMonitor.finish(finalStatus)
-                updateNotification(finalStatus ?: "finished")
-                runJob = null
-                control = null
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
             }
         }
     }
 
-    private suspend fun execute(objectiveId: String, executionControl: ExecutionControl): String {
+    private suspend fun execute(run: ObjectiveRun): String {
+        val objectiveId = run.objectiveId
+        val executionControl = run.control
+        suspend fun recordEvent(id: String, kind: String, detail: String) = recordEvent(id, kind, detail, run.runId)
+        suspend fun markNeedsAttention(id: String, message: String) { check(id == objectiveId); markNeedsAttention(run, message) }
         val dao = database.objectiveDao()
         val objective = dao.getObjective(objectiveId) ?: return "missing"
         val agent = objective.agentId?.let { database.agentDao().getById(it) } ?: return "missing_agent"
-        currentTitle = objective.title.take(80)
+        run.title = objective.title.take(80)
         val now = System.currentTimeMillis()
-        if (dao.tryAcquireLease(objectiveId, ownerId, now, now + LEASE_MILLIS) == 0) {
+        if (dao.tryAcquireLease(objectiveId, run.ownerId, now, now + LEASE_MILLIS) == 0) {
             return "busy"
         }
+        run.leaseAcquired = true
         val heartbeat = scope.launch {
-            while (isActive) {
+            try { while (isActive) {
                 delay(LEASE_MILLIS / 3)
-                val renewed = dao.tryAcquireLease(objectiveId, ownerId, System.currentTimeMillis(), System.currentTimeMillis() + LEASE_MILLIS)
+                val renewed = database.withTransaction {
+                    if (!ownsLease(run, dao.getObjective(objectiveId)?.leaseOwner)) 0
+                    else dao.tryAcquireLease(objectiveId, run.ownerId, System.currentTimeMillis(), System.currentTimeMillis() + LEASE_MILLIS)
+                }
                 if (renewed == 0) {
+                    run.leaseLost = true
                     executionControl.requestPause()
-                    runJob?.cancel(PauseRequested())
+                    run.job.cancel(PauseRequested())
                     return@launch
                 }
                 val pressure = DeviceResourceReader.read(this@ObjectiveExecutionService)
                 if (pressure.lowMemory || pressure.thermalStatus >= 4 || (pressure.batteryPercent < 8 && !pressure.charging)) {
                     executionControl.requestPause()
-                    runJob?.cancel(PauseRequested())
+                    run.job.cancel(PauseRequested())
                     return@launch
                 }
-                updateNotification("Running")
+                operations.withOwner(run) { updateNotification("Running") }
+            } } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                run.leaseLost = true
+                executionControl.requestPause()
+                run.job.cancel(PauseRequested())
             }
         }
         var reservation: ExecutionAllowanceReservation? = null
@@ -257,7 +289,8 @@ class ObjectiveExecutionService : Service() {
         var allowanceSequence = 0L
         return try {
             val events = dao.observeEvents(objectiveId).first()
-            val snapshot = events.lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
+            val snapshot = com.nyx.ai.workbench.WorkbenchExecutionConfiguration.latest(events.filter { it.kind == "execution_config" }
+                .map { JSONObject(requireNotNull(it.detail)) })
                 ?: error("No approved execution settings for this objective.")
             val timeouts = ExecutionTimeoutPolicyStore.fromSnapshot(snapshot)
             val workbenchApproval = WorkbenchAuthorization.fromSnapshot(snapshot)
@@ -288,7 +321,7 @@ class ObjectiveExecutionService : Service() {
             }
             // Reserve durably before dispatch. A crash consumes this segment conservatively rather than resetting the allowance.
             recordEvent(objectiveId, "timeout_allowance", JSONObject().put("consumedMillis", segment.reservedConsumedMs)
-                .put("sequence", allowanceSequence).put("reservedMillis", segment.segmentMs).put("runId", currentRunId).put("state", "reserved").toString())
+                .put("sequence", allowanceSequence).put("reservedMillis", segment.segmentMs).put("runId", run.runId).put("state", "reserved").toString())
             reservation = segment
             allowanceStartedNanos = System.nanoTime()
             recordEvent(objectiveId, "timeout_profile", "${timeouts.profile.name.lowercase()} profile; ${segment.segmentMs / 60_000}min finite service segment, ${(timeouts.overallAllowanceMs - consumed) / 60_000}min remaining checkpointed allowance. Explicit resume/review is required after pause; this is not an unlimited background entitlement.")
@@ -296,7 +329,7 @@ class ObjectiveExecutionService : Service() {
                 delay(segment.segmentMs)
                 recordEvent(objectiveId, "timeout_segment", "Finite service segment ended; checkpointing and pausing for explicit review. Uncertain side effects will not be replayed automatically.")
                 executionControl.requestPause()
-                runJob?.cancel(PauseRequested())
+                run.job.cancel(PauseRequested())
                 bridge.cancelAll()
             }
             val tasks = dao.getTasks(objectiveId)
@@ -306,7 +339,15 @@ class ObjectiveExecutionService : Service() {
             val workspace = snapshot.optString("workspace")
             val environmentId = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias"
             terminalTools = null
-            if (terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
+            val combined = workbenchApproval.combinedDevelopment
+            val outputApproval = combined?.terminalApproval(objectiveId)
+            if (combined != null) {
+                require(terminalEnabled() && snapshot.getBoolean("terminalEnabled")) { "Combined development terminal approval is revoked; no execution started." }
+                require(workspace == combined.workspaceRoot && environment == combined.environment && guestAlias == combined.guestAlias) {
+                    "Saved combined project scope mismatch; create a separately approved objective rather than rebinding."
+                }
+            }
+            if ((!workbenchApproval.enabled || combined != null) && terminalEnabled() && snapshot.optBoolean("terminalEnabled")) {
                 val environmentProfile = EnvironmentDiscovery(bridge).discover()
                 require(environmentProfile.hostAvailable) { environmentProfile.detail ?: "Termux setup is incomplete." }
                 require(com.nyx.ai.terminal.HostShell.isSafeAlias(guestAlias)) { "The selected PRoot distribution alias is invalid." }
@@ -331,14 +372,20 @@ class ObjectiveExecutionService : Service() {
                     useTimeoutBinary = environmentProfile.timeoutAvailable,
                     workspaceApproved = true,
                     guestAlias = guestAlias,
-                    modelCommandGate = AutonomyModelCommandGate(this, environmentId, workspace, environment,
+                    modelCommandGate = if (combined != null) null else AutonomyModelCommandGate(this, environmentId, workspace, environment,
                         maximumTimeoutSeconds = (timeouts.terminalMs / 1_000).coerceAtLeast(1)),
                     executionTimeouts = timeouts,
+                    outputApproval = outputApproval,
                 )
             }
             val beforeTasksExecute: suspend (List<com.nyx.ai.data.ObjectiveTaskEntity>) -> Boolean = { plannedTasks ->
                 if (terminalTools == null) {
                     true
+                } else if (combined != null) {
+                    // This approval permits existing fixed tools, never dependency installation.
+                    val inspected = requireNotNull(terminalTools).inspectProject()
+                    if (!inspected.ready) markNeedsAttention(objectiveId, "Combined fixed-tool preflight blocked: ${inspected.reason}; ${inspected.missingTools.joinToString()}. No installation attempted.")
+                    inspected.ready
                 } else {
                     val dependencyTasks = plannedTasks.map { task ->
                         com.nyx.ai.terminal.PlannedDependencyTask(
@@ -398,7 +445,7 @@ class ObjectiveExecutionService : Service() {
                     }
                 }
             }
-            val gatewayExtra = runCatching {
+            val gatewayExtra = if (workbenchTools != null) null else runCatching {
                 val vault = com.nyx.ai.settings.CredentialVault(this)
                 val repository = com.nyx.ai.gateway.GatewayRepository(
                     root = java.io.File(filesDir, "gateways"),
@@ -440,7 +487,7 @@ class ObjectiveExecutionService : Service() {
                 },
                 fileProbe = terminalTools,
                 contextStore = contextStore,
-                suppliedRunId = currentRunId,
+                suppliedRunId = run.runId,
                 beforeTasksExecute = beforeTasksExecute,
                 workbenchApproval = workbenchApproval,
                 workbenchStore = workbenchStore,
@@ -455,22 +502,22 @@ class ObjectiveExecutionService : Service() {
             segmentWatchdog?.cancel()
             heartbeat.cancel()
             withContext(NonCancellable) {
-                try {
+                segmentWatchdog?.join(); heartbeat.join()
+                database.withTransaction {
+                    if (!ownsLease(run, dao.getObjective(objectiveId)?.leaseOwner)) return@withTransaction
                     reservation?.let { segment ->
                         val elapsed = ((System.nanoTime() - allowanceStartedNanos) / 1_000_000).coerceAtLeast(0)
                         recordEvent(objectiveId, "timeout_allowance", JSONObject().put("consumedMillis", segment.settledConsumedMs(elapsed))
-                            .put("sequence", allowanceSequence + 1).put("elapsedMillis", elapsed).put("runId", currentRunId).put("state", "settled").toString())
+                            .put("sequence", allowanceSequence + 1).put("elapsedMillis", elapsed).put("runId", run.runId).put("state", "settled").toString())
                     }
-                } finally {
-                    dao.releaseLease(objectiveId, ownerId)
                 }
             }
         }
     }
 
-    private suspend fun markNeedsAttention(objectiveId: String, message: String) {
+    private suspend fun markNeedsAttention(run: ObjectiveRun, message: String) = database.withTransaction {
         val dao = database.objectiveDao()
-        dao.getObjective(objectiveId)?.let { objective ->
+        dao.getObjective(run.objectiveId)?.takeIf { ownsLease(run, it.leaseOwner) }?.let { objective ->
             dao.upsertObjective(
                 objective.copy(
                     status = "needs_attention",
@@ -481,7 +528,7 @@ class ObjectiveExecutionService : Service() {
         }
     }
 
-    private suspend fun recordEvent(objectiveId: String, kind: String, detail: String) {
+    private suspend fun recordEvent(objectiveId: String, kind: String, detail: String, runId: String? = null) {
         database.objectiveDao().appendEvent(
             ObjectiveEventEntity(
                 id = UUID.randomUUID().toString(),
@@ -505,7 +552,7 @@ class ObjectiveExecutionService : Service() {
             title = kind.replace('_', ' '),
             detail = detail,
             objectiveId = objectiveId,
-            runId = currentRunId,
+            runId = runId,
         )
     }
 
@@ -544,7 +591,7 @@ class ObjectiveExecutionService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("NYX · $currentTitle")
+            .setContentTitle("NYX · ${operations.current()?.title ?: "Objective"}")
             .setContentText(text.take(120))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -570,24 +617,27 @@ class ObjectiveExecutionService : Service() {
     private fun terminalWorkspace(): String =
         getSharedPreferences("nyx_settings", Context.MODE_PRIVATE).getString(KEY_TERMINAL_WORKSPACE, "") ?: ""
 
-    private suspend fun checkpointInterrupted(id: String, status: String) {
+    private fun ownsLease(run: ObjectiveRun, persistedOwner: String?): Boolean =
+        com.nyx.ai.autonomy.ExecutionLeasePolicy.mayCheckpoint(run.leaseAcquired, run.leaseLost, run.ownerId, persistedOwner)
+
+    private suspend fun checkpointInterrupted(run: ObjectiveRun, status: String) = database.withTransaction {
+        val id = run.objectiveId
         val dao = database.objectiveDao()
+        val row = dao.getObjective(id) ?: return@withTransaction
+        if (!ownsLease(run, row.leaseOwner)) return@withTransaction
         val now = System.currentTimeMillis()
         dao.getTasks(id).filter { it.status in setOf("running", "verifying") }.forEach {
             dao.upsertTask(it.copy(status = "needs_review", updatedAt = now, finishedAt = now,
                 error = "Interrupted. An external process or file edit may already have occurred; no automatic replay."))
         }
-        dao.getObjective(id)?.let { row ->
-            if (row.status in setOf("planning", "running", "paused")) dao.upsertObjective(row.copy(status = status, updatedAt = now, leaseOwner = null, leaseExpiresAt = null,
+        if (row.status in setOf("planning", "running", "paused")) dao.upsertObjective(row.copy(status = status, updatedAt = now,
                 error = if (status == "completed") null else "Execution stopped ($status). Review uncertain tasks and provider settings before resuming."))
-        }
     }
 
     override fun onTimeout(startId: Int) { onTimeout(startId, 0) }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        control?.requestPause()
-        runJob?.cancel(PauseRequested())
+        operations.current()?.let { it.control.requestPause(); it.job.cancel(PauseRequested()) }
         bridge.cancelAll()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf(startId)
@@ -595,7 +645,7 @@ class ObjectiveExecutionService : Service() {
 
     override fun onDestroy() {
         bridge.cancelAll()
-        runJob?.cancel()
+        operations.current()?.job?.cancel()
         scope.cancel()
         super.onDestroy()
     }

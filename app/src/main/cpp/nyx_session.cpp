@@ -1,4 +1,5 @@
 #include "nyx_session.h"
+#include "nyx_context.h"
 #include "llama.h"
 #include <algorithm>
 #include <cmath>
@@ -68,6 +69,7 @@ int Session::load(const std::string & path, int context, int threads) {
         throw std::invalid_argument("Model path must be an absolute filesystem path");
     if (context < 512 || context > 32768 || threads < 1 || threads > 32)
         throw std::invalid_argument("Context must be 512..32768 and threads 1..32");
+    const int allocated_context = allocation_context(context);
     check_cancelled();
     std::call_once(backend_once, [] { llama_backend_init(); });
     if (model_ && path_ == path && context_requested_ == context && threads_ == threads)
@@ -96,7 +98,7 @@ int Session::load(const std::string & path, int context, int threads) {
     if (llama_chat_apply_template(tmpl, &probe, 1, true, nullptr, 0) < 0)
         throw std::runtime_error("Model chat template is unsupported by llama_chat_apply_template");
     auto cp = llama_context_default_params();
-    cp.n_ctx = static_cast<uint32_t>(context);
+    cp.n_ctx = static_cast<uint32_t>(allocated_context);
     cp.n_batch = 256; cp.n_ubatch = 128; cp.n_seq_max = 1;
     cp.n_threads = threads; cp.n_threads_batch = threads;
     cp.type_k = GGML_TYPE_F16; cp.type_v = GGML_TYPE_F16;
@@ -106,6 +108,8 @@ int Session::load(const std::string & path, int context, int threads) {
     ContextPtr ctx(llama_init_from_model(model.get(), cp), llama_free);
     check_cancelled();
     if (!ctx) throw std::runtime_error("llama.cpp context allocation failed");
+    if (llama_n_ctx(ctx.get()) != static_cast<uint32_t>(allocated_context))
+        throw std::runtime_error("Native allocation context disagrees with admission policy");
     path_ = path; context_requested_ = context; threads_ = threads;
     model_ = model.release(); context_ = ctx.release();
     return static_cast<int>(llama_n_ctx(context_));
@@ -142,9 +146,8 @@ int Session::generate(const std::vector<std::pair<std::string, std::string>> & m
     if (required == std::numeric_limits<int32_t>::min() || required >= 0)
         throw std::runtime_error("Prompt tokenization failed");
     const int n_prompt = -required;
-    const int n_ctx = static_cast<int>(llama_n_ctx(context_));
     // No silent history truncation or context sliding; reserve at least one output token.
-    if (n_prompt >= n_ctx) throw std::runtime_error("Prompt exceeds native context; reduce history");
+    const int limit = generation_limit(context_requested_, n_prompt, max_tokens);
     std::vector<llama_token> tokens(static_cast<size_t>(n_prompt));
     if (llama_tokenize(vocab, formatted.data(), needed, tokens.data(), n_prompt, true, true) != n_prompt)
         throw std::runtime_error("Prompt tokenization failed");
@@ -192,9 +195,8 @@ int Session::generate(const std::vector<std::pair<std::string, std::string>> & m
     }
     int generated = 0;
     std::vector<llama_token> decoded_generated;
-    decoded_generated.reserve(static_cast<size_t>(std::min(max_tokens, n_ctx - n_prompt)));
+    decoded_generated.reserve(static_cast<size_t>(limit));
     size_t output_bytes = 0;
-    const int limit = std::min(max_tokens, n_ctx - n_prompt);
     for (int i = 0; i < limit; ++i) {
         check_cancelled();
         const llama_token token = llama_sampler_sample(sampler.get(), context_, -1);

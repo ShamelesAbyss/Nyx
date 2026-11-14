@@ -1,2 +1,8 @@
 # Keep NYX's first-party application language/profile centered on Kotlin.
 app/src/main/cpp/llama.cpp/** linguist-vendored
+# Executable first-party scripts must remain portable on Linux CI.
+/gradlew text eol=lf
+/gradlew.bat text eol=crlf
+/tools/*.sh text eol=lf
+/tools/*.py text eol=lf
+/.github/workflows/*.yml text eol=lf

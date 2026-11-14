@@ -151,12 +151,14 @@ object WorkspaceLifecycle {
     }
 
     fun parseDelete(stdout: String, stderr: String, exitCode: Int?, expectedPath: String): WorkspaceDeleteResult {
-        val flags = stdout.lineSequence().mapNotNull { line ->
+        val entries = stdout.lineSequence().mapNotNull { line ->
             val text = line.trim()
             val separator = text.indexOf('=')
             if (separator <= 0) null else text.substring(0, separator) to text.substring(separator + 1)
-        }.toMap()
-        if (flags["NYX_WS_DELETED"] == "1" && flags["NYX_WS_PATH"] == expectedPath.trimEnd('/')) {
+        }.toList()
+        val flags = entries.toMap()
+        if (exitCode == 0 && entries.map { it.first }.distinct().size == entries.size &&
+            flags["NYX_WS_DELETED"] == "1" && flags["NYX_WS_PATH"] == expectedPath.trimEnd('/')) {
             return WorkspaceDeleteResult.Deleted(expectedPath.trimEnd('/'))
         }
         val detail = flags["NYX_WS_ERROR"]?.take(240)

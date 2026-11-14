@@ -17,7 +17,11 @@ class WorkbenchAgentTools(
     private val task: AgentToolTaskContext? = null,
 ) : AgentToolProvider {
     private val evidence = mutableListOf<ToolExecutionEvidence>()
-    init { require(approval.validate().enabled) { "Workbench was not approved." } }
+    init {
+        require(approval.validate().enabled) { "Workbench was not approved." }
+        require(store.objectiveId == objectiveId) { "Foreign Workbench store." }
+        approval.combinedDevelopment?.terminalApproval(objectiveId)
+    }
     override val names = setOf(WRITE, LIST, READ, BUNDLE) +
         if (approval.researchEnabled && approval.authorizedUrls.isNotEmpty() && research != null) setOf(RESEARCH) else emptySet()
 
@@ -50,6 +54,7 @@ class WorkbenchAgentTools(
             val text = when (call.name) {
                 WRITE -> {
                     fields(args, setOf("name", "format", "content"))
+                    requireNotReserved(args.getString("name"))
                     val format = ArtifactFormat.valueOf(args.getString("format").uppercase())
                     require(format !in setOf(ArtifactFormat.ZIP, ArtifactFormat.PDF)) { "Use bundle for ZIP; PDF is unsupported." }
                     val content = args.getString("content")
@@ -82,6 +87,7 @@ class WorkbenchAgentTools(
                 }
                 BUNDLE -> {
                     fields(args, setOf("name", "ids"))
+                    requireNotReserved(args.getString("name"))
                     val ids = args.getJSONArray("ids")
                     require(ids.length() in 1..16) { "Select 1–16 artifacts." }
                     val selected = (0 until ids.length()).map { ids.getString(it) }
@@ -129,6 +135,12 @@ class WorkbenchAgentTools(
         return result
     }
 
+    private fun requireNotReserved(name: String) {
+        require(approval.combinedDevelopment?.outputs.orEmpty().none { it.fileName.equals(name, true) }) {
+            "Selected terminal output destinations require genuine engine-owned build/test snapshot registration."
+        }
+    }
+
     override fun drainEvidence(): List<ToolExecutionEvidence> = synchronized(evidence) { evidence.toList().also { evidence.clear() } }
 
     companion object {
@@ -137,7 +149,7 @@ class WorkbenchAgentTools(
         const val READ = "workbench_read"
         const val RESEARCH = "workbench_research"
         const val BUNDLE = "workbench_bundle"
-        val MUTATING = setOf(WRITE, BUNDLE)
+        val MUTATING = setOf(WRITE, BUNDLE, CombinedDevelopmentRegistration.REGISTER)
         val READ_ONLY = setOf(LIST, READ, RESEARCH)
         fun recordJson(record: ArtifactRecord) = JSONObject().put("id", record.id).put("name", record.fileName)
             .put("format", record.format.name).put("bytes", record.bytes).put("sha256", record.sha256).put("status", record.status.name)

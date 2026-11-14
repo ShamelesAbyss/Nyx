@@ -40,7 +40,7 @@ class ModelCapabilityPolicyTest {
         assertEquals(CapabilitySupport.SUPPORTED, profile.stats)
         assertEquals(10.0, profile.observedOutputTokensPerSecond!!, 0.01)
         assertEquals(900L, profile.observedFirstTextMillis)
-        assertTrue(profile.summary().contains("schema output yes"))
+        assertTrue(profile.summary().contains("schema-requested compatible output yes"))
     }
 
     @Test
@@ -52,11 +52,11 @@ class ModelCapabilityPolicyTest {
     }
 
     @Test
-    fun `invalid sample marks schema unsupported`() {
+    fun `invalid sample does not establish constrained decoding unsupported`() {
         val profile = ModelCapabilityPolicy.fromDiagnostic(
             identity(), diagnostic(format = DiagnosticFormatCompatibility.INVALID_RESPONSE), now = 1_000,
         )
-        assertEquals(CapabilitySupport.UNSUPPORTED, profile.structuredOutput)
+        assertEquals(CapabilitySupport.UNKNOWN, profile.structuredOutput)
         // Provider statistics are independent of the format sample.
         assertEquals(CapabilitySupport.SUPPORTED, profile.stats)
     }
@@ -93,6 +93,7 @@ class ModelCapabilityPolicyTest {
             identity(context = 8_192),
             structuredOutput = CapabilitySupport.SUPPORTED,
             observedOutputTokensPerSecond = 12.0,
+            fullPlanObservedAtEpochMs = 1_000,
         )
         val decision = ModelCapabilityPolicy.decide(profile, "Build an Android application with a database and authentication", toolsAvailable = true)
         assertEquals(PlanningStrategy.FULL, decision.strategy)
@@ -100,7 +101,7 @@ class ModelCapabilityPolicyTest {
     }
 
     @Test
-    fun `slow model uses incremental planning and disables learned thinking`() {
+    fun `slow model uses incremental planning without inferring thinking control`() {
         val profile = ModelCapabilityProfile(
             identity(context = 8_192),
             structuredOutput = CapabilitySupport.SUPPORTED,
@@ -110,7 +111,7 @@ class ModelCapabilityPolicyTest {
         val decision = ModelCapabilityPolicy.decide(profile, "Build an Android application with a database and authentication", toolsAvailable = true)
         assertEquals(PlanningStrategy.INCREMENTAL, decision.strategy)
         assertTrue(decision.allowExpansion)
-        assertTrue(decision.disableThinking)
+        assertFalse(decision.disableThinking)
         assertTrue(decision.reason.contains("throughput"))
     }
 

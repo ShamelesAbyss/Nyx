@@ -12,7 +12,7 @@ class WorkbenchProvenanceTest {
         val store = WorkbenchStore(temporary.newFolder(), "objective")
         val file = store.writeArtifact("report.md", ArtifactFormat.MARKDOWN, "A model claimed it researched this.".toByteArray())
         val witnesses = listOf(WorkbenchCompletionPolicy.WriteWitness("task", file.fileName, file.sha256))
-        assertEquals(listOf("source:https://example.com/"), WorkbenchCompletionPolicy.missing(approval(), store, setOf("task"), witnesses))
+        assertEquals(listOf("source:https://example.com/", "citation:https://example.com/"), WorkbenchCompletionPolicy.missing(approval(), store, setOf("task"), witnesses))
         store.recordSource(ResearchSource("https://example.com/", status = "FAILED", note = "Offline"))
         assertFalse(WorkbenchCompletionPolicy.missingSources(approval(), store).isEmpty())
     }

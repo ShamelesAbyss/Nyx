@@ -1,0 +1,67 @@
+name: Verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    name: Bedrock verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Validate wrappers and cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' }}
+          validate-wrappers: true
+          dependency-graph: disabled
+          build-scan-publish: false
+      - name: Install exact SDK components (no API downgrade)
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Hosted runner must expose the Android SDK}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            'platforms;android-37.0' 'build-tools;36.0.0' \
+            'ndk;28.2.13676358' 'cmake;3.22.1'
+      - name: Install checksum-pinned real Kotlin test compiler
+        shell: bash
+        run: bash tools/setup_ci_kotlin.sh "$RUNNER_TEMP/nyx-kotlin-2.2.10"
+      - name: JVM regressions, native app and instrumentation assembly, artifact gates
+        shell: bash
+        run: bash tools/build_release.sh --build verification-output/ci --ci-ephemeral-signer
+      - name: Retain bounded verification evidence (never CI-signed installation APKs)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: bedrock-verification-evidence
+          retention-days: 7
+          include-hidden-files: false
+          if-no-files-found: warn
+          path: |
+            app/build/test-results/testDebugUnitTest/*.xml
+            app/build/reports/tests/testDebugUnitTest/**
+            verification-output/ci/artifact-checks/*.txt
+            verification-output/ci/artifact-checks/*.json
+            verification-output/ci/build-and-dependencies.log

@@ -40,11 +40,11 @@ class ModelCommandPolicyTest {
     }
 
     @Test
-    fun `ordinary mutating command is available for policy evaluation`() {
+    fun `ordinary mutating command is denied outside the structured reader catalog`() {
         val decision = assess("mkdir -p build", ".")
-        assertTrue(decision.reason, decision.allowed)
-        assertEquals(CommandRisk.MUTATING, decision.risk)
-        assertTrue(decision.requiresApproval)
+        assertFalse(decision.reason, decision.allowed)
+        assertEquals(CommandRisk.BLOCKED, decision.risk)
+        assertTrue(decision.reason.contains("Unsupported executable"))
     }
 
     @Test

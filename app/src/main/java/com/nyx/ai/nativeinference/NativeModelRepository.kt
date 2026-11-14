@@ -37,23 +37,19 @@ class NativeModelRepository(context: Context) {
     }.canonicalFile
     init { NativeRuntime.initialize(this.context) }
 
-    /** Call listing on IO; metadata sidecars are bounded, and missing sidecars are recovered by streaming GGUF parsing. */
+    /** Call listing on IO; missing/corrupt sidecars are recovered by bounded strict GGUF parsing. */
     fun models(): List<NativeModel> = synchronized(repositoryLock) {
         directory.listFiles().orEmpty().asSequence().filter { it.name.matches(MODEL_FILE) && it.isFile }
             .take(MAX_MODELS).mapNotNull { file ->
                 try {
                     val sidecar = File(directory, "${file.name}.json")
-                    if (sidecar.isFile && sidecar.length() in 1..MAX_SIDECAR_BYTES) {
-                        val saved = JSONObject(sidecar.readText(Charsets.UTF_8))
-                        if (saved.getLong("sizeBytes") != file.length() || saved.getInt("schema") != 1) throw IOException("Stale metadata")
-                        nativeModel(file, metadataFromJson(saved.getJSONObject("gguf")), saved.getLong("importedAt"))
-                    } else {
-                        val model = nativeModel(file, GgufMetadataParser.read(file), file.lastModified())
-                        saveSidecar(model)
-                        model
+                    val saved = NativeModelSidecar.readOrRecover(file, sidecar) {
+                        saveSidecar(nativeModel(file, it.metadata, it.importedAt))
+                        syncDirectory()
                     }
+                    nativeModel(file, saved.metadata, saved.importedAt)
                 } catch (_: Exception) {
-                    // Do not list invalid or tampered files; native load always reparses before mmap.
+                    // Invalid weights or failed safe persistence stay unlisted; load always reparses before mmap.
                     null
                 }
             }.sortedByDescending { it.importedAt }.toList()
@@ -110,7 +106,7 @@ class NativeModelRepository(context: Context) {
         }
     }
 
-    /** Cancels native work, joins the session mutex and unloads this path before unlinking it. */
+    /** Waits for native work without cancelling it, then unloads this path before unlinking it. */
     suspend fun delete(id: String): Boolean {
         val file = File(id)
         if (!file.isAbsolute) throw IllegalArgumentException("Model ID must be an absolute path")
@@ -145,8 +141,8 @@ class NativeModelRepository(context: Context) {
         val temp = File(directory, ".${target.name}.${UUID.randomUUID()}.part")
         try {
             val json = JSONObject().put("schema", 1).put("sizeBytes", model.sizeBytes).put("importedAt", model.importedAt)
-                .put("gguf", metadataJson(model.metadata)).toString().toByteArray(Charsets.UTF_8)
-            if (json.size > MAX_SIDECAR_BYTES) throw IOException("Persisted metadata exceeds 2 MiB")
+                .put("gguf", NativeModelSidecar.encode(model.metadata)).toString().toByteArray(Charsets.UTF_8)
+            if (json.size > NativeModelSidecar.MAX_BYTES) throw IOException("Persisted metadata exceeds 2 MiB")
             FileOutputStream(temp).use { it.write(json); it.fd.sync() }
             Os.rename(temp.absolutePath, target.absolutePath)
         } finally { temp.delete() }
@@ -158,26 +154,9 @@ class NativeModelRepository(context: Context) {
             try { Os.fsync(fd) } finally { Os.close(fd) }
         }
     }
-    private fun metadataJson(m: GgufMetadata): JSONObject = JSONObject().apply {
-        put("version", m.version); put("name", m.name); put("architecture", m.architecture)
-        put("trainingContext", m.trainingContext); put("tokenizer", m.tokenizer); put("vocabularySize", m.vocabularySize)
-        put("chatTemplate", m.chatTemplate); put("tensorCount", m.tensorCount); put("tensorBytes", m.tensorBytes); put("dataOffset", m.dataOffset)
-        put("blockCount", m.blockCount); put("embeddingLength", m.embeddingLength); put("attentionHeads", m.attentionHeads)
-        put("kvHeads", m.kvHeads); put("keyLength", m.keyLength); put("valueLength", m.valueLength)
-    }
-    private fun metadataFromJson(j: JSONObject): GgufMetadata {
-        fun int(key: String): Int? = if (j.has(key) && !j.isNull(key)) j.getInt(key).also { require(it in 1..1_048_576) } else null
-        val context = j.getInt("trainingContext").also { require(it in 1..1_048_576) }
-        val architecture = j.getString("architecture").also { require(it.matches(Regex("[a-z0-9_]{1,64}"))) }
-        return GgufMetadata(j.getInt("version").also { require(it == 2 || it == 3) }, j.optString("name").takeIf { it.isNotBlank() },
-            architecture, context, j.getString("tokenizer"), j.getInt("vocabularySize"),
-            j.optString("chatTemplate").takeIf { it.isNotBlank() }, j.getInt("tensorCount"), j.getLong("tensorBytes"), j.getLong("dataOffset"),
-            int("blockCount"), int("embeddingLength"), int("attentionHeads"), int("kvHeads"), int("keyLength"), int("valueLength"))
-    }
     companion object {
         const val DEFAULT_MAX_IMPORT_BYTES = 8L * 1024 * 1024 * 1024
         private const val STORAGE_MARGIN_BYTES = 64L * 1024 * 1024
-        private const val MAX_SIDECAR_BYTES = 2L * 1024 * 1024
         private const val MAX_MODELS = 128
         private val MODEL_FILE = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.gguf")
         private val repositoryLock = Any()

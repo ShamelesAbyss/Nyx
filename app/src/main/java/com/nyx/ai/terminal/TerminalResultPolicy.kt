@@ -16,18 +16,12 @@ object TerminalResultPolicy {
     }
 
     fun isSuccessfulCommand(exitCode: Int?, kind: TerminalResultKind): Boolean =
-        exitCode == 0 &&
-            kind != TerminalResultKind.TIMEOUT &&
-            kind != TerminalResultKind.POLICY_BLOCKED &&
-            kind != TerminalResultKind.DENIED &&
-            kind != TerminalResultKind.CANCELLED &&
-            kind != TerminalResultKind.CONFIRMATION_REQUIRED
+        exitCode == 0 && kind == TerminalResultKind.SUCCEEDED
 
     /** Installation requires a real zero exit, never merely the absence of a parsed error. */
     fun isSuccessfulInstall(exitCode: Int?, kind: TerminalResultKind): Boolean =
         isSuccessfulCommand(exitCode, kind)
 
     fun isUncertain(kind: TerminalResultKind, exitCode: Int?): Boolean =
-        kind == TerminalResultKind.CANCELLED || kind == TerminalResultKind.TIMEOUT ||
-            (kind == TerminalResultKind.PROCESS_EXIT && exitCode == null)
+        TerminalOwnershipPolicy.requiresReservation(kind.name, exitCode)
 }

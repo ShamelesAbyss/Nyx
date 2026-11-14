@@ -28,6 +28,8 @@ object ModelShellSyntax {
                         quote = null
                     } else if (quote == '"' && (ch == '`' || ch == '$' && index + 1 < command.length && command[index + 1] == '(')) {
                         return if (ch == '`') "Backtick command substitution is not supported for model commands." else "Command substitution is not supported for model commands."
+                    } else if (quote == '"' && ch == '$') {
+                        return "Shell variable expansion is not supported for model commands."
                     }
                 }
                 ch == '\'' || ch == '"' -> quote = ch
@@ -42,10 +44,12 @@ object ModelShellSyntax {
             }
             index++
         }
+        if (quote != null || escaped) return "Unclosed quote or dangling escape in model command."
+        if (command.any { it.isISOControl() && it != '\t' }) return "Control characters are not supported for model commands."
         val tokens = CommandPolicy.tokenize(command)
-        var tokenIndex = 0
-        while (tokenIndex < tokens.size && Regex("^[A-Za-z_][A-Za-z0-9_]*=").containsMatchIn(tokens[tokenIndex])) tokenIndex++
-        val executable = tokens.getOrNull(tokenIndex)?.substringAfterLast('/')?.lowercase()
+        val tokenIndex = 0
+        val executable = tokens.firstOrNull()
+        if (executable == null || '/' in executable || '=' in executable) return "Executable paths and environment assignments are not supported for model commands."
         if (executable in indirectExecutables) {
             return "Indirect command execution is not supported for model commands."
         }

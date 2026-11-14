@@ -13,6 +13,9 @@ data class TerminalOperationContext(
     val namespace: String = "termux_host",
     val workspace: String? = null,
     val readOnly: Boolean = false,
+    val commandPath: String? = null,
+    val argumentDigest: String? = null,
+    val commandIdentity: TerminalCommandIdentity? = null,
 )
 
 enum class TerminalOperationState { QUEUED, RUNNING, FINISHED, UNCERTAIN }
@@ -46,6 +49,9 @@ class TerminalOperationJournal(private val directory: File) {
             setProperty("namespace", evidence.context.namespace)
             evidence.context.workspace?.let { setProperty("workspace", it) }
             setProperty("readOnly", evidence.context.readOnly.toString())
+            evidence.context.commandPath?.let { setProperty("commandPath", it.take(4096)) }
+            evidence.context.argumentDigest?.let { require(it.matches(Regex("[0-9a-f]{64}"))); setProperty("argumentDigest", it) }
+            evidence.context.commandIdentity?.writeTo(this)
             setProperty("state", evidence.state.name)
             setProperty("startedAt", evidence.startedAt.toString())
             evidence.finishedAt?.let { setProperty("finishedAt", it.toString()) }
@@ -62,7 +68,9 @@ class TerminalOperationJournal(private val directory: File) {
     }
 
     @Synchronized fun load(): List<TerminalOperationEvidence> {
-        val files = directory.listFiles { file -> file.extension == "properties" } ?: return emptyList()
+        if (!directory.exists()) return emptyList()
+        check(directory.isDirectory) { "Terminal evidence path is not a directory" }
+        val files = checkNotNull(directory.listFiles { file -> file.extension == "properties" }) { "Cannot read terminal evidence directory" }
         // Never silently discard unresolved evidence. Corrupt evidence fails admission closed.
         return files.map { file ->
             val data = Properties().apply { file.inputStream().use(::load) }
@@ -70,7 +78,9 @@ class TerminalOperationJournal(private val directory: File) {
             require(UUID.fromString(id).toString() == id && file.name == "$id.properties")
             TerminalOperationEvidence(
                 TerminalOperationContext(id, data.getProperty("objective"), data.getProperty("task"),
-                    data.getProperty("namespace"), data.getProperty("workspace"), data.getProperty("readOnly").toBoolean()),
+                    data.getProperty("namespace"), data.getProperty("workspace"), data.getProperty("readOnly").toBoolean(),
+                    data.getProperty("commandPath"), data.getProperty("argumentDigest")?.also { require(it.matches(Regex("[0-9a-f]{64}"))) },
+                    TerminalCommandIdentity.readFrom(data)),
                 TerminalOperationState.valueOf(data.getProperty("state")), data.getProperty("startedAt").toLong(),
                 data.getProperty("finishedAt")?.toLong(), data.getProperty("resultKind"), data.getProperty("exitCode")?.toInt(),
                 data.getProperty("stdout", ""), data.getProperty("stderr", ""), data.getProperty("message"),
@@ -127,7 +137,8 @@ class TerminalOperationRegistry(private val journal: TerminalOperationJournal? =
 
     @Synchronized fun finish(id: String, kind: String, exitCode: Int?, stdout: String, stderr: String, message: String?, uncertain: Boolean) {
         val current = operations[id] ?: return
-        val evidence = current.copy(state = if (uncertain && current.state != TerminalOperationState.QUEUED) TerminalOperationState.UNCERTAIN else TerminalOperationState.FINISHED,
+        val retainOwnership = uncertain || TerminalOwnershipPolicy.requiresReservation(kind, exitCode)
+        val evidence = current.copy(state = if (retainOwnership && current.state != TerminalOperationState.QUEUED) TerminalOperationState.UNCERTAIN else TerminalOperationState.FINISHED,
             finishedAt = System.currentTimeMillis(), resultKind = kind, exitCode = exitCode,
             stdout = stdout.take(32_768), stderr = stderr.take(16_384), message = message)
         // On disk failure retain the reservation in memory, rather than admitting a conflicting job.
@@ -165,7 +176,7 @@ class TerminalOperationRegistry(private val journal: TerminalOperationJournal? =
             return overlap && !(a.readOnly && b.readOnly)
         }
         private fun normalizedWorkspace(path: String?): String? = path?.trimEnd('/')?.takeIf {
-            it.startsWith('/') && it.isNotEmpty() && '\u0000' !in it && it.split('/').none { part -> part == "." || part == ".." }
+            it.startsWith('/') && it.isNotEmpty() && "//" !in it && '\u0000' !in it && it.split('/').none { part -> part == "." || part == ".." }
         }
     }
 }

@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- User-configured local/LAN development APIs may use HTTP without credentials.
-         CredentialTransportPolicy separately requires HTTPS for all non-loopback Bearer keys. -->
+    <!-- Compatibility permission, NOT a firewall: Android domain rules cannot express a runtime
+         user-selected LAN/CIDR allowlist. Keep standard OkHttp support for approved LAN Ollama.
+         NetworkTools/ResearchEngine enforce public HTTPS only. InferenceEndpointPolicy and
+         NetworkTransportGuard restrict HTTP to the configured loopback/private LAN route;
+         Bearer keys require HTTPS outside loopback. All redirects/DNS routes are guarded.
+         Any future network stack must enforce its own equivalent policy before sending bytes. -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors><certificates src="system" /></trust-anchors>
     </base-config>

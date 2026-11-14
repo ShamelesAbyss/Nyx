@@ -1016,7 +1016,7 @@ private fun NewObjectiveCard(
                 }
             }
             if (development) {
-                Text("Uses detected existing build/test commands and configured repair limits. It does not implement new features, install packages, run raw model shell commands, or publish changes.", color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
+                Text("Uses detected fixed build/test commands and configured repair limits; no raw model shell or publication. To deliver a genuine generated result file, use Workbench's separate combined development approval and select the exact project output. This direct flow alone produces development evidence, not a Workbench file.", color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
                 OutlinedButton(onClick = onPreflight, enabled = !state.terminalDiscovering, shape = RoundedCornerShape(10.dp)) { Text("Run preflight") }
                 state.preflight?.let { pre ->
                     MissionStatusPill(if (pre.ready) "verified" else "needs_attention")

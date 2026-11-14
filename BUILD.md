@@ -1,4 +1,12 @@
-# Building NYX 0.8.9 — Project Workbench
+# Building NYX 0.9.0 — Project Bedrock candidate
+
+## v0.9.0 Project Bedrock — unpublished candidate
+Bedrock adds a default-off, original-project-bound development → selected-file flow through the existing engine, a structured terminal catalog with controlled environment/link guards, exact-request capability evidence and checkpoint-stable continuation IDs, mandatory process/artifact checks, conservative persistent-host token fencing, and stricter store/network/credential boundaries. Actual Linux host terminal (99) and production non-UI combined (11) regressions passed; Android/Room/Binder/provider acceptance and the final clean whole-app build remain separate pending gates. See [release notes](RELEASE_NOTES_v0.9.0.md), [implementation/evidence report](V090_IMPLEMENTATION_REPORT.md) and [security dispositions](BEDROCK_SECURITY_AUDIT.md).
+
+
+Current source is package `com.nyx.ai`, versionCode 23 / versionName 0.9.0, minimum API 26, compile/target 37 and ARM64 only. The supported toolchain below is unchanged. Use `bash tools/build_release.sh --preflight` before one coordinated clean build, then the independent APK/source/checksum gates in [CI verification](docs/CI_VERIFICATION.md). Real `kotlinc` on PATH is mandatory for compiler acceptance. Deterministic provider fixtures are not real Ollama; instrumentation assembly is not device execution. Do not carry historical counts, timings or runtime claims into this candidate. GitHub-hosted CI, Android hardware acceptance and the candidate clean build remain unverified until actual evidence is recorded.
+
+Candidate packaging after a successful parent-owned build uses `bash tools/build_release.sh --package /absolute/new/output-directory`, preserving the existing debug signer. It produces versioned APKs, a byte-compared current-working-tree source ZIP with `SOURCE-MANIFEST.sha256`, and a checksum manifest; it never publishes or makes an AAB. The old root NYX.apk/NYX-Source.zip are retired v0.2.0 files, not candidate outputs; their historical Git objects/releases remain accessible. Apache-2.0 and full third-party native notices are retained and explicitly shipped in `assets/third_party/`.
 
 ## v0.8.9 Project Workbench published release
 
@@ -69,11 +77,11 @@ python3 tools/check_sdk_policy.py --self-test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package identity: `com.nyx.ai`; versionCode 18/versionName 0.8.5; min API 26; compile/target API 37. The APK contains only the **`arm64-v8a`** native ABI, not x86/x86_64 Android libraries. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug native build uses **`-O2 -g`**, confirmed from its actual CMakeCache, so debug symbols do not imply an unoptimized native inference build.
+Candidate package identity: `com.nyx.ai`; versionCode 23/versionName 0.9.0; min API 26; compile/target API 37. The configured production ABI is **`arm64-v8a`**, not x86/x86_64. A separate host x86_64 JNI test does not add an Android ABI. Native target `nyx_llama` uses C++17 and `c++_shared`, with baseline ARM64 NEON rather than host-specific optional ISA flags; CPU execution only, without GPU/NPU backends. The Android Debug CMake configuration uses **`-O2 -g`**; inspect the produced candidate rather than treating that configuration as Android runtime evidence.
 
 Debug builds use the local Android debug signing identity, not a Play/store release key. Android only permits an in-place update when signing identities match. If the key differs, uninstalling first may remove app-private chat, memory, settings, and imported GGUF copies; preserve the prior key and back up user data first. `assembleRelease` alone is not a production-signed release. Keep all signing secrets outside source archives.
 
-## Automated checks and current verification boundary
+## Historical v0.8.5 automated checks and verification boundary
 
 - The v0.8.5 clean Gradle run completed with `BUILD SUCCESSFUL in 1m 21s`: **731 JVM tests, zero failures, zero errors, and zero skips** across 70 classes. `assembleDebugAndroidTest` compiled the instrumentation APK; no instrumentation test was executed.
 - Project Sovereign's adaptive budgets, working state, tool scoping, false-success guard, and bounded repairs preserve the existing autonomy policy, workspace grants, command authority, checkpoints, and resume confirmations. No policy boundary was removed.

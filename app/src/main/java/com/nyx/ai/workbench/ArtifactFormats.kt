@@ -192,7 +192,7 @@ object ArtifactFormats {
 }
 
 /** Bounded recursive-descent RFC 8259 document syntax, with duplicate-key rejection. */
-internal class StrictJson(private val s: String) {
+internal class StrictJson(private val s: String, private val validateNumber: ((String) -> Unit)? = null) {
     private var p = 0
     private var values = 0
     fun parse() {
@@ -217,7 +217,9 @@ internal class StrictJson(private val s: String) {
             'n' -> literal("null")
             else -> {
                 val m = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?").find(s, p)
-                require(m != null && m.range.first == p) { "Invalid JSON value" }; p = m!!.range.last + 1
+                require(m != null && m.range.first == p) { "Invalid JSON value" }
+                validateNumber?.invoke(m!!.value)
+                p = m!!.range.last + 1
             }
         }
     }

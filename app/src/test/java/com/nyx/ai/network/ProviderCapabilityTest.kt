@@ -27,7 +27,8 @@ class ProviderCapabilityTest {
     @Test
     fun recognizesOpenAiV1PathWithTrailingSlashCaseInsensitively() {
         assertTrue(ProviderFactory.isOpenAiCompatible("https://api.example.com/V1/"))
-        assertTrue(ProviderFactory.isOpenAiCompatible("https://api.example.com/v1///?key=value"))
+        assertTrue(ProviderFactory.isOpenAiCompatible("https://api.example.com/v1///"))
+        assertFalse(ProviderFactory.isOpenAiCompatible("https://api.example.com/v1///?key=value"))
         assertFalse(ProviderFactory.isOpenAiCompatible("https://api.example.com/v2"))
         assertFalse(ProviderFactory.isOpenAiCompatible("not a URL/v1"))
     }

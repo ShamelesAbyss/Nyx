@@ -138,8 +138,8 @@ class ModelDiagnosticTest {
         provider.body = { it("x".repeat(ModelDiagnostic.MAX_RESPONSE_CHARACTERS + 1)); fail("Must stop on oversized chunk") }
         val result = ModelDiagnostic.run(provider, "m")
         assertEquals(1, provider.chats)
-        assertEquals(DiagnosticCheck.FAILED, result.tinyJsonResponse)
-        assertEquals(DiagnosticFormatCompatibility.INVALID_RESPONSE, result.formatCompatibility)
+        assertEquals(DiagnosticCheck.NOT_TESTED, result.tinyJsonResponse)
+        assertEquals(DiagnosticFormatCompatibility.RESPONSE_LIMIT_REACHED, result.formatCompatibility)
         assertTrue(result.summary.contains("size limit"))
         assertFalse(result.summary.contains("xxxxx"))
     }

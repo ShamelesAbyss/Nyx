@@ -81,11 +81,17 @@ object WorkspaceProvisioner {
           printf 'NYX_WS_ERROR=%s\n' 'invalid parent path'
           exit 1
         }
+        ancestor="${'$'}parent"
+        while [ ! -e "${'$'}ancestor" ] && [ ! -L "${'$'}ancestor" ]; do
+          ancestor=${'$'}(dirname -- "${'$'}ancestor") || exit 1
+        done
+        [ ! -L "${'$'}ancestor" ] && [ -d "${'$'}ancestor" ] && [ "${'$'}(realpath -e -- "${'$'}ancestor")" = "${'$'}ancestor" ] || exit 1
         if ! mkdir -p -- "${'$'}parent" 2>/dev/null; then
           printf 'NYX_WS_CREATED=0\n'
           printf 'NYX_WS_ERROR=%s\n' 'parent directory could not be created'
           exit 1
         fi
+        [ ! -L "${'$'}parent" ] && [ "${'$'}(realpath -e -- "${'$'}parent")" = "${'$'}parent" ] || exit 1
         if [ -e "${'$'}ws" ] || [ -L "${'$'}ws" ]; then
           printf 'NYX_WS_EXISTS=1\n'
           exit 3
@@ -105,6 +111,7 @@ object WorkspaceProvisioner {
           exit 1
         fi
         _real=${'$'}(cd "${'$'}ws" 2>/dev/null && pwd -P)
+        [ "${'$'}_real" = "${'$'}ws" ] && [ ! -L "${'$'}ws" ] || exit 1
         printf 'NYX_WS_CREATED=1\n'
         printf 'NYX_WS_REALPATH=%s\n' "${'$'}_real"
         exit 0
@@ -142,12 +149,13 @@ object WorkspaceProvisioner {
                 objectiveId = objectiveId,
                 useTimeoutBinary = false,
                 guestAlias = request.guestAlias,
+                controlledMode = true,
             )
             val exists = result.stdout.lineSequence()
                 .firstOrNull { it.startsWith("NYX_WS_EXISTS=") }
                 ?.substringAfter('=')
                 ?.trim()
-            if (exists == "1") {
+            if (exists == "1" && result.kind == TerminalResultKind.PROCESS_EXIT && result.exitCode == 3) {
                 // The filesystem already owned this name. Try the next suffix; never adopt it.
                 continue
             }
@@ -155,7 +163,8 @@ object WorkspaceProvisioner {
                 .firstOrNull { it.startsWith("NYX_WS_CREATED=") }
                 ?.substringAfter('=')
                 ?.trim()
-            if (created != "1") {
+            if (!result.isSuccess || created != "1" || result.stdout.lineSequence().count { it.startsWith("NYX_WS_CREATED=") } != 1 ||
+                result.stdout.lineSequence().filter { it.startsWith("NYX_WS_REALPATH=") }.toList() != listOf("NYX_WS_REALPATH=$path")) {
                 val detail = result.stderr.lineSequence().firstOrNull { it.isNotBlank() }
                     ?: result.message
                     ?: "the environment did not confirm the directory"

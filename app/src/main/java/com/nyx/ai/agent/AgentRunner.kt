@@ -40,11 +40,14 @@ class AgentRunner private constructor(
     private val chat: suspend (String, List<ApiMessage>, JSONArray?, InferenceOptions, (String) -> Unit) -> ChatResult,
     private val extraTools: AgentToolProvider?,
     private val textActionsInitially: Boolean,
+    private val provider: InferenceProvider? = null,
+    private val capabilityStore: ModelCapabilityStore = ModelCapabilities.store(),
 ) {
     private val app = context.applicationContext
     constructor(context: Context, client: OllamaClient) : this(context, { m, msgs, t, o, cb -> client.chat(m, msgs, t, o, cb) }, null, false)
-    constructor(context: Context, provider: InferenceProvider, extraTools: AgentToolProvider? = null) : this(context,
-        { m, msgs, t, o, cb -> provider.chat(m, msgs, t, o, cb) }, extraTools, provider.kind == "native-gguf")
+    constructor(context: Context, provider: InferenceProvider, extraTools: AgentToolProvider? = null,
+                capabilityStore: ModelCapabilityStore = ModelCapabilities.store()) : this(context,
+        { m, msgs, t, o, cb -> provider.chat(m, msgs, t, o, cb) }, extraTools, provider.kind == "native-gguf", provider, capabilityStore)
 
     suspend fun run(
         spec: AgentSpec,
@@ -132,9 +135,11 @@ class AgentRunner private constructor(
             )
         }
 
+        var requestIdentity: ModelIdentity? = null
         suspend fun requestChat(requestTools: JSONArray?, visibleText: (String) -> Unit): ChatResult =
-            withExecutionTimeouts(options, visibleText) { observedText ->
-                chat(spec.model, messages, requestTools, options, observedText)
+            withInferenceActivityTimeouts(options, visibleText) { outgoing, observedText ->
+                requestIdentity = provider?.let { ModelIdentity.fromRequest(it, spec.model, outgoing, requestTools) }
+                chat(spec.model, messages, requestTools, outgoing, observedText)
             }
 
         for (step in 1..maxSteps) {
@@ -151,11 +156,18 @@ class AgentRunner private constructor(
                     modelCalls = modelCalls, toolCalls = toolCalls,
                 )
             }
+            if (!structured && allowed.isNotEmpty()) provider?.let { selected ->
+                val identity = ModelIdentity.fromRequest(selected, spec.model, options, schemas)
+                if (capabilityStore.get(identity)?.nativeTools == CapabilitySupport.UNSUPPORTED) {
+                    structured = true; configureTextActions()
+                }
+            }
             modelCalls++
             val response = try {
                 requestChat(if (structured || allowed.isEmpty()) null else schemas, if (structured) ({}) else onToken)
             } catch (unsupported: ToolCallingUnsupportedException) {
                 if (allowed.isEmpty() || structured) throw unsupported
+                requestIdentity?.let { capabilityStore.recordExplicitRejection(it, ObservedCapability.NATIVE_TOOLS) }
                 structured = true; configureTextActions()
                 val warning = AgentEvent("warning", "Provider lacks native function calls. Using validated text JSON actions; no shell commands are inferred from prose.")
                 events += warning; onEvent(warning)
@@ -170,6 +182,7 @@ class AgentRunner private constructor(
                 requestChat(null, {})
             }
             check(response.done) { "Provider marked the agent response incomplete; no action from this response was accepted." }
+            requestIdentity?.let { capabilityStore.recordObservation(it, response.thinkingCharacters > 0, response.stats, null) }
             val calls: List<ToolCall>
             var pendingSummary: String? = null
             if (structured) {
@@ -250,6 +263,7 @@ class AgentRunner private constructor(
                     require(call.name in allowed) { "Tool is not enabled." }
                     val fn = (0 until schemas.length()).mapNotNull { schemas.optJSONObject(it)?.optJSONObject("function") }.first { it.optString("name") == call.name }
                     StructuredActions.validate(call.arguments, fn.getJSONObject("parameters"))
+                    requestIdentity?.let { capabilityStore.recordValidatedAction(it, nativeTool = !structured) }
                     if (extraTools != null && call.name in extraTools.names) extraTools.execute(call) else tools.execute(call)
                 } catch (cancel: CancellationException) {
                     throw cancel

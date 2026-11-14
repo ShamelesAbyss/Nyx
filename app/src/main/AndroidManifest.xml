@@ -30,7 +30,7 @@
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-started on-device model inference and bounded authorized project analysis/repair with visible progress, pause and cancel. No indefinite execution; 30-minute application budget. Requires Play review before store distribution." />
+                android:value="User-started on-device model inference and bounded authorized project analysis/repair with visible progress, pause and cancel. Finite explicitly approved segments, at most two hours; checkpointed total allowance and explicit review before continuation. Requires Play review before store distribution." />
         </service>
         <service
             android:name=".service.OllamaHostService"

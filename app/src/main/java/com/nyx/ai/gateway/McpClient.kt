@@ -1,5 +1,8 @@
 package com.nyx.ai.gateway
 
+import com.nyx.ai.network.InferenceEndpointPolicy
+import com.nyx.ai.network.NetworkAddressPolicy
+import com.nyx.ai.network.NetworkTransportGuard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -28,12 +31,7 @@ import java.util.concurrent.atomic.AtomicLong
  * in clear text; loopback HTTP stays available for a local MCP sidecar.
  */
 object McpEndpointPolicy {
-    private val LOOPBACK_NAMES = setOf("localhost", "127.0.0.1", "::1")
-
-    fun isLoopback(host: String?): Boolean {
-        val normalized = host?.lowercase(Locale.ROOT)?.trim('[', ']') ?: return false
-        return normalized in LOOPBACK_NAMES || normalized.endsWith(".localhost")
-    }
+    fun isLoopback(host: String?): Boolean = host != null && NetworkAddressPolicy.isLoopbackHost(host)
 
     /** Returns the normalized endpoint or throws [GatewayException] with a non-secret reason. */
     fun validate(endpoint: String): String {
@@ -44,10 +42,12 @@ object McpEndpointPolicy {
         if (scheme != "https" && scheme != "http") throw GatewayException("MCP endpoints must use HTTPS (HTTP is allowed only on loopback).")
         if (!parsed.userInfo.isNullOrEmpty()) throw GatewayException("MCP endpoints must not embed credentials.")
         if (parsed.host.isNullOrBlank()) throw GatewayException("MCP endpoint has no host.")
+        if (parsed.rawQuery != null) throw GatewayException("MCP endpoint queries are refused; use vault-backed header credentials.")
         if (parsed.fragment != null) throw GatewayException("MCP endpoints must not contain a fragment.")
         if (scheme == "http" && !isLoopback(parsed.host)) {
             throw GatewayException("Plain HTTP is refused for remote MCP endpoints; use HTTPS or a loopback address.")
         }
+        try { InferenceEndpointPolicy.parse(trimmed) } catch (_: IllegalArgumentException) { throw GatewayException("MCP endpoint URL is invalid.") }
         return trimmed
     }
 
@@ -75,7 +75,10 @@ class McpClient(
 ) : GatewayToolExecutor {
     private val endpoint: String = McpEndpointPolicy.validate(config.endpoint)
     private val ownedDispatcher: Dispatcher? = if (httpClient == null) Dispatcher() else null
-    private val httpClient: OkHttpClient = httpClient ?: defaultClient(config.timeoutSeconds, ownedDispatcher!!)
+    private val httpClient: OkHttpClient = NetworkTransportGuard.inferenceClient(
+        httpClient ?: defaultClient(config.timeoutSeconds, ownedDispatcher!!),
+        InferenceEndpointPolicy.parse(endpoint), !config.credentialRef.isNullOrBlank(),
+    )
 
     private val requestIds = AtomicLong(0)
     private val initMutex = Mutex()
@@ -470,7 +473,10 @@ class McpClient(
 
     private suspend fun resolveToken(): String? {
         val reference = config.credentialRef?.takeIf { it.isNotBlank() } ?: return null
-        return runCatching { tokenProvider(reference) }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        val token = try { tokenProvider(reference) } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { throw GatewayException("Configured MCP credential is unavailable; nothing was sent.") }
+        return token?.trim()?.takeIf { it.isNotEmpty() && it.length <= 4096 && it.none(Char::isISOControl) }
+            ?: throw GatewayException("Configured MCP credential is unavailable or invalid; nothing was sent.")
     }
 
     private fun ensureOpen() {

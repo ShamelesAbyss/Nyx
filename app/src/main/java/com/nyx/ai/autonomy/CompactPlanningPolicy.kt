@@ -1,5 +1,7 @@
 package com.nyx.ai.autonomy
 
+import com.nyx.ai.network.PlanningDecision
+import com.nyx.ai.network.PlanningStrategy
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
@@ -13,12 +15,16 @@ data class PlanningProfile(
     val singleStep: Boolean = false,
     val exitCodeWorkers: Set<String>? = null,
     val maxSteps: Int = CompactPlanningPolicy.MAX_STEPS,
+    val continuation: Boolean = false,
+    val fullGraph: Boolean = false,
 ) {
     val schema: String? get() = when {
+        fullGraph -> CompactPlanningPolicy.fullResponseSchema(this)
         !compact -> null
+        continuation -> IncrementalPlanning.responseSchema(this)
         singleStep -> CompactPlanningPolicy.minimalResponseSchema
         else -> CompactPlanningPolicy.responseSchemaFor(allowedWorkers ?: CompactPlanningPolicy.ALL_WORKERS,
-            allowExitCode = exitCodeWorkers == null || exitCodeWorkers.isNotEmpty())
+            allowExitCode = exitCodeWorkers == null || exitCodeWorkers.isNotEmpty(), maxSteps = maxSteps)
     }
 }
 
@@ -104,10 +110,24 @@ object CompactPlanningPolicy {
         val desiredOutput = when { singleStep -> 192; compact -> 384; else -> 1024 }
         val output = minOf(desiredOutput, (context / 4).coerceAtLeast(1))
         val exitWorkers = buildSet {
-            if (terminalEnabled && "terminal_run" in toolNames) { add("terminal"); add("development") }
+            if (terminalEnabled && "terminal_run" in toolNames) add("terminal")
+            if (terminalEnabled && ("terminal_run" in toolNames || toolNames.containsAll(setOf("build_run", "test_run")))) add("development")
             if (terminalEnabled && "test_run" in toolNames) add("verification")
         } intersect selected
         return PlanningProfile(compact, output, selected, context, singleStep, exitWorkers)
+    }
+
+    /** One format per decision; Full is never compact sequential steps masquerading as a DAG. */
+    fun forDecision(base: PlanningProfile, decision: PlanningDecision, contextLength: Int = base.maxContextTokens ?: 4_096): PlanningProfile = when (decision.strategy) {
+        PlanningStrategy.FULL -> base.copy(compact = false, singleStep = false, fullGraph = true,
+            continuation = false, maxSteps = decision.maxInitialSteps, maxOutputTokens = minOf(1_024, (contextLength / 4).coerceAtLeast(1)),
+            maxContextTokens = minOf(contextLength, 8_192))
+        PlanningStrategy.GUIDED -> IncrementalPlanning.continuationProfile(base, guided = true)
+        PlanningStrategy.INCREMENTAL -> base.copy(compact = true, singleStep = false, fullGraph = false,
+            continuation = false, maxSteps = minOf(decision.maxInitialSteps, MAX_STEPS),
+            maxOutputTokens = minOf(base.maxOutputTokens, 384), maxContextTokens = minOf(base.maxContextTokens ?: 2_048, 2_048))
+        PlanningStrategy.DIRECT -> base.copy(compact = true, singleStep = true, fullGraph = false,
+            continuation = false, allowedWorkers = setOf("inference"), exitCodeWorkers = emptySet(), maxSteps = 1)
     }
 
     private fun hasActiveComplexity(goal: String): Boolean = complexGoal.findAll(goal).any { match ->
@@ -124,12 +144,26 @@ object CompactPlanningPolicy {
             if (names.any { it in fileTools }) add("filesystem")
             if (names.any { it in readTools } || terminalEnabled && "test_run" in names) add("verification")
             if (terminalEnabled && "terminal_run" in names) add("terminal")
-            if (terminalEnabled && names.containsAll(setOf("terminal_run", "file_read", "file_write"))) add("development")
+            if (terminalEnabled && names.containsAll(setOf("file_read", "file_write")) &&
+                ("terminal_run" in names || names.containsAll(setOf("build_run", "test_run")))) add("development")
         }
     }
 
     fun prompt(terminalEnabled: Boolean, toolNames: Set<String>): String =
         prompt(PlanningProfile(true, 512, availableWorkers(terminalEnabled, toolNames)), terminalEnabled, toolNames)
+
+    fun fullPrompt(profile: PlanningProfile, terminalEnabled: Boolean, toolNames: Set<String>): String = buildString {
+        require(profile.fullGraph && !profile.compact) { "Full graph prompt requires an explicit full-DAG profile." }
+        val available = availableWorkers(terminalEnabled, toolNames)
+        val selected = profile.allowedWorkers ?: available
+        require(selected.isNotEmpty() && selected.all { it in available }) { "Planner worker subset exceeds available capabilities." }
+        appendLine("Plan the objective, not its answer. Return one complete strict JSON object; no reasoning, prose or fences.")
+        appendLine("""{"tasks":[{"id":"step_1","title":"Short task","instructions":"Concrete bounded work","worker":"inference","verification":"Nonempty output only, not factual accuracy","dependsOn":[],"evidence":[{"kind":"artifact_nonempty"}]}]}""")
+        appendLine("Use 1-${profile.maxSteps} tasks in a directed acyclic graph. Unique IDs are dependency keys, never execution UUIDs. Dependencies must name earlier tasks; independent tasks may overlap.")
+        appendLine("Workers: ${selected.sorted().joinToString(", ")}. Tool tasks require future locally observable evidence, never artifact_nonempty or a success claim.")
+        appendLine("Supported checks: file_exists(target), file_contains(target,expected), checksum_sha256(target,expected), output_contains(expected), exit_code(expected integer string). Command checks only apply to workers with actual command evidence.")
+        appendLine("Use only explicitly authorized tools/workspace. No credential, privileged, destructive or publication work. A plan grants no permission.")
+    }
 
     fun prompt(profile: PlanningProfile, terminalEnabled: Boolean, toolNames: Set<String>): String = buildString {
         require(profile.compact) { "Compact prompt requires a compact profile." }
@@ -173,7 +207,7 @@ object CompactPlanningPolicy {
         profile.allowedWorkers?.let { selected ->
             if (tasks.any { it.workerKind !in selected }) invalid("Plan selected a worker unavailable in this planning profile.")
         }
-        if (profile.compact && tasks.size > if (profile.singleStep) 1 else profile.maxSteps)
+        if (profile.maxSteps !in 1..ObjectivePlanValidator.MAX_TASKS || tasks.size > if (profile.singleStep) 1 else profile.maxSteps)
             invalid("Plan exceeds this profile's validated task limit.")
         for (task in tasks) {
             if (task.workerKind != "inference" && (task.evidence.isEmpty() || task.evidence.any { it.kind == EvidenceKind.ARTIFACT_NONEMPTY }))
@@ -314,8 +348,9 @@ object CompactPlanningPolicy {
     // Kept out of text prompts; providers may constrain decoding, local validation remains required.
     val responseSchema: String get() = responseSchemaFor(ALL_WORKERS)
 
-    fun responseSchemaFor(workers: Set<String>, allowExitCode: Boolean = true): String {
+    fun responseSchemaFor(workers: Set<String>, allowExitCode: Boolean = true, maxSteps: Int = MAX_STEPS): String {
         require(workers.isNotEmpty() && workers.all { it in ALL_WORKERS }) { "Invalid planner worker subset." }
+        require(maxSteps in 1..MAX_STEPS) { "Compact schema step budget exceeds its format." }
         val properties = JSONObject()
             .put("do", JSONObject().put("type", "string").put("minLength", 1).put("maxLength", MAX_STEP_CHARS))
             .put("worker", JSONObject().put("enum", JSONArray(workers.sorted())))
@@ -329,8 +364,30 @@ object CompactPlanningPolicy {
                     .put("expected", JSONObject().put("type", "string").put("maxLength", 512))))
         }
         return JSONObject().put("type", "object").put("additionalProperties", false).put("required", JSONArray().put("steps"))
-            .put("properties", JSONObject().put("steps", JSONObject().put("type", "array").put("minItems", 1).put("maxItems", MAX_STEPS)
+            .put("properties", JSONObject().put("steps", JSONObject().put("type", "array").put("minItems", 1).put("maxItems", maxSteps)
                 .put("items", JSONObject().put("type", "object").put("additionalProperties", false)
                     .put("required", JSONArray().put("do").put("worker")).put("properties", properties)))).toString()
+    }
+
+    /** Constrains wire shape and budget; local parser, DAG and worker/evidence checks still apply. */
+    fun fullResponseSchema(profile: PlanningProfile): String {
+        require(profile.maxSteps in 1..ObjectivePlanValidator.MAX_TASKS)
+        val workers = profile.allowedWorkers ?: ALL_WORKERS
+        require(workers.isNotEmpty() && workers.all { it in ALL_WORKERS })
+        fun text(max: Int) = JSONObject().put("type", "string").put("minLength", 1).put("maxLength", max)
+        val evidence = JSONObject().put("type", "object").put("additionalProperties", false)
+            .put("required", JSONArray().put("kind"))
+            .put("properties", JSONObject().put("kind", JSONObject().put("enum", JSONArray(listOf("file_exists", "file_contains", "checksum_sha256", "exit_code", "output_contains", "artifact_nonempty"))))
+                .put("target", text(512)).put("expected", text(512)).put("description", text(512)))
+        val task = JSONObject().put("type", "object").put("additionalProperties", false)
+            .put("required", JSONArray(listOf("id", "title", "instructions", "worker", "verification", "dependsOn", "evidence")))
+            .put("properties", JSONObject().put("id", text(ObjectivePlanValidator.MAX_KEY_LENGTH))
+                .put("title", text(ObjectivePlanValidator.MAX_TITLE_LENGTH)).put("instructions", text(ObjectivePlanValidator.MAX_INSTRUCTION_LENGTH))
+                .put("worker", JSONObject().put("enum", JSONArray(workers.sorted())))
+                .put("verification", text(ObjectivePlanValidator.MAX_VERIFY_LENGTH))
+                .put("dependsOn", JSONObject().put("type", "array").put("maxItems", profile.maxSteps).put("items", text(ObjectivePlanValidator.MAX_KEY_LENGTH)))
+                .put("evidence", JSONObject().put("type", "array").put("maxItems", EvidenceSpecParser.MAX_SPECS).put("items", evidence)))
+        return JSONObject().put("type", "object").put("additionalProperties", false).put("required", JSONArray().put("tasks"))
+            .put("properties", JSONObject().put("tasks", JSONObject().put("type", "array").put("minItems", 1).put("maxItems", profile.maxSteps).put("items", task))).toString()
     }
 }

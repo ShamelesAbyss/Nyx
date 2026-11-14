@@ -46,6 +46,16 @@ object ObjectivePlanValidator {
     fun parseResponse(raw: String, objectiveId: String, agentId: String): List<PlannedObjectiveTask> =
         parse(extractSingleObject(raw), objectiveId, agentId)
 
+    /** Shared strict grammar gate for bounded continuation objects; no envelope or prefix salvage. */
+    internal fun parseStrictObject(raw: String): JSONObject {
+        if (raw.length > MAX_JSON_CHARS || raw.toByteArray(StandardCharsets.UTF_8).size > MAX_JSON_BYTES)
+            invalid("Plan JSON response exceeds the $MAX_JSON_BYTES-byte limit.")
+        StrictJsonSyntaxValidator(raw, MAX_NESTING_DEPTH).validate()
+        return try { JSONObject(raw) } catch (error: JSONException) {
+            throw ObjectivePlanValidationException("Plan must be a JSON object.", error, malformedJson = true)
+        }
+    }
+
     internal fun extractSingleObject(raw: String): String {
         if (raw.length > MAX_JSON_CHARS || raw.toByteArray(StandardCharsets.UTF_8).size > MAX_JSON_BYTES) {
             invalid("Plan JSON response exceeds the $MAX_JSON_BYTES-byte limit.")

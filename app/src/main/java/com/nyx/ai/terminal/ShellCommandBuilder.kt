@@ -1,9 +1,9 @@
 package com.nyx.ai.terminal
 
 /**
- * Builds the argv actually handed to Termux. Commands run through bash so users and agents can use
- * normal shell syntax, but the command string is passed as a single argv element: no host-side string
- * interpolation occurs. Working directories are validated and quoted independently.
+ * Manual shell compatibility construction. Model/structured tools use [controlledRequest], never
+ * these login-shell wrappers. Passing one argv string prevents host interpolation, not shell authority.
+ * Working directories are validated and quoted independently.
  */
 object ShellCommandBuilder {
     const val TERMUX_SHELL = "\$PREFIX/bin/bash"
@@ -22,8 +22,8 @@ object ShellCommandBuilder {
     fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     /**
-     * Wraps a command with an optional working directory and an optional hard timeout enforced by
-     * coreutils `timeout`, which terminates the child process rather than merely abandoning the wait.
+     * Manual wrapper with coreutils timeout. Wrapper completion/exit 124 or 137 does not prove all
+     * descendants stopped; cancellation and uncertainty still require retained ownership/review.
      */
     fun wrap(
         command: String,
@@ -41,6 +41,10 @@ object ShellCommandBuilder {
         val seconds = timeoutSeconds.coerceIn(1, TerminalCommandRequest.MAX_TIMEOUT_MILLIS / 1000L)
         return "timeout -k 5 $seconds bash -lc ${quote(body)}"
     }
+
+    fun controlledRequest(command: String, environment: TerminalEnvironment, workingDirectory: String?, timeoutSeconds: Long,
+                          useTimeoutBinary: Boolean, distroAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS): TerminalCommandRequest =
+        ControlledShell.request(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, distroAlias)
 
     fun hostRequest(
         command: String,

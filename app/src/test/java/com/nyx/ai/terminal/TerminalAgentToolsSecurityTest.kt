@@ -29,7 +29,8 @@ class TerminalAgentToolsSecurityTest {
         override suspend fun run(command: String, environment: TerminalEnvironment, workingDirectory: String, timeoutSeconds: Long, useTimeoutBinary: Boolean): TerminalCommandResult {
             commands += command
             beforeRun?.invoke(command)
-            val process = ProcessBuilder("/bin/bash", "-c", ShellCommandBuilder.wrap(command, workingDirectory, timeoutSeconds, useTimeoutBinary)).start()
+            val request = ControlledShell.request(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary)
+            val process = ProcessBuilder(listOf(request.commandPath) + request.arguments).start()
             val stdout = process.inputStream.bufferedReader().readText()
             val stderr = process.errorStream.bufferedReader().readText()
             val code = process.waitFor()
@@ -39,7 +40,7 @@ class TerminalAgentToolsSecurityTest {
     private suspend fun fixture(block: suspend (Path, HostExecutor, TerminalAgentTools) -> Unit) {
         assumeTrue(Files.isExecutable(Path.of("/bin/bash")))
         val root = Files.createTempDirectory("nyx-terminal-fixture-")
-        try { val executor = HostExecutor(); block(root, executor, TerminalAgentTools(executor, root.toString(), workspaceApproved = true)) }
+        try { val executor = HostExecutor(); block(root, executor, TerminalAgentTools(executor, root.toString(), TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true)) }
         finally { Files.walk(root).use { it.sorted(Comparator.reverseOrder()).forEach { path -> Files.deleteIfExists(path) } } }
     }
     @Test fun modelShellAndCommandOverridesAreDeniedWithoutIpc() = runBlocking {
@@ -73,7 +74,7 @@ class TerminalAgentToolsSecurityTest {
         fixture { root, executor, _ ->
             val alias = root.resolveSibling(root.fileName.toString() + "-alias")
             Files.createSymbolicLink(alias, root)
-            try { assertFalse(TerminalAgentTools(executor, alias.toString(), workspaceApproved = true).inspectProject().ready) }
+            try { assertFalse(TerminalAgentTools(executor, alias.toString(), TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true).inspectProject().ready) }
             finally { Files.deleteIfExists(alias) }
         }
     }
@@ -165,9 +166,9 @@ class TerminalAgentToolsSecurityTest {
         val executor = TerminalToolExecutor { command, _, _, _, _ ->
             assertFalse(command.contains("./gradlew --offline"))
             TerminalCommandResult("probe", TerminalResultKind.SUCCEEDED, 0, "MARKER:gradlew\nMARKER:build.gradle.kts\n" +
-                listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "find", "timeout", "dd").joinToString("\n") { "TOOL:$it=/usr/bin/$it" })
+                listOf("realpath", "sha256sum", "head", "wc", "stat", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd").joinToString("\n") { "TOOL:$it=/usr/bin/$it" })
         }
-        val tools = TerminalAgentTools(executor, "/tmp/fixture", workspaceApproved = true)
+        val tools = TerminalAgentTools(executor, "/tmp/fixture", TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true)
         val provider = DevelopmentOrchestratorTest.Provider { _, _ -> error("must not infer") }
         val report = DevelopmentOrchestrator(TerminalDevelopmentEnvironment(tools)).run("fix compiler", provider, "fixture")
         assertFalse(report.passed); assertEquals(0, provider.calls); assertTrue(report.discovery!!.missingTools.containsAll(listOf("java", "javac")))
@@ -204,20 +205,20 @@ class TerminalAgentToolsSecurityTest {
                     risk = CommandRisk.READ_ONLY,
                 )
             }
-            val tools = TerminalAgentTools(executor, root.toString(), workspaceApproved = true, modelCommandGate = gate)
+            val tools = TerminalAgentTools(executor, root.toString(), TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true, modelCommandGate = gate)
             val result = tools.execute(
                 ToolCall("x", "terminal_run", JSONObject().put("command", "printf 'ok'").put("working_directory", ".")),
             )
             assertTrue(result, result.contains("\"stdout\":\"ok\""))
-            assertTrue(executor.commands.any { it.contains("printf 'ok'") })
+            assertTrue(executor.commands.any { it.contains("'/usr/bin/printf' '%s' 'ok'") })
             assertTrue(tools.drainEvidence().any { it.toolName == "terminal_run" && it.exitCode == 0 })
         }
     }
     @Test fun modelCommandGateDenialPreventsExecution() = runBlocking {
         fixture { root, executor, _ ->
             val gate = ModelCommandGate { _, _, _ -> ModelCommandDecision(allowed = false, reason = "policy denied") }
-            val tools = TerminalAgentTools(executor, root.toString(), workspaceApproved = true, modelCommandGate = gate)
-            val result = tools.execute(ToolCall("x", "terminal_run", JSONObject().put("command", "touch forbidden")))
+            val tools = TerminalAgentTools(executor, root.toString(), TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true, modelCommandGate = gate)
+            val result = tools.execute(ToolCall("x", "terminal_run", JSONObject().put("command", "echo allowed")))
             assertTrue(result.startsWith("Tool denied"))
             assertTrue(executor.commands.isEmpty())
         }
@@ -233,8 +234,8 @@ class TerminalAgentToolsSecurityTest {
                     risk = CommandRisk.READ_ONLY,
                 )
             }
-            val tools = TerminalAgentTools(executor, root.toString(), workspaceApproved = true, modelCommandGate = gate)
-            val result = tools.execute(ToolCall("x", "terminal_run", JSONObject().put("command", "touch forbidden")))
+            val tools = TerminalAgentTools(executor, root.toString(), TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true, modelCommandGate = gate)
+            val result = tools.execute(ToolCall("x", "terminal_run", JSONObject().put("command", "echo allowed")))
             assertTrue(result, result.startsWith("Tool denied"))
             assertTrue(executor.commands.isEmpty())
         }

@@ -5,9 +5,9 @@ package com.nyx.ai.terminal
  * profile.
  *
  * Termux's documented RUN_COMMAND API expands `$PREFIX/` in the command path and starts the program
- * directly. Passing `--noprofile --norc` means no `.bashrc`, `.bash_profile`, `.profile` or
- * `BASH_ENV` hook can `exec` a `proot-distro login`, which is exactly how a configured auto-login
- * makes an ordinary probe appear to run "inside Debian".
+ * directly. A fixed env executable clears hooks/PATH before bash starts; --noprofile/--norc
+ * separately disable login/interactive profiles. This trusts Termux's package-owned executables,
+ * not the integrity of a user-controlled Termux installation or an OS sandbox.
  */
 object HostShell {
     const val TERMUX_PREFIX = "/data/data/com.termux/files/usr"
@@ -21,16 +21,7 @@ object HostShell {
         require(script.isNotBlank()) { "Host script must not be blank" }
         require(script.length <= MAX_SCRIPT_CHARS) { "Host script exceeds $MAX_SCRIPT_CHARS characters" }
         require('\u0000' !in script) { "Host script must not contain NUL" }
-        return TerminalCommandRequest(
-            environment = TerminalEnvironment.TERMUX_HOST,
-            commandPath = SHELL_PATH,
-            // Unset hooks first: the current shell has already started, but children must stay on host.
-            arguments = listOf("--noprofile", "--norc", "-c", "unset BASH_ENV ENV; $script"),
-            workingDirectory = null,
-            authorized = true,
-            timeoutMillis = (timeoutSeconds.coerceIn(1, 600) * 1000L)
-                .coerceAtMost(TerminalCommandRequest.MAX_TIMEOUT_MILLIS),
-        )
+        return ControlledShell.request(script, TerminalEnvironment.TERMUX_HOST, null, timeoutSeconds.coerceIn(1, 600), false)
     }
 
     data class HostIdentity(

@@ -65,6 +65,25 @@ class WorkbenchStore(root: File, val objectiveId: String, private val limits: Wo
         }
     }
 
+    /**
+     * Register a caller-authorized byte snapshot, not a guest/Android filesystem path.
+     * The caller owns workspace, task, selection and process evidence authorization.
+     * Expected length/hash must come from the observed snapshot transport, never model prose.
+     * Checks prove byte integrity and supported format, not factual accuracy or absence of secrets.
+     */
+    fun registerVerifiedSnapshot(
+        name: String, format: ArtifactFormat, bytes: ByteArray, expectedBytes: Long, expectedSha256: String,
+    ): ArtifactRecord {
+        require(expectedBytes in 1..minOf(limits.maxArtifactBytes, format.maxBytes)) { "Snapshot byte quota exceeded" }
+        require(bytes.size.toLong() == expectedBytes) { "Snapshot byte length mismatch" }
+        digest(expectedSha256)
+        val payload = bytes.copyOf()
+        require(sha256(payload) == expectedSha256) { "Snapshot SHA-256 mismatch" }
+        val record = writeArtifact(name, format, payload)
+        readArtifact(record) // Full registration/format/digest check, including duplicate writes.
+        return record
+    }
+
     fun listArtifacts(): List<ArtifactRecord> = locked { loadAndRecover().artifacts.filter { it.status == ArtifactStatus.VERIFIED } }
     fun readManifest(): WorkbenchManifest = locked { loadAndRecover() }
     fun readArtifact(id: String): ByteArray = locked {
@@ -110,6 +129,10 @@ class WorkbenchStore(root: File, val objectiveId: String, private val limits: Wo
                     val updated = existing.copy(bytes = bytes, sha256 = hash)
                     commitPayload("sources/${existing.id}.txt", payload, m.copy(sources = m.sources.map { if (it.id == existing.id) updated else it }))
                     return@locked updated
+                }
+                if (Files.exists(path, NOFOLLOW_LINKS)) {
+                    val actual = readChecked(path, limits.maxSourceBytes)
+                    require(actual.size.toLong() == existing.bytes && sha256(actual) == existing.sha256) { "Existing source corrupted" }
                 }
                 return@locked existing
             }

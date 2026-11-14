@@ -28,10 +28,13 @@ object TaskCapabilityScope {
         configured: Set<String>,
         available: Set<String>,
         terminalAvailable: Boolean = true,
+        combinedDevelopment: Boolean = false,
     ): TaskToolScope {
         val kind = workerKind.trim().lowercase()
         val actual = (available + builtIns).map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        val base = configured.map { it.trim() }.filter { it.isNotEmpty() }.toSet() intersect actual
+        val enabledBase = configured.map { it.trim() }.filter { it.isNotEmpty() }.toSet() intersect actual
+        val base = (if (terminalAvailable) enabledBase else enabledBase - readOnlyFiles - mutatingFiles - commands - projectRuns)
+            .let { if (combinedDevelopment) it - commands else it }
         val terminalCapabilities = if (terminalAvailable) actual else emptySet()
         val fileCapabilities = base intersect terminalCapabilities
         val allowedBase = when (kind) {
@@ -40,7 +43,7 @@ object TaskCapabilityScope {
             "filesystem" -> (base - commands - projectRuns) + (fileCapabilities intersect (readOnlyFiles + mutatingFiles))
             "verification" -> (base - mutatingFiles - commands - projectRuns) +
                 (fileCapabilities intersect (readOnlyFiles + setOf("test_run")))
-            "terminal" -> base + (fileCapabilities intersect (readOnlyFiles + mutatingFiles + commands))
+            "terminal" -> (base - projectRuns) + (fileCapabilities intersect (readOnlyFiles + mutatingFiles + commands))
             "development" -> base + (fileCapabilities intersect (readOnlyFiles + mutatingFiles + commands + projectRuns))
             else -> base - mutatingFiles - commands - projectRuns
         }.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -52,7 +55,8 @@ object TaskCapabilityScope {
             "filesystem" -> "Filesystem tasks may inspect and edit files, but may not run shell commands or project builds."
             "verification" -> "Verification tasks may inspect files and run the fixed test command, but may not write files or run arbitrary shell commands."
             "terminal" -> "Terminal tasks may use file tools and policy-gated shell commands inside the authorized workspace."
-            "development" -> "Development tasks may use the full approved development capability set."
+            "development" -> if (combinedDevelopment) "Explicit combined development uses saved project file access and fixed build/test commands only; output registration is engine-owned."
+                else "Development tasks may use the approved development capability set."
             else -> "Unknown task kinds receive no mutating terminal capability."
         }
         return TaskToolScope(allowed, readOnly, reason)

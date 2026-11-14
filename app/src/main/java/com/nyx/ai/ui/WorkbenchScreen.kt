@@ -26,6 +26,8 @@ fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
     var formatName by rememberSaveable { mutableStateOf(ArtifactFormat.MARKDOWN.name) }
     var approved by rememberSaveable { mutableStateOf(false) }
     var researchApproved by rememberSaveable { mutableStateOf(false) }
+    var combinedApproved by rememberSaveable { mutableStateOf(false) }
+    var terminalOutput by rememberSaveable { mutableStateOf("build/result.json") }
     var urls by rememberSaveable { mutableStateOf("") }
     var validationMessage by rememberSaveable { mutableStateOf("") }
     var retryId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -71,6 +73,14 @@ fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
                 }
                 Row { Checkbox(approved, { approved = it }); Text("Authorize private artifact tools for this new objective only", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall) }
                 Text("This does not authorize Termux, arbitrary device files, external authentication, uploads or publishing. Save/share require your separate tap and re-check the artifact's digest.", style = MaterialTheme.typography.bodySmall)
+                Row { Checkbox(combinedApproved, { combinedApproved = it }); Text("Also authorize source development + fixed build/tests + selected output snapshot", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall) }
+                if (combinedApproved) {
+                    Text("Saved project: ${state.terminalEnvironment.name}/${state.guestAlias} · ${state.terminalWorkspace.ifBlank { "select and approve a workspace in Terminal first" }}", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(terminalOutput, { terminalOutput = it.take(512) }, label = { Text("Exact generated output relative path") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    Text("Only selected text/JSON/CSV/inert HTML under build/, dist/ or target/ (≤128 KB) is snapshotted after a successful build AND tests. No JAR/APK/ZIP, symlinks, private paths, installs or general shell. Original project/output approval survives resume; changing the selected project requires a new objective.", style = MaterialTheme.typography.bodySmall)
+                    Text("Important: trusted project code runs with Termux/guest authority, not OS isolation. It may access network/private data and copy secrets into outputs. Approve only a trusted project and review delivered content before sharing. Android Termux snapshot transport still requires device validation.", style = MaterialTheme.typography.bodySmall)
+                    if (!state.terminalToolsEnabled) Text("Global terminal/workspace approval is off; combined start is blocked.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
                 Row { Checkbox(researchApproved, { researchApproved = it }); Text("Also permit research of only the selected HTTPS URLs", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall) }
                 if (researchApproved) {
                     ExpandableDraftField(value = urls, onValueChange = { urls = it.take(4_096) }, label = "Exact authorized HTTPS URLs, one per line", modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 4, maxCharacters = 4_096)
@@ -80,18 +90,22 @@ fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
                 Button(onClick = {
                     val approval = WorkbenchAuthorization(enabled = approved, researchEnabled = researchApproved,
                         authorizedUrls = if (researchApproved) urls.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList() else emptyList(),
-                        requiredFiles = mapOf(filename.trim() to ArtifactFormat.valueOf(formatName)))
+                        requiredFiles = mapOf(filename.trim() to ArtifactFormat.valueOf(formatName)),
+                        combinedDevelopment = if (combinedApproved) CombinedDevelopmentApproval(environment = state.terminalEnvironment,
+                            guestAlias = state.guestAlias, workspaceRoot = state.terminalWorkspace,
+                            outputs = listOf(CombinedOutput("selected-result", terminalOutput.trim(), filename.trim(), ArtifactFormat.valueOf(formatName)))) else null)
                     runCatching { approval.validate() }.fold(onSuccess = {
                         validationMessage = ""
                         vm.createObjective(goal, workbench = it)
-                        approved = false; researchApproved = false
+                        approved = false; researchApproved = false; combinedApproved = false
                     }, onFailure = { validationMessage = it.message ?: "Check the selected filename and URLs." })
-                }, enabled = approved && goal.isNotBlank() && !state.objectiveRunning && !state.workbenchImporting, modifier = Modifier.fillMaxWidth()) {
-                    Text("Approve and start file objective")
+                }, enabled = approved && goal.isNotBlank() && !state.objectiveRunning && !state.workbenchImporting && (!combinedApproved || state.terminalToolsEnabled), modifier = Modifier.fillMaxWidth()) {
+                    Text(if (combinedApproved) "Approve and start development → file objective" else "Approve and start file objective")
                 }
             } }
         }
         if (state.workbenchMessage.isNotBlank()) item { Text(state.workbenchMessage, style = MaterialTheme.typography.bodySmall) }
+        state.recoveryFailure?.let { failure -> item { Text("Recovery needs review: $failure. No recovery command was dispatched.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
         item {
             Text("Previous objectives — select to reopen", style = MaterialTheme.typography.titleMedium)
             Text("Reopening reads persisted manifests and re-verifies registered files. It does not resume execution or expand approval.", style = MaterialTheme.typography.bodySmall)
@@ -113,6 +127,10 @@ fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
                     Text("Approved required files: ${state.workbenchApproval.requiredFiles.keys.joinToString()}", style = MaterialTheme.typography.bodySmall)
                     Text("Research ${if (state.workbenchApproval.researchEnabled) "limited to ${state.workbenchApproval.authorizedUrls.size} selected URL(s)" else "disabled"}. Approval is preserved across resume.", style = MaterialTheme.typography.bodySmall)
                     if (state.workbenchApproval.researchEnabled) state.workbenchApproval.authorizedUrls.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    state.workbenchApproval.combinedDevelopment?.let { original ->
+                        Text("Original approved project: ${original.environment.name}/${original.guestAlias} · ${original.workspaceRoot}", style = MaterialTheme.typography.bodySmall)
+                        Text(original.outputs.joinToString { "${it.relativePath} → ${it.fileName}" }, style = MaterialTheme.typography.bodySmall)
+                    }
                 } else Text("This objective has no Workbench artifact approval. Its assistant prose is not an exportable file.", style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = vm::refreshWorkbench) { Text("Verify/reload") }

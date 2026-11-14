@@ -52,10 +52,11 @@ class CommandPolicyTest {
     }
 
     @Test
-    fun `git status remains read only`() {
+    fun `manual git status requires confirmation for configured helper authority`() {
         val assessment = CommandPolicy.assess("git status --short")
-        assertEquals(CommandRisk.READ_ONLY, assessment.risk)
-        assertFalse(assessment.requiresConfirmation)
+        assertEquals(CommandRisk.NETWORK_MUTATING, assessment.risk)
+        assertTrue(assessment.requiresConfirmation)
+        assertFalse(assessment.blocked)
     }
 
     @Test

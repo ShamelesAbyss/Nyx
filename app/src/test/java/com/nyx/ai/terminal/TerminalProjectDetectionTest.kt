@@ -15,7 +15,8 @@ import java.util.Comparator
 
 /** Linux fixtures execute only standalone javac/sh programs. Gradle is never invoked. */
 class TerminalProjectDetectionTest {
-    private val fileTools = listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")
+    private val fileTools = listOf("realpath", "sha256sum", "head", "wc", "stat", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")
+    private val compiler = Path.of(System.getProperty("bedrock.kotlin.compiler", "/tmp/nyx-toolchain-tests/kotlin-home/bin/kotlinc"))
 
     private fun observed(vararg extra: String): String = (fileTools + extra).distinct().joinToString("\n") { "TOOL:$it=/usr/bin/$it" }
 
@@ -23,7 +24,8 @@ class TerminalProjectDetectionTest {
         val commands = mutableListOf<String>()
         override suspend fun run(command: String, environment: TerminalEnvironment, workingDirectory: String, timeoutSeconds: Long, useTimeoutBinary: Boolean): TerminalCommandResult {
             commands += command
-            val process = ProcessBuilder("/bin/bash", "-c", ShellCommandBuilder.wrap(command, workingDirectory, timeoutSeconds, useTimeoutBinary)).start()
+            val request = ControlledShell.request(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary)
+            val process = ProcessBuilder(listOf(request.commandPath) + request.arguments).start()
             val out = process.inputStream.bufferedReader().readText()
             val err = process.errorStream.bufferedReader().readText()
             val exit = process.waitFor()
@@ -36,7 +38,9 @@ class TerminalProjectDetectionTest {
         val root = Files.createTempDirectory("nyx-project-detection-")
         try {
             val executor = HostExecutor()
-            block(root, executor, TerminalAgentTools(executor, root.toString(), workspaceApproved = true))
+            val trusted = if (Files.isExecutable(compiler)) mapOf("kotlinc" to compiler.toRealPath().toString()) else emptyMap()
+            block(root, executor, TerminalAgentTools(executor, root.toString(), TerminalEnvironment.DEBIAN_PROOT,
+                workspaceApproved = true, trustedToolchainExecutables = trusted))
         } finally { Files.walk(root).use { it.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists) } }
     }
 
@@ -44,7 +48,7 @@ class TerminalProjectDetectionTest {
         val executor = TerminalToolExecutor { _, _, _, _, _ ->
             TerminalCommandResult("probe", TerminalResultKind.SUCCEEDED, 0, "SOURCE:Main.kt\nSOURCE:TestMain.kt\nEMPTY:0\n" + observed("java", "kotlinc"))
         }
-        val tools = TerminalAgentTools(executor, "/tmp/calculator", workspaceApproved = true)
+        val tools = TerminalAgentTools(executor, "/tmp/calculator", TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true)
         val discovery = tools.inspectProject()
         assertEquals("kotlin-cli", discovery.projectType)
         assertTrue(discovery.reason, discovery.ready)
@@ -69,7 +73,7 @@ class TerminalProjectDetectionTest {
         val executor = TerminalToolExecutor { _, _, _, _, _ ->
             TerminalCommandResult("probe", TerminalResultKind.SUCCEEDED, 0, "SOURCE:Main.kt\n" + observed("java", "kotlinc"))
         }
-        val discovery = TerminalAgentTools(executor, "/tmp/calculator", workspaceApproved = true).inspectProject()
+        val discovery = TerminalAgentTools(executor, "/tmp/calculator", TerminalEnvironment.DEBIAN_PROOT, workspaceApproved = true).inspectProject()
         assertFalse(discovery.ready)
         assertTrue(discovery.missingTools.any { "TestMain.kt" in it })
     }
@@ -148,7 +152,7 @@ class TerminalProjectDetectionTest {
     }
 
     @Test fun approvedEmptyWorkspaceCreatesAndVerifiesKotlinCalculatorWhenCompilerIsAvailable() = runBlocking {
-        assumeTrue(ProcessBuilder("/bin/sh", "-c", "command -v kotlinc >/dev/null 2>&1").start().waitFor() == 0)
+        assumeTrue(Files.isExecutable(compiler))
         fixture { root, executor, tools ->
             val provider = DevelopmentOrchestratorTest.Provider { _, _ -> creationReply(
                 "Main.kt" to "fun add(a: Int, b: Int): Int = a + b\nfun main() { println(add(2, 3)) }\n",

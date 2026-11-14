@@ -39,14 +39,14 @@ object InferenceFabric {
             var admitted = false
             try {
                 // Selected deadlines include queue waiting; no global metric is used to infer admission.
-                return withExecutionTimeouts(options, onToken) { observedText ->
+                return withInferenceActivityTimeouts(options, onToken) { outgoingOptions, observedText ->
                     gate.withPermit {
                         admitted = true
                         pending.decrementAndGet()
                         _metrics.update { it.copy(queued = pending.get(), active = 1, calls = it.calls + 1, provider = delegate.displayName, lastFailure = null) }
                         val started = System.nanoTime()
                         try {
-                            suspend fun dispatch(): ChatResult = delegate.chat(model, messages, tools, options) { chunk ->
+                            suspend fun dispatch(): ChatResult = delegate.chat(model, messages, tools, outgoingOptions) { chunk ->
                                 if (chunk.isNotEmpty()) _metrics.update { it.copy(streamedChunks = it.streamedChunks + 1, generatedCharacters = it.generatedCharacters + chunk.length) }
                                 observedText(chunk)
                             }

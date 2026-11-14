@@ -1,6 +1,6 @@
-# Android compatibility for NYX 0.6.0
+# Android compatibility for NYX 0.9.0 candidate
 
-NYX 0.6.0 uses `compileSdk = 37`, `targetSdk = 37`, `minSdk = 26`, and `versionCode = 6`. The native release ABI is `arm64-v8a`. The official sources below were checked on **2026-11-12 UTC**. These are build requirements and implementation guidance, not evidence of device testing.
+NYX 0.9.0 uses `compileSdk = 37`, `targetSdk = 37`, `minSdk = 26`, and `versionCode = 23`. The native release ABI is `arm64-v8a`. The official sources below were checked on **2026-11-12 UTC**, with build/16 KB requirements rechecked in the 2026-11-14 source audit. These are build requirements and implementation guidance, not evidence of candidate build or device testing. Historical compatibility-build counts below remain historical.
 
 ## Supported build stack
 

@@ -1,5 +1,8 @@
 package com.nyx.ai.terminal
 
+import com.nyx.ai.development.DevelopmentPaths
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.util.Base64
 
@@ -104,6 +107,10 @@ object SourceBatchReader {
                 issues += "extension not allowed: $path"
                 continue
             }
+            if (!WorkspaceSourcePaths.isSafeRelative(path)) {
+                issues += "private or generated path: $path"
+                continue
+            }
             if (!seen.add(path)) issues += "duplicate path: $path"
         }
         return issues
@@ -133,7 +140,8 @@ object SourceBatchReader {
             appendLine("set -u")
             append("NYX_MAX_FILE=").appendLine(request.maxFileBytes)
             append("NYX_MAX_TOTAL=").appendLine(request.maxTotalBytes)
-            appendLine("NYX_TMP=\${TMPDIR:-/tmp}/nyx-batch-\$\$")
+            appendLine("NYX_ROOT=\$(pwd -P) || exit 71")
+            appendLine("NYX_TMP=\$(umask 077; mktemp \"\$NYX_ROOT/.nyx-batch-XXXXXXXX\") || exit 73")
             appendLine("trap 'rm -f \"\$NYX_TMP\"' 0 1 2 15")
             appendLine("if printf 'eA==' | base64 -d >/dev/null 2>&1; then NYX_B64='base64';")
             appendLine("else NYX_B64='base64 -w0'; fi")
@@ -142,6 +150,9 @@ object SourceBatchReader {
             appendLine("  path=\$1")
             appendLine("  budget=\$2")
             appendLine("  [ -f \"\$path\" ] || { printf '# NYX_SKIP %s\\n' \"\$path\" >&2; return 0; }")
+            appendLine("  [ ! -L \"\$path\" ] && [ \"\$(realpath -e -- \"\$path\")\" = \"\$NYX_ROOT/\$path\" ] && [ \"\$(stat -c %h -- \"\$path\")\" = 1 ] || return 2")
+            appendLine("  [ ! -L \"\$NYX_TMP\" ] && [ \"\$(realpath -e -- \"\$NYX_TMP\")\" = \"\$NYX_TMP\" ] && [ \"\$(stat -c %h -- \"\$NYX_TMP\")\" = 1 ] || return 2")
+            appendLine("  before=\$(sha256sum -- \"\$path\" | cut -d' ' -f1) || return 2")
             appendLine("  size=\$(wc -c < \"\$path\" | tr -d ' ')")
             appendLine("  take=\$size")
             appendLine("  [ \"\$take\" -gt \"\$NYX_MAX_FILE\" ] && take=\$NYX_MAX_FILE")
@@ -149,6 +160,8 @@ object SourceBatchReader {
             appendLine("  if [ \"\$take\" -le 0 ] && [ \"\$size\" -gt 0 ]; then return 1; fi")
             appendLine("  head -c \"\$take\" \"\$path\" > \"\$NYX_TMP\" || return 1")
             appendLine("  hash=\$(sha256sum \"\$NYX_TMP\" | cut -d' ' -f1)")
+            appendLine("  [ ! -L \"\$path\" ] && [ \"\$(realpath -e -- \"\$path\")\" = \"\$NYX_ROOT/\$path\" ] && [ \"\$(sha256sum -- \"\$path\" | cut -d' ' -f1)\" = \"\$before\" ] || return 2")
+            appendLine("  [ \"\$take\" -lt \"\$size\" ] || [ \"\$hash\" = \"\$before\" ] || return 2")
             appendLine("  if [ \"\$take\" -lt \"\$size\" ]; then")
             appendLine("    printf 'NYX_FILE_BEGIN %s %s %s truncated=1\\n' \"\$path\" \"\$hash\" \"\$take\"")
             appendLine("  else")
@@ -162,7 +175,7 @@ object SourceBatchReader {
             appendLine("}")
             for (path in request.paths) {
                 append("nyx_emit ").append(quote(path))
-                appendLine(" \$((NYX_MAX_TOTAL - NYX_TOTAL)) || exit 0")
+                appendLine(" \$((NYX_MAX_TOTAL - NYX_TOTAL)) || exit 2")
             }
             appendLine("exit 0")
         }
@@ -250,10 +263,14 @@ object SourceBatchReader {
                     if (!actual.equals(header.sha256, ignoreCase = true)) {
                         return BatchReadResult.Failure("hash_mismatch", "sha256 mismatch for " + header.path)
                     }
+                    val text = try { Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString() }
+                    catch (_: java.nio.charset.CharacterCodingException) { return BatchReadResult.Failure("invalid_text", "invalid UTF-8") }
+                    if ('\u0000' in text) return BatchReadResult.Failure("invalid_text", "NUL in source")
                     files[header.path] = BatchReadFile(
                         header.path,
                         actual,
-                        String(bytes, Charsets.UTF_8),
+                        text,
                         header.truncated,
                     )
                 }

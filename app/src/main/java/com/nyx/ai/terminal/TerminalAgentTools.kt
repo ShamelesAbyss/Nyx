@@ -4,6 +4,7 @@ import com.nyx.ai.agent.AgentToolProvider
 import com.nyx.ai.agent.AgentToolTaskContext
 import com.nyx.ai.agent.FileProbe
 import com.nyx.ai.agent.ToolExecutionEvidence
+import com.nyx.ai.agent.StructuredActions
 import com.nyx.ai.autonomy.ExecutionTimeoutPolicy
 import com.nyx.ai.development.CheckpointFile
 import com.nyx.ai.development.DevelopmentCheckpoint
@@ -41,7 +42,8 @@ fun interface TerminalToolExecutor {
 }
 
 /**
- * Capabilities, not shell filtering: models cannot supply commands. The constructor's normalized
+ * Capabilities, not general shell filtering: models can supply only validated catalog argv.
+ * The constructor's normalized
  * absolute workspace is approved by the host UI; [workspaceApproved] separately opts into executing
  * trusted project code and writing files. These tools are NOT an OS sandbox for project scripts.
  */
@@ -56,6 +58,8 @@ class TerminalAgentTools(
     private val modelCommandGate: ModelCommandGate? = null,
     private val executionTimeouts: ExecutionTimeoutPolicy? = null,
     private val taskContext: AgentToolTaskContext? = null,
+    private val outputApproval: TerminalOutputApproval? = null,
+    trustedToolchainExecutables: Map<String, String> = emptyMap(),
 ) : AgentToolProvider, FileProbe {
     constructor(
         bridge: TerminalBridge,
@@ -67,15 +71,28 @@ class TerminalAgentTools(
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
         modelCommandGate: ModelCommandGate? = null,
         executionTimeouts: ExecutionTimeoutPolicy? = null,
+        outputApproval: TerminalOutputApproval? = null,
+        trustedToolchainExecutables: Map<String, String> = emptyMap(),
     ) : this(TerminalToolExecutor { command, env, directory, timeout, hardTimeout ->
-        bridge.runShell(command, env, directory, timeout, hardTimeout, approved = true, guestAlias = guestAlias)
-    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias, modelCommandGate, executionTimeouts)
+        bridge.runControlledShell(command, env, directory, timeout, hardTimeout, guestAlias)
+    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias, modelCommandGate, executionTimeouts,
+        outputApproval = outputApproval, trustedToolchainExecutables = trustedToolchainExecutables)
 
-    init { require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspaceRoot)) { "Workspace must be absolute and normalized; resolve ~/ before constructing terminal tools" } }
+    init {
+        require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspaceRoot) &&
+            WorkspaceValidator.validateSyntax(WorkspaceRequest(environment, workspaceRoot, authorized = true)) is WorkspaceCheck.Valid) {
+            "Workspace must be an absolute normalized project directory; resolve and explicitly approve canonical scope first"
+        }
+    }
 
-    override val names = setOf("terminal_run", "file_read", "file_write", "file_list", "file_search",
-        "project_detect", "project_inspect", "source_search", "repo_diff", "repo_status", "project_run", "build_run", "test_run")
+    override val names = setOf("file_read", "file_write", "file_list", "file_search",
+        "project_detect", "project_inspect", "source_search", "repo_diff", "repo_status", "project_run", "build_run", "test_run") +
+        if (modelCommandGate == null) emptySet() else setOf("terminal_run")
     private val evidence = Collections.synchronizedList(mutableListOf<ToolExecutionEvidence>())
+    private val projectExecutions = Collections.synchronizedList(mutableListOf<FixedProjectExecution>())
+    private val trustedToolchainExecutables = trustedToolchainExecutables.toMap().also { overrides ->
+        require(overrides.all { (name, path) -> ControlledShell.trustedTool(environment, name, path, overrides) && !path.startsWith("$workspaceRoot/") })
+    }
     private val mutationLock = Mutex()
     private var discovery: DevelopmentDiscovery? = null
     private var buildCommand: String? = null
@@ -84,7 +101,7 @@ class TerminalAgentTools(
 
     override fun forTask(context: AgentToolTaskContext): TerminalAgentTools = TerminalAgentTools(
         executor, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved,
-        guestAlias, modelCommandGate, context.timeouts, context,
+        guestAlias, modelCommandGate, context.timeouts, context, outputApproval, trustedToolchainExecutables,
     )
 
     private val terminalCeiling: Long get() = (executionTimeouts?.terminalMs?.div(1_000) ?: timeoutSeconds).coerceIn(1, 7_200)
@@ -97,7 +114,7 @@ class TerminalAgentTools(
         )
 
     override fun schemas(): JSONArray = JSONArray().apply {
-        put(schema("terminal_run", "Run one policy-validated command in the approved workspace. Destructive and credential commands are denied; the environment is not a security sandbox.", obj("command" to "string", "working_directory" to "string", "timeout_seconds" to "integer"), listOf("command")))
+        if ("terminal_run" in names) put(schema("terminal_run", "Run one structured reader/literal command: pwd, ls flags, bounded cat/head/tail, wc, sha256sum or literal grep on explicit source files. No arbitrary executable, Git, interpreter, mutation, network or shell syntax. Not an OS sandbox.", obj("command" to "string", "working_directory" to "string", "timeout_seconds" to "integer"), listOf("command")))
         put(schema("file_read", "Read a bounded UTF-8 source file in the authorized workspace.", obj("path" to "string"), listOf("path")))
         put(schema("file_write", "Checkpoint and atomically replace one file after checking its exact SHA-256; trusted workspace opt-in required.", obj("path" to "string", "content" to "string", "expectedSha256" to "string"), listOf("path", "content", "expectedSha256")))
         for (name in listOf("file_list", "project_detect", "project_inspect")) put(schema(name, "Read-only confined project inspection.", obj("path" to "string"), emptyList()))
@@ -110,6 +127,16 @@ class TerminalAgentTools(
 
     override suspend fun execute(call: ToolCall): String {
         val args = call.arguments
+        val function = (0 until schemas().length()).map { schemas().getJSONObject(it).getJSONObject("function") }
+            .firstOrNull { it.getString("name") == call.name } ?: return denied(call.name, "Unknown terminal capability")
+        try {
+            StructuredActions.validate(args, function.getJSONObject("parameters"))
+            if (args.has("timeout_seconds")) {
+                val value = args.get("timeout_seconds")
+                require(value is Int || value is Long) { "Timeout must be an exact bounded integer" }
+                require((value as Number).toLong() in 1..terminalCeiling) { "Timeout is outside the authorized ceiling" }
+            }
+        } catch (error: Exception) { return denied(call.name, error.message?.take(200) ?: "Invalid tool arguments") }
         if (call.name == "terminal_run") return runModelCommand(args)
         if (args.has("command") || args.has("timeout_seconds") || args.has("working_directory")) {
             return denied(call.name, "Command, timeout and working-directory overrides are denied")
@@ -135,7 +162,7 @@ class TerminalAgentTools(
             }
             "repo_status" -> {
                 if (args.length() != 0) return denied(call.name, "Arguments denied")
-                val result = controlled("repo_status", rootGuard() + "git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --short && git -c core.fsmonitor=false -c core.hooksPath=/dev/null log -5 --oneline", 30)
+                val result = controlled("repo_status", FixedRepositoryInspection.script(workspaceRoot, environment), 30)
                 JSONObject().put("exitCode", result.exitCode).put("stdout", result.stdout.take(6000)).put("stderr", result.stderr.take(1000)).toString()
             }
             "repo_diff" -> checkpointDiff(knownCheckpoints.values.toList(), 32_000)
@@ -156,8 +183,8 @@ class TerminalAgentTools(
 
     /**
      * Runs one model-proposed command only after [ModelCommandPolicy] validates the working directory
-     * and the shared autonomy policy authorizes the action. The command is still an ordinary shell
-     * command; this is a policy boundary, not an OS sandbox.
+     * and the shared autonomy policy authorizes the action. Only locally validated catalog argv is
+     * serialized into an app-built script; this is a policy boundary, not an OS sandbox.
      */
     private suspend fun runModelCommand(args: JSONObject): String {
         val gate = modelCommandGate ?: return denied("terminal_run", "Model-directed shell is disabled for this execution.")
@@ -166,6 +193,9 @@ class TerminalAgentTools(
         if (command.isBlank()) return denied("terminal_run", "A non-empty command is required.")
         val requestedDirectory = if (args.has("working_directory")) args.optString("working_directory") else null
         val requestedTimeout = if (args.has("timeout_seconds")) args.optLong("timeout_seconds") else null
+        val local = ModelCommandPolicy.assess(ModelCommandRequest(command, workspaceRoot, requestedDirectory, requestedTimeout, environment, terminalCeiling))
+        if (!local.allowed) return denied("terminal_run", local.reason)
+        val structured = StructuredTerminalCommands.parse(command) ?: return denied("terminal_run", "Unsupported structured command")
         val decision = gate.authorize(command, requestedDirectory.orEmpty(), requestedTimeout ?: ModelCommandPolicy.DEFAULT_TIMEOUT_SECONDS)
         if (!decision.allowed) return denied("terminal_run", decision.reason)
         val workingDirectory = decision.workingDirectory ?: return denied("terminal_run", "No validated working directory.")
@@ -174,15 +204,16 @@ class TerminalAgentTools(
         }
         // The authorizer may narrow the request; neither it nor model arguments can widen policy.
         val timeout = minOf(decision.timeoutSeconds.coerceAtLeast(1), requestedTimeout?.coerceAtLeast(1) ?: terminalCeiling, terminalCeiling)
-        val guarded = rootGuard() +
-            "[ \"\$(realpath -e -- ${quote(workingDirectory)})\" = ${quote(workingDirectory)} ] && [ -d ${quote(workingDirectory)} ] || exit 72; " +
-            "cd -- ${quote(workingDirectory)} && $command"
-        val result = workspaceLease(decision.risk == CommandRisk.READ_ONLY && TerminalConcurrencyPolicy.canShareWorkspace(command)) { controlled(
+        val guarded = structured.script(environment, workspaceRoot, workingDirectory)
+        val identity = TerminalCommandIdentity("terminal_run", ControlledShell.executable(environment, structured.executable), structured.resolvedArguments(workingDirectory),
+            workspaceRoot, "structured_readonly", TerminalCommandIdentity.digest(guarded))
+        val result = workspaceLease(true) { controlled(
             "terminal_run",
             guarded,
             timeout = timeout,
-            mutating = decision.risk != CommandRisk.READ_ONLY,
+            mutating = false,
             hardTimeout = true,
+            identity = identity,
         ) }
         return JSONObject()
             .put("command", command.take(4_000))
@@ -198,6 +229,45 @@ class TerminalAgentTools(
 
     override fun drainEvidence(): List<ToolExecutionEvidence> = synchronized(evidence) {
         evidence.toList().also { evidence.clear() }
+    }
+
+    fun drainProjectExecutions(): List<FixedProjectExecution> = synchronized(projectExecutions) {
+        projectExecutions.toList().also { projectExecutions.clear() }
+    }
+
+    /** Host integration only: exact approved generated output, never exposed as a model tool. */
+    suspend fun snapshotOutput(selectionId: String): TerminalOutputSnapshot? = workspaceLease(false) {
+        val approval = outputApproval ?: return@workspaceLease null
+        val task = taskContext ?: return@workspaceLease null
+        if (!workspaceApproved || task.taskId.isBlank() || task.objectiveId != approval.objectiveId ||
+            approval.workspaceRoot != workspaceRoot || approval.environment != environment || approval.guestAlias != guestAlias) return@workspaceLease null
+        val selection = approval.selections.singleOrNull { it.id == selectionId } ?: return@workspaceLease null
+        if (!TerminalOutputPaths.isSelectedOutput(selection.relativePath)) return@workspaceLease null
+        val target = "$workspaceRoot/${selection.relativePath}"
+        val hash = hashTarget(target, selection.relativePath) ?: return@workspaceLease null
+        val sizeResult = controlled("output_size", fileGuard(target) + "wc -c < ${quote(target)}", files = listOf(selection.relativePath))
+        val size = sizeResult.stdout.trim().toIntOrNull() ?: return@workspaceLease null
+        if (!sizeResult.isSuccess || size !in 1..approval.maxBytes) return@workspaceLease null
+        val bytes = java.io.ByteArrayOutputStream(size)
+        var offset = 0
+        while (offset < size) {
+            val count = minOf(CHUNK_BYTES, size - offset)
+            val chunk = controlled("output_read", fileGuard(target) + "dd if=${quote(target)} bs=1 skip=$offset count=$count status=none | base64", files = listOf(selection.relativePath))
+            if (!chunk.isSuccess || chunk.stdout.length > 6_000) return@workspaceLease null
+            val decoded = decodeTransport(chunk.stdout) ?: return@workspaceLease null
+            if (decoded.size != count) return@workspaceLease null
+            bytes.write(decoded); offset += count
+        }
+        val retained = bytes.toByteArray()
+        val text = try { Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(retained)).toString() }
+        catch (_: java.nio.charset.CharacterCodingException) { return@workspaceLease null }
+        if ('\u0000' in text || developmentSha256(text) != hash) return@workspaceLease null
+        val checked = controlled("output_verify", fileGuard(target) + "sha256sum -- ${quote(target)} && wc -c < ${quote(target)}", files = listOf(selection.relativePath))
+        val lines = checked.stdout.trim().lines()
+        if (!checked.isSuccess || lines.size != 2 || lines[0].substringBefore(' ') != hash || lines[1].trim().toIntOrNull() != size) return@workspaceLease null
+        TerminalOutputSnapshot(task.objectiveId, task.taskId, environment, guestAlias, workspaceRoot, selection.id, selection.relativePath,
+            requireNotNull(checked.requestId), hash, retained)
     }
 
     override suspend fun exists(path: String): Boolean {
@@ -224,19 +294,20 @@ class TerminalAgentTools(
         val result = controlled("project_inspect", rootGuard() + "for f in settings.gradle.kts settings.gradle build.gradle.kts build.gradle gradlew package.json pyproject.toml setup.py Cargo.toml go.mod Makefile CMakeLists.txt; do if [ -f \"\$f\" ] && [ ! -L \"\$f\" ]; then printf 'MARKER:%s\\n' \"\$f\"; fi; done; " +
             "for f in *.kt *.java *.sh; do if [ -f \"\$f\" ] && [ ! -L \"\$f\" ]; then printf 'SOURCE:%s\\n' \"\$f\"; fi; done; " +
             "empty=1; for f in .[!.]* ..?* *; do [ -e \"\$f\" ] || [ -L \"\$f\" ] || continue; [ \"\$f\" = .nyx-checkpoints ] && continue; empty=0; break; done; printf 'EMPTY:%s\\n' \"\$empty\"; " +
-            "for t in realpath sha256sum head wc base64 mktemp mv cp mkdir cut chmod find timeout dd sh java javac kotlinc gradle node npm python3 cargo rustc go make cc cmake; do p=\$(command -v \"\$t\" 2>/dev/null); if [ -n \"\$p\" ]; then p=\$(realpath -e -- \"\$p\" 2>/dev/null); [ -x \"\$p\" ] && printf 'TOOL:%s=%s\\n' \"\$t\" \"\$p\"; fi; done")
+            "for t in realpath sha256sum head wc stat base64 mktemp mv cp mkdir cut chmod find timeout dd sh java javac kotlinc gradle node npm python3 cargo rustc go make cc cmake; do p=\$(command -v \"\$t\" 2>/dev/null); if [ -n \"\$p\" ]; then p=\$(realpath -e -- \"\$p\" 2>/dev/null); [ -x \"\$p\" ] && printf 'TOOL:%s=%s\\n' \"\$t\" \"\$p\"; fi; done; " +
+            trustedToolchainExecutables.entries.joinToString(" ") { (name, path) ->
+                "if [ -x ${quote(path)} ] && [ \"\$(realpath -e -- ${quote(path)})\" = ${quote(path)} ]; then printf 'TOOL:%s=%s\\n' ${quote(name)} ${quote(path)}; fi;"
+            })
         if (!result.isSuccess) return DevelopmentDiscovery(workspaceRoot, "unknown", reason = "Remote workspace canonicalization or IPC failed: ${result.message ?: result.stderr.take(300)}").also { discovery = it }
         val markers = result.stdout.lineSequence().filter { it.startsWith("MARKER:") }.map { it.removePrefix("MARKER:") }.toList()
         val sources = result.stdout.lineSequence().filter { it.startsWith("SOURCE:") }.map { it.removePrefix("SOURCE:") }
-            .filter { DevelopmentPaths.isSafeRelative(it) && '/' !in it }.distinct().sorted().take(64).toList()
+            .filter { WorkspaceSourcePaths.isSafeRelative(it) && '/' !in it }.distinct().sorted().take(64).toList()
         val tools = result.stdout.lineSequence().filter { it.startsWith("TOOL:") }.map { it.removePrefix("TOOL:") }.mapNotNull {
             val name = it.substringBefore('='); val path = it.substringAfter('=', "")
-            val origin = ExecutableClassifier.classify(if (environment == TerminalEnvironment.DEBIAN_PROOT) "proot:$guestAlias" else "termux_host", path)
-            if (path.startsWith('/') && path.length <= 512 && '\u0000' !in path && !path.startsWith("$workspaceRoot/") &&
-                (environment != TerminalEnvironment.DEBIAN_PROOT || ExecutableClassifier.isUsableInGuest(origin))) name to path else null
+            if (!path.startsWith("$workspaceRoot/") && ControlledShell.trustedTool(environment, name, path, trustedToolchainExecutables)) name to path else null
         }.toMap()
         val missing = mutableListOf<String>()
-        for (tool in listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")) if (tool !in tools) missing += tool
+        for (tool in listOf("realpath", "sha256sum", "head", "wc", "stat", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")) if (tool !in tools) missing += tool
         fun tool(name: String): String { if (name !in tools) missing += name; return quote(tools[name] ?: "/missing/$name") }
         val type: String
         when {
@@ -326,7 +397,7 @@ class TerminalAgentTools(
         val listing = controlled("source_index", rootGuard() +
             "find . -maxdepth 8 \\( -name .git -o -name .hg -o -name .svn -o -name .ssh -o -name .aws -o -name .gnupg -o -name .nyx-checkpoints -o -name .gradle -o -name .idea -o -name node_modules -o -name build -o -name dist -o -name target -o -name __pycache__ -o -name .venv -o -name venv \\) -prune -o -type f -print | head -c 16000")
         if (!listing.isSuccess) return emptyList()
-        val paths = listing.stdout.lineSequence().map { it.removePrefix("./") }.filter { DevelopmentPaths.isSafeRelative(it) }.take(maxFiles.coerceIn(1, 256)).toList()
+        val paths = listing.stdout.lineSequence().map { it.removePrefix("./") }.filter { WorkspaceSourcePaths.isSafeRelative(it) }.take(maxFiles.coerceIn(1, 256)).toList()
         if (maxFileBytes <= 1) return paths.map { SourceSnapshot(it, "", "") }
         val effective = maxFileBytes.coerceIn(1, MAX_FILE_BYTES)
         val snapshots = linkedMapOf<String, SourceSnapshot>()
@@ -343,12 +414,13 @@ class TerminalAgentTools(
                 continue
             }
             val result = controlled("source_batch", rootGuard() + SourceBatchReader.script(request), timeout = 90, files = group)
-            when (val parsed = SourceBatchReader.parse(result.stdout, request)) {
+            val parsed = if (result.isSuccess) SourceBatchReader.parse(result.stdout, request) else BatchReadResult.Failure("ipc_failed", "Batch did not complete")
+            when (parsed) {
                 is BatchReadResult.Success -> {
-                    parsed.files.forEach { snapshots[it.path] = SourceSnapshot(it.path, it.sha256, it.content) }
+                    parsed.files.filterNot { it.truncated }.forEach { snapshots[it.path] = SourceSnapshot(it.path, it.sha256, it.content) }
                     // The script stops at maxTotalBytes, so later files in a group may be absent.
                     // Read only those omitted paths individually; parsed files are already verified.
-                    val returned = parsed.files.map { it.path }.toSet()
+                    val returned = parsed.files.filterNot { it.truncated }.map { it.path }.toSet()
                     group.filterNot { it in returned }.forEach { path ->
                         snapshot(path, effective)?.let { snapshots[it.path] = it }
                     }
@@ -380,8 +452,11 @@ class TerminalAgentTools(
         if (!inspected.ready) return deniedCommand(kind, inspected.reason + ": " + inspected.missingTools.joinToString())
         val start = System.currentTimeMillis()
         val result = controlled("project_run_${kind.name.lowercase()}", rootGuard() + command, timeout = buildCeiling, mutating = true, hardTimeout = true, buildOperation = true)
+        val observed = FixedProjectExecution(taskContext?.objectiveId, taskContext?.taskId, environment, guestAlias, workspaceRoot, kind,
+            requireNotNull(result.requestId), command, result.kind, result.exitCode, start, System.currentTimeMillis())
+        projectExecutions += observed
         return DevelopmentCommand(kind, command, result.exitCode, result.stdout, result.stderr + result.message?.let { "\n$it" }.orEmpty(), start, System.currentTimeMillis(),
-            result.kind in setOf(TerminalResultKind.SUCCEEDED, TerminalResultKind.PROCESS_EXIT) && result.exitCode != null)
+            observed.infrastructureOk)
     }
 
     suspend fun applyPatch(patch: DevelopmentPatch): PatchApplication = workspaceLease(false) { applyPatchLocked(patch) }
@@ -389,7 +464,7 @@ class TerminalAgentTools(
     private suspend fun applyPatchLocked(patch: DevelopmentPatch): PatchApplication = mutationLock.withLock {
         if (!workspaceApproved) return@withLock PatchApplication(false, reason = "Trusted workspace approval required")
         if (patch.files.isEmpty() || patch.files.size > 16 || patch.files.map { it.path }.distinct().size != patch.files.size) return@withLock PatchApplication(false, reason = "Invalid patch file count or duplicates")
-        if (patch.files.any { !DevelopmentPaths.isSafeRelative(it.path) || it.content.toByteArray(Charsets.UTF_8).size > MAX_FILE_BYTES || '\u0000' in it.content ||
+        if (patch.files.any { !WorkspaceSourcePaths.isSafeRelative(it.path) || it.content.toByteArray(Charsets.UTF_8).size > MAX_FILE_BYTES || '\u0000' in it.content ||
                 !(it.expectedSha256 == DevelopmentPaths.MISSING || (it.expectedSha256.length == 64 && it.expectedSha256.all { c -> c in "0123456789abcdef" })) }) return@withLock PatchApplication(false, reason = "Invalid file path, content or expected hash")
         if (patch.files.sumOf { it.content.toByteArray(Charsets.UTF_8).size } > 1_024_000) return@withLock PatchApplication(false, reason = "Patch bytes exceeded")
         val id = UUID.randomUUID().toString()
@@ -469,7 +544,7 @@ class TerminalAgentTools(
             val count = minOf(CHUNK_BYTES, size - offset)
             val chunk = controlled("file_read", fileGuard(target) + "dd if=${quote(target)} bs=1 skip=$offset count=$count status=none | base64", files = listOf(rel))
             if (!chunk.isSuccess || chunk.stdout.length > 6_000) return null
-            val decoded = try { Base64.getMimeDecoder().decode(chunk.stdout) } catch (_: IllegalArgumentException) { return null }
+            val decoded = decodeTransport(chunk.stdout) ?: return null
             if (decoded.size != count) return null
             bytes.write(decoded); offset += count
         }
@@ -524,9 +599,14 @@ class TerminalAgentTools(
 
     private fun outputGuard(file: String? = null): String {
         val directory = "$workspaceRoot/build"
+        // Check immediately before the compiler opens an existing output. Trusted project code
+        // and same-UID races remain outside this app-level guard; this is not an OS sandbox.
+        val target = file?.let { "$directory/$it" }
         return "if [ ! -e ${quote(directory)} ] && [ ! -L ${quote(directory)} ]; then mkdir -- ${quote(directory)} || exit 73; fi; " +
             "[ ! -L ${quote(directory)} ] && [ -d ${quote(directory)} ] && [ \"\$(realpath -e -- ${quote(directory)})\" = ${quote(directory)} ] || exit 73; " +
-            if (file == null) "" else "[ ! -L ${quote("$directory/$file")} ] && { [ ! -e ${quote("$directory/$file")} ] || [ -f ${quote("$directory/$file")} ]; } || exit 73; "
+            if (target == null) "" else "if [ -e ${quote(target)} ] || [ -L ${quote(target)} ]; then " +
+                "[ ! -L ${quote(target)} ] && [ -f ${quote(target)} ] && [ \"\$(realpath -e -- ${quote(target)})\" = ${quote(target)} ] && " +
+                "[ \"\$(stat -c %h -- ${quote(target)})\" = 1 ] || exit 73; fi; "
     }
 
     /** Comments and runtime Android mentions do not turn a JVM Gradle project into an SDK build. */
@@ -535,38 +615,41 @@ class TerminalAgentTools(
         return Regex("(?:id\\s*\\(?\\s*[\"']com\\.android\\.(?:application|library|test|dynamic-feature)[\"']|apply\\s+plugin\\s*:\\s*[\"']com\\.android\\.(?:application|library|test|dynamic-feature)[\"']|alias\\s*\\(\\s*libs\\.plugins\\.android\\.(?:application|library)\\s*\\))").containsMatchIn(code)
     }
 
-    private fun rootGuard(): String = "r=\$(realpath -e -- ${quote(workspaceRoot)}) || exit 71; [ \"\$r\" = ${quote(workspaceRoot)} ] && [ -d \"\$r\" ] || exit 71; cd -- \"\$r\" || exit 71; "
-    private fun fileGuard(target: String, allowMissing: Boolean = false): String {
-        val parent = target.substringBeforeLast('/')
-        val present = "[ ! -L ${quote(target)} ] && [ \"\$(realpath -e -- ${quote(target)})\" = ${quote(target)} ] && [ -f ${quote(target)} ]"
-        return rootGuard() + "[ \"\$(realpath -e -- ${quote(parent)})\" = ${quote(parent)} ] && [ -d ${quote(parent)} ] || exit 72; " +
-            if (allowMissing) "if [ -e ${quote(target)} ] || [ -L ${quote(target)} ]; then $present || exit 72; fi; " else "$present || exit 72; "
-    }
+    private fun rootGuard(): String = WorkspacePathGuard.directory(workspaceRoot)
+    private fun fileGuard(target: String, allowMissing: Boolean = false): String = WorkspacePathGuard.regularFile(workspaceRoot, target, allowMissing)
     private fun relative(path: String): String? {
         val rel = if (path.startsWith("$workspaceRoot/")) path.removePrefix("$workspaceRoot/") else path
-        return rel.takeIf { DevelopmentPaths.isSafeRelative(it) }
+        return rel.takeIf { WorkspaceSourcePaths.isSafeRelative(it) }
     }
-    private suspend fun controlled(tool: String, command: String, timeout: Long = 45, mutating: Boolean = false, files: List<String> = emptyList(), hardTimeout: Boolean = useTimeoutBinary, buildOperation: Boolean = false): TerminalCommandResult =
-        workspaceLease(!mutating) { controlledLocked(tool, command, minOf(timeout.coerceAtLeast(1), if (buildOperation) buildCeiling else terminalCeiling), mutating, files, hardTimeout) }
+    private suspend fun controlled(tool: String, command: String, timeout: Long = 45, mutating: Boolean = false, files: List<String> = emptyList(), hardTimeout: Boolean = useTimeoutBinary, buildOperation: Boolean = false,
+                                   identity: TerminalCommandIdentity? = null): TerminalCommandResult =
+        workspaceLease(!mutating) { controlledLocked(tool, command, minOf(timeout.coerceAtLeast(1), if (buildOperation) buildCeiling else terminalCeiling), mutating, files, hardTimeout, identity) }
 
-    private suspend fun controlledLocked(tool: String, command: String, timeout: Long, mutating: Boolean, files: List<String>, hardTimeout: Boolean): TerminalCommandResult {
+    private suspend fun controlledLocked(tool: String, command: String, timeout: Long, mutating: Boolean, files: List<String>, hardTimeout: Boolean,
+                                         identity: TerminalCommandIdentity?): TerminalCommandResult {
+        val operationId = UUID.randomUUID().toString()
         // Bound the fully wrapped IPC argv too; do not depend on CommandPolicy regex for confinement.
-        if (!workspaceApproved) return TerminalCommandResult(null, TerminalResultKind.DENIED, message = "Approved trusted workspace required for terminal IPC").also {
+        if (!workspaceApproved) return TerminalCommandResult(operationId, TerminalResultKind.DENIED, message = "Approved trusted workspace required for terminal IPC").also {
             record(tool, it, mutating, files, System.currentTimeMillis())
         }
-        val wrapped = ShellCommandBuilder.wrap(command, workspaceRoot, timeout, hardTimeout)
-        if (command.length > 7_500 || wrapped.length > TerminalCommandRequest.MAX_ARGUMENT_CHARS) {
-            return TerminalCommandResult(null, TerminalResultKind.INVALID_REQUEST, message = "Controlled command exceeds IPC payload bound").also {
+        val request = ControlledShell.request(command, environment, workspaceRoot, timeout, hardTimeout, guestAlias)
+        if (command.length > 7_500 || TerminalRequestValidator.validate(request).isNotEmpty()) {
+            return TerminalCommandResult(operationId, TerminalResultKind.INVALID_REQUEST, message = "Controlled command exceeds IPC payload bound").also {
                 record(tool, it, mutating, files, System.currentTimeMillis())
             }
         }
         val start = System.currentTimeMillis()
-        val result = try { executor.run(command, environment, workspaceRoot, timeout, hardTimeout) }
+        val dispatchIdentity = identity ?: TerminalCommandIdentity(tool, ControlledShell.executable(environment, "bash"),
+            if (tool.startsWith("project_run_")) listOf("--noprofile", "--norc", "-c", command) else emptyList(),
+            workspaceRoot, if (mutating) "trusted_project" else "structured_readonly", TerminalCommandIdentity.digest(command))
+        val result = try { withContext(TerminalCommandDispatchScope(dispatchIdentity, operationId)) {
+            executor.run(command, environment, workspaceRoot, timeout, hardTimeout).copy(requestId = operationId)
+        } }
         catch (cancel: CancellationException) {
-            record(tool, TerminalCommandResult(null, TerminalResultKind.CANCELLED, message = "IPC wait cancelled; underlying process status is uncertain"), mutating, files, start)
+            record(tool, TerminalCommandResult(operationId, TerminalResultKind.CANCELLED, message = "IPC wait cancelled; underlying process status is uncertain"), mutating, files, start)
             throw cancel
         }
-        catch (error: Exception) { TerminalCommandResult(null, TerminalResultKind.DISPATCH_ERROR, message = error.message?.take(300)) }
+        catch (error: Exception) { TerminalCommandResult(operationId, TerminalResultKind.DISPATCH_ERROR, message = error.message?.take(300)) }
         record(tool, result, mutating, files, start)
         return result
     }
@@ -586,6 +669,12 @@ class TerminalAgentTools(
         .put("markers", JSONArray(value.markers)).put("buildCommand", value.commands[ProjectRunKind.BUILD])
         .put("testCommand", value.commands[ProjectRunKind.TEST]).put("ready", value.ready).put("canCreateProject", value.canCreateProject)
         .put("missingTools", JSONArray(value.missingTools)).put("reason", value.reason).toString()
+    private fun decodeTransport(output: String): ByteArray? {
+        if (output.any { it !in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\r\n" }) return null
+        val encoded = output.replace("\r", "").replace("\n", "")
+        return try { Base64.getDecoder().decode(encoded).takeIf { Base64.getEncoder().encodeToString(it) == encoded } }
+        catch (_: IllegalArgumentException) { null }
+    }
     private fun quote(value: String) = ShellCommandBuilder.quote(value)
     private fun schema(name: String, description: String, properties: JSONObject, required: List<String>) = JSONObject().put("type", "function")
         .put("function", JSONObject().put("name", name).put("description", description).put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false)))
