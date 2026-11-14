@@ -91,4 +91,37 @@ class ObjectiveDependencyScopeTest {
         )
         assertNull(kind)
     }
+
+    @Test
+    fun `Kotlin CLI task is not turned into Android development by host or verification prose`() {
+        val tasks = listOf(
+            PlannedDependencyTask("terminal", "Inspect Android device", "Inspect the runtime environment only.", "Check device availability."),
+            PlannedDependencyTask("development", "Create Kotlin calculator command-line app", "Implement a Kotlin calculator.", "Run it from the NYX Android app."),
+        )
+        assertEquals(listOf(ProjectKind.KOTLIN_CLI), ObjectiveDependencyScope.requiredProjectKinds(tasks))
+    }
+
+    @Test
+    fun `each executable task prepares its own toolchain and a denial stops continuation`() = runBlocking {
+        val tasks = listOf(
+            PlannedDependencyTask("development", "Kotlin console calculator", "Create a Kotlin CLI calculator.", "Run the assertions."),
+            PlannedDependencyTask("terminal", "Java CLI", "Compile a Java command-line tool.", "Run its tests."),
+            PlannedDependencyTask("development", "Another Kotlin CLI", "Create a Kotlin console program.", "Run tests."),
+            PlannedDependencyTask("development", "Android application", "Build an Android APK.", "Verify the package."),
+        )
+        val prepared = mutableListOf<ProjectKind>()
+        val allowed = ObjectiveDependencyScope.beforeExecution(tasks) { kind ->
+            prepared += kind
+            kind != ProjectKind.JAVA_JVM
+        }
+        assertEquals(false, allowed)
+        assertEquals(listOf(ProjectKind.KOTLIN_CLI, ProjectKind.JAVA_JVM), prepared)
+    }
+
+    @Test
+    fun `shell-only instructions override a stale development title`() {
+        assertNull(ObjectiveDependencyScope.requiredProjectKind(listOf(
+            PlannedDependencyTask("terminal", "Android Kotlin app", "Do not use Kotlin or Android SDK; use POSIX shell only.", "Verify the shell script."),
+        )))
+    }
 }

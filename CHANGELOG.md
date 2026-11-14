@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.7 — Project Breakthrough (published)
+
+versionCode 20 / versionName 0.8.7, com.nyx.ai. Repairs root/descendant IME inset ownership and bounded draft editing; adds generous selected execution patience with request/tool ceilings and conservative cumulative segment accounting; reduces capability-sensitive planning workloads; adds durable isolated terminal-operation admission, per-task evidence/provider forks, dependency launch reservations and workspace conflict locks. Terminal/Mission Control expose per-operation state/details and guarded uncertainty review. Existing v0.8.6 Kotlin development, permissions, resource/recovery safeguards and signing identity are retained. 909 JVM tests in92 classes pass; clean ARM64 build succeeds. Device keyboard/qwen fixes remain unconfirmed. No AAB or Play publication. See [release notes](RELEASE_NOTES_v0.8.7.md) and [report](V087_IMPLEMENTATION_REPORT.md).
+
+## 0.8.6 — Project Ignition (unpublished candidate)
+
+Package com.nyx.ai, versionCode 19 / versionName 0.8.6. Adds compact validated small-model plans, request-specific output bounds, strict single-object extraction and one repair, stream-aware stall/first-text/hard deadlines, optional provider telemetry, manual model diagnostics, standalone Kotlin/Java/shell development and task-local dependency preparation. Empty authorized workspaces can create projects and must pass real discovery/build/behavioral tests; native-function fallback respects model-call budgets. Existing permissions, checkpoints, Room data, model storage, PRoot ownership and Endurance guards are preserved. No llama.cpp changes. Clean build: 833 JVM tests across 82 classes, zero failures/errors/skips. No physical-device or real-model validation; no commit/push/tag/release. See [release notes](RELEASE_NOTES_v0.8.6.md) and [implementation report](V086_IMPLEMENTATION_REPORT.md).
+
 ## 0.8.5 — Project Sovereign (published)
 
 Project Sovereign makes the autonomous execution path more durable and more conservative about what it claims. It adds adaptive reasoning-depth and model/tool/step budgets derived from task kind, complexity, and the selected performance mode; a bounded durable working state that survives context compaction and process restarts; task-scoped tool authority for inference, filesystem, verification, terminal, and development work; a false-success guard for tasks that require tool evidence; bounded structured-action repair; repeated-failure and consecutive-failure stops; and a two-hour checkpointed objective watchdog.

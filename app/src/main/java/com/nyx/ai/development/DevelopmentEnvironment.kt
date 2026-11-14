@@ -26,6 +26,8 @@ data class DevelopmentDiscovery(
     val ready: Boolean = false,
     val reason: String = "",
     val markers: List<String> = emptyList(),
+    /** Only an observed empty, approved workspace with file-operation tools may be initialized. */
+    val canCreateProject: Boolean = false,
 )
 
 data class SourceSnapshot(val path: String, val sha256: String, val content: String)
@@ -73,7 +75,7 @@ data class DevelopmentBudget(
 ) {
     init {
         require(maxIterations in 1..20 && maxInferenceCalls in 1..6)
-        require(maxElapsedMillis in 1..600_000)
+        require(maxElapsedMillis in 1..7_200_000)
         require(maxEditedFiles in 1..100 && maxFilesPerPatch in 1..16)
         require(maxFileBytes in 1..128_000 && maxTotalEditBytes in 1..1_024_000)
         require(maxIndexFiles in 1..256 && maxContextChars in 1_024..128_000)

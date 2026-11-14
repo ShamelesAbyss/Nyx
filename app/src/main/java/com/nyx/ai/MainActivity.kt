@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -97,6 +98,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,6 +112,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -133,6 +136,9 @@ import com.nyx.ai.ui.WorkerConsoleDialog
 import com.nyx.ai.ui.ArsenalScreen
 import com.nyx.ai.ui.GatewaysScreen
 import com.nyx.ai.ui.PerformanceScreen
+import com.nyx.ai.ui.ExpandableDraftField
+import com.nyx.ai.ui.FullScreenDraftEditor
+import com.nyx.ai.ui.ExecutionTimeoutProfileCard
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nyx.ai.data.AgentEntity
 import com.nyx.ai.data.ConversationEntity
@@ -156,6 +162,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Required for edge-to-edge Compose to receive resize/IME insets, including fold changes.
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         setContent { NyxTheme { NyxApp() } }
     }
 }
@@ -174,6 +182,7 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     var tab by rememberSaveable { mutableStateOf(0) }
     var showMore by rememberSaveable { mutableStateOf(false) }
+    val destinationState = rememberSaveableStateHolder()
     val context = androidx.compose.ui.platform.LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.registerGguf(uri, context.displayName(uri))
@@ -190,6 +199,8 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 840.dp
         Scaffold(
+            // One IME owner for all destinations; descendants must not reserve it again.
+            modifier = Modifier.imePadding(),
             containerColor = Obsidian,
             contentWindowInsets = WindowInsets.safeDrawing,
             bottomBar = {
@@ -213,7 +224,7 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                 }
             }
         ) { padding ->
-            Row(Modifier.fillMaxSize().padding(padding).background(Obsidian)) {
+            Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).background(Obsidian)) {
                 if (expanded) NavigationRail(containerColor = Surface1, contentColor = TextMain) {
                     destinations.forEachIndexed { index, label ->
                         NavigationRailItem(
@@ -229,17 +240,19 @@ private fun NyxApp(vm: NyxViewModel = viewModel()) {
                         if (tab !in setOf(0, 1, 3, 7, 8)) vm.clearError()
                     }
                     if (state.error.isNotBlank() && tab in setOf(0, 1, 3, 7, 8)) ErrorBanner(state.error, vm::clearError)
-                    when (tab) {
-                        0 -> ChatScreen(state, vm)
-                        1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
-                        2 -> AgentsScreen(state, vm) { textDocumentPicker.launch(arrayOf("text/*", "application/json")) }
-                        3 -> AutonomyScreen(state, vm)
-                        4 -> ArsenalScreen(state, vm)
-                        5 -> GatewaysScreen(state, vm)
-                        6 -> WorkflowScreen(state, vm)
-                        7 -> PerformanceScreen(state, vm)
-                        8 -> SettingsScreen(state, vm)
-                        else -> SettingsScreen(state, vm)
+                    destinationState.SaveableStateProvider(tab) {
+                        when (tab) {
+                            0 -> ChatScreen(state, vm)
+                            1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
+                            2 -> AgentsScreen(state, vm) { textDocumentPicker.launch(arrayOf("text/*", "application/json")) }
+                            3 -> AutonomyScreen(state, vm)
+                            4 -> ArsenalScreen(state, vm)
+                            5 -> GatewaysScreen(state, vm)
+                            6 -> WorkflowScreen(state, vm)
+                            7 -> PerformanceScreen(state, vm)
+                            8 -> SettingsScreen(state, vm)
+                            else -> SettingsScreen(state, vm)
+                        }
                     }
                 }
             }
@@ -298,6 +311,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        com.nyx.ai.ui.TerminalWorkersCard(state, vm)
         SectionIntro(
             "Execution environment",
             "Choose the Termux host or an installed Debian PRoot guest. Manual commands use Termux RUN_COMMAND and require exact approval; destructive and privileged commands are blocked. A risk classifier is not a shell sandbox."
@@ -421,14 +435,15 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
         Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 SectionLabel("MANUAL COMMAND", "Exact-command approval is retained for any requested change")
-                OutlinedTextField(
+                ExpandableDraftField(
                     value = command,
                     onValueChange = { command = it.take(8_000) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("ls -la ~/project") },
+                    label = "Manual command",
                     minLines = 2,
                     maxLines = 5,
-                    shape = RoundedCornerShape(14.dp)
+                    maxCharacters = 8_000,
+                    supportingText = { Text("Up to 8,000 characters; exact-command approval still applies.") },
                 )
                 Button(
                     onClick = { vm.requestTerminalCommand(command) },
@@ -684,10 +699,11 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel) {
     }
 
     Column(
-        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         MissionControlHeader()
+        com.nyx.ai.ui.TerminalWorkersCard(state, vm)
         SystemReadinessCard(state = state, mission = liveObjective)
         WorkerActivityEntry(
             activities = consoleActivities,
@@ -971,16 +987,17 @@ private fun NewObjectiveCard(
     Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             SectionLabel("NEW OBJECTIVE", "Start with one clear goal and a way to check success")
-            OutlinedTextField(
+            ExpandableDraftField(
                 value = goal,
                 onValueChange = onGoalChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("What should NYX accomplish?") },
+                label = "What should NYX accomplish?",
                 supportingText = { Text("Be specific about the result. Keep terminal tools off unless the task requires workspace execution.") },
                 minLines = 3,
                 maxLines = 6,
-                shape = RoundedCornerShape(14.dp),
+                maxCharacters = 8_000,
             )
+            Text("New run: ${state.executionTimeoutPolicy.profile.name.lowercase()} timeout profile · ${state.executionTimeoutPolicy.overallAllowanceMs / 60_000L} min overall allowance. Change profiles in Settings; resource guards can stop earlier.", color = TextMuted, fontSize = 11.sp)
             Text("NYX plans a bounded task graph, validates it, then schedules tasks by dependencies and device resources.", color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = development, onCheckedChange = onDevelopmentChange, enabled = state.terminalToolsEnabled)
@@ -1329,17 +1346,24 @@ private fun StreamingBubble(content: String) {
 
 @Composable
 private fun Composer(draft: String, onDraft: (String) -> Unit, generating: Boolean, enabled: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
-    Row(Modifier.fillMaxWidth().imePadding().padding(12.dp).clip(RoundedCornerShape(18.dp)).background(Surface1).padding(8.dp), verticalAlignment = Alignment.Bottom) {
+    var field by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(draft)) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(draft) { if (field.text != draft) field = field.copy(text = draft, composition = null) }
+    val update: (TextFieldValue) -> Unit = { next -> field = next; onDraft(next.text) }
+    Row(Modifier.fillMaxWidth().padding(12.dp).clip(RoundedCornerShape(18.dp)).background(Surface1).padding(8.dp), verticalAlignment = Alignment.Bottom) {
         BasicTextField(
-            value = draft, onValueChange = onDraft, modifier = Modifier.weight(1f).heightIn(min = 42.dp, max = 128.dp).padding(horizontal = 10.dp, vertical = 12.dp),
+            value = field, onValueChange = update, modifier = Modifier.weight(1f).heightIn(min = 42.dp, max = 128.dp).padding(horizontal = 10.dp, vertical = 12.dp),
+            maxLines = 5,
             textStyle = androidx.compose.ui.text.TextStyle(color = TextMain, fontSize = 14.sp),
             cursorBrush = androidx.compose.ui.graphics.SolidColor(Violet),
             decorationBox = { inner -> Box { if (draft.isEmpty()) Text("Message your local model…", color = TextMuted, fontSize = 14.sp); inner() } },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { if (enabled && !generating) onSend() })
         )
+        IconButton(onClick = { expanded = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.Edit, "Expand Message editor", tint = VioletSoft) }
         if (generating) IconButton(onClick = onStop, modifier = Modifier.size(44.dp).clip(CircleShape).background(Color(0xFF38212B))) { Icon(Icons.Rounded.Stop, "Stop generation", tint = Red) }
         else IconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.size(44.dp).clip(CircleShape).background(if (enabled && draft.isNotBlank()) Violet else Surface2)) { Icon(Icons.Rounded.PlayArrow, "Send", tint = if (enabled && draft.isNotBlank()) Obsidian else TextMuted) }
     }
+    if (expanded) FullScreenDraftEditor(field = field, onValueChange = update, label = "Message", onDone = { expanded = false })
 }
 
 @Composable
@@ -1348,6 +1372,18 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
     var deleting by remember { mutableStateOf<com.nyx.ai.nativeinference.NativeModel?>(null) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionIntro("Inference providers", "Native GGUF runs offline on this phone’s CPU. Ollama and OpenAI-compatible servers remain optional. No weights are bundled.") }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("MODEL DIAGNOSTIC", color = VioletSoft, fontSize = 11.sp)
+                    Text("One small 32-token JSON response. May load the selected model. No tools, downloads or automatic retries; 30-second cancellation budget.", color = TextMuted, fontSize = 12.sp)
+                    OutlinedButton(onClick = vm::diagnoseSelectedModel, enabled = !busy && !state.diagnosticRunning && state.selectedModel.isNotBlank()) {
+                        Text(if (state.diagnosticRunning) "Checking model…" else "Check selected model")
+                    }
+                    if (state.diagnosticSummary.isNotBlank()) Text(state.diagnosticSummary, color = TextMain, fontSize = 12.sp)
+                }
+            }
+        }
         item { OllamaServerCard(state, vm) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1485,10 +1521,11 @@ private fun ModelCard(model: LocalModel, selected: Boolean, backend: String, onS
 
 @Composable
 private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: () -> Unit) {
-    var showCreate by remember { mutableStateOf(false) }
-    var editingAgent by remember { mutableStateOf<AgentEntity?>(null) }
-    var createName by remember { mutableStateOf("") }
-    var createPrompt by remember { mutableStateOf("") }
+    var showCreate by rememberSaveable { mutableStateOf(false) }
+    var editingAgentId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingAgent = state.agents.firstOrNull { it.id == editingAgentId }
+    var createName by rememberSaveable { mutableStateOf("") }
+    var createPrompt by rememberSaveable { mutableStateOf("") }
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         val dualPane = maxWidth >= 900.dp
         if (dualPane) {
@@ -1497,11 +1534,11 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("AGENTS", Modifier.weight(1f), color = VioletSoft, fontSize = 11.sp, letterSpacing = 1.2.sp, fontWeight = FontWeight.SemiBold)
                         IconButton(onClick = onImportDocument) { Icon(Icons.Rounded.FolderOpen, "Import text document", tint = VioletSoft) }
-                        IconButton(onClick = { editingAgent = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
+                        IconButton(onClick = { editingAgentId = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
                     }
                     Text("Choose an agent, then work in the adjacent task pane.", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp))
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions; showCreate = true }) { vm.selectAgent(agent.id) } }
+                        items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgentId = agent.id; createName = agent.name; createPrompt = agent.instructions; showCreate = true }) { vm.selectAgent(agent.id) } }
                     }
                 }
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Surface2))
@@ -1513,28 +1550,29 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SectionIntro("Local agents", "Agents use your selected local inference model and a bounded, allowlisted tool loop.", Modifier.weight(1f))
                         IconButton(onClick = onImportDocument) { Icon(Icons.Rounded.FolderOpen, "Import text document", tint = VioletSoft) }
-                        IconButton(onClick = { editingAgent = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
+                        IconButton(onClick = { editingAgentId = null; createName = ""; createPrompt = ""; showCreate = true }) { Icon(Icons.Rounded.Add, "Create agent", tint = VioletSoft) }
                     }
                 }
-                items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgent = agent; createName = agent.name; createPrompt = agent.instructions; showCreate = true }) { vm.selectAgent(agent.id) } }
+                items(state.agents, key = { it.id }) { agent -> AgentCard(agent, agent.id == state.selectedAgentId, onEdit = { editingAgentId = agent.id; createName = agent.name; createPrompt = agent.instructions; showCreate = true }) { vm.selectAgent(agent.id) } }
                 item { AgentWorkspaceContent(state, vm, Modifier.fillMaxWidth()) }
             }
         }
     }
     if (showCreate) AlertDialog(
         onDismissRequest = { showCreate = false }, containerColor = Surface1,
-        title = { Text(if (editingAgent == null) "Create an agent" else "Edit agent", color = TextMain) },
+        title = { Text(if (editingAgentId == null) "Create an agent" else "Edit agent", color = TextMain) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(createName, { createName = it }, label = { Text("Name") }, singleLine = true)
-                OutlinedTextField(createPrompt, { createPrompt = it }, label = { Text("System instructions") }, minLines = 3)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(createName, { createName = it.take(64) }, label = { Text("Name") }, singleLine = true)
+                ExpandableDraftField(createPrompt, { createPrompt = it }, label = "System instructions", minLines = 3, maxCharacters = 5_000)
                 Text("Tools are limited to local calculator, private memory, planning, and the app sandbox workspace.", color = TextMuted, fontSize = 11.sp)
             }
         },
         confirmButton = { TextButton(onClick = {
-            editingAgent?.let { vm.updateAgent(it, createName, createPrompt) } ?: vm.createAgent(createName, createPrompt)
-            showCreate = false; editingAgent = null; createName = ""; createPrompt = ""
-        }) { Text(if (editingAgent == null) "Create" else "Save") } },
+            if (editingAgentId == null) vm.createAgent(createName, createPrompt)
+            else editingAgent?.let { vm.updateAgent(it, createName, createPrompt) }
+            showCreate = false; editingAgentId = null; createName = ""; createPrompt = ""
+        }, enabled = createName.isNotBlank() && (editingAgentId == null || editingAgent != null)) { Text(if (editingAgentId == null) "Create" else "Save") } },
         dismissButton = { TextButton(onClick = { showCreate = false }) { Text("Cancel") } }
     )
 }
@@ -1547,7 +1585,8 @@ private fun AgentWorkspace(state: NyxState, vm: NyxViewModel, modifier: Modifier
 @Composable
 private fun AgentWorkspaceContent(state: NyxState, vm: NyxViewModel, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(value = state.agentTask, onValueChange = vm::setAgentTask, modifier = Modifier.fillMaxWidth(), label = { Text("Task") }, placeholder = { Text("Describe a task for this agent…") }, minLines = 3, shape = RoundedCornerShape(14.dp))
+        ExpandableDraftField(value = state.agentTask, onValueChange = vm::setAgentTask, modifier = Modifier.fillMaxWidth(), label = "Task", minLines = 3)
+        Text("New requests use the ${state.executionTimeoutPolicy.profile.name.lowercase()} timeout profile (Settings). This does not waive tool or resource limits.", color = TextMuted, fontSize = 11.sp)
         if (state.importedDocumentName.isNotBlank()) {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF20192D)), shape = RoundedCornerShape(12.dp)) {
                 Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1595,7 +1634,7 @@ private fun WorkflowScreen(state: NyxState, vm: NyxViewModel) {
         val dualPane = maxWidth >= 900.dp
         if (dualPane) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Column(Modifier.width(340.dp).fillMaxHeight()) {
+                Column(Modifier.width(340.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
                     SectionIntro("Workflow sequence", "Choose the agents and execution order.")
                     WorkflowAgentSelector(state, vm)
                 }
@@ -1637,7 +1676,8 @@ private fun WorkflowRunPanel(state: NyxState, vm: NyxViewModel, modifier: Modifi
 @Composable
 private fun WorkflowRunContent(state: NyxState, vm: NyxViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-        OutlinedTextField(value = state.workflowTask, onValueChange = vm::setWorkflowTask, modifier = Modifier.fillMaxWidth(), label = { Text("Workflow goal") }, minLines = 3, shape = RoundedCornerShape(14.dp))
+        ExpandableDraftField(value = state.workflowTask, onValueChange = vm::setWorkflowTask, modifier = Modifier.fillMaxWidth(), label = "Workflow goal", minLines = 3)
+        Text("New requests use the ${state.executionTimeoutPolicy.profile.name.lowercase()} timeout profile (Settings); each request is bounded, not an unlimited pipeline grant.", color = TextMuted, fontSize = 11.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::runWorkflow, enabled = !state.workflowRunning, colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(5.dp)); Text("Run pipeline") }
             if (state.workflowRunning) OutlinedButton(onClick = vm::stopWorkflow) { Icon(Icons.Rounded.Stop, null); Text("Pause / stop") }
@@ -1648,9 +1688,10 @@ private fun WorkflowRunContent(state: NyxState, vm: NyxViewModel) {
 
 @Composable
 private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
-    var endpoint by remember(state.endpoint) { mutableStateOf(if (state.nativeMode) "http://127.0.0.1:11434" else state.endpoint) }
+    var endpoint by rememberSaveable(state.endpoint, state.nativeMode) { mutableStateOf(if (state.nativeMode) "http://127.0.0.1:11434" else state.endpoint) }
+    // Never put a credential draft in instance state or ordinary settings preferences.
     var apiKeyDraft by remember(state.endpoint) { mutableStateOf("") }
-    var externalConsent by remember(state.externalConsent) { mutableStateOf(state.externalConsent) }
+    var externalConsent by rememberSaveable(state.externalConsent) { mutableStateOf(state.externalConsent) }
     val openAiEndpoint = endpoint.trimEnd('/').substringBefore('?').endsWith("/v1", ignoreCase = true)
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionIntro("Privacy & performance", "NYX stores app data locally. Network requests target the endpoint below; no account, analytics, or cloud backend is built in.") }
@@ -1709,6 +1750,7 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                 }
             }
         }
+        item { ExecutionTimeoutProfileCard(state.executionTimeoutPolicy, vm::setExecutionTimeoutProfile) }
         item { AutonomyPolicyCard(state, vm) }
         item { ExecutionPermissions() }
         item { RepairBudgetCard() }

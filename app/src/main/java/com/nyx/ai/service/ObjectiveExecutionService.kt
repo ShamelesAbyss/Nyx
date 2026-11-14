@@ -17,6 +17,10 @@ import com.nyx.ai.R
 import com.nyx.ai.autonomy.DeviceResourceReader
 import com.nyx.ai.autonomy.ExecutionControl
 import com.nyx.ai.autonomy.ExecutionMonitor
+import com.nyx.ai.autonomy.ExecutionAllowancePolicy
+import com.nyx.ai.autonomy.ExecutionAllowanceReservation
+import com.nyx.ai.autonomy.ExecutionTimeoutPolicy
+import com.nyx.ai.autonomy.ExecutionTimeoutPolicyStore
 import com.nyx.ai.autonomy.InferenceSession
 import com.nyx.ai.autonomy.InferenceSessionFactory
 import com.nyx.ai.autonomy.ObjectiveExecutionEngine
@@ -102,7 +106,8 @@ class ObjectiveExecutionService : Service() {
             val endpoint = database.modelEndpointDao().getById(config.getString("endpointId"))
                 ?: error("The objective's snapshotted provider was removed.")
             val handle = factory.providerForRecord(endpoint.copy(modelId = config.getString("modelId"), configurationJson = config.optJSONObject("options")?.toString()))
-            InferenceSession(handle.provider, config.getString("modelId"), handle.options)
+            val timeouts = ExecutionTimeoutPolicyStore.fromSnapshot(config)
+            InferenceSession(handle.provider, config.getString("modelId"), handle.options.copy(executionTimeouts = timeouts), timeouts)
         }
         createChannel()
     }
@@ -245,9 +250,41 @@ class ObjectiveExecutionService : Service() {
                 updateNotification("Running")
             }
         }
+        var reservation: ExecutionAllowanceReservation? = null
+        var allowanceStartedNanos = 0L
+        var segmentWatchdog: Job? = null
+        var allowanceSequence = 0L
         return try {
-            val snapshot = dao.observeEvents(objectiveId).first().lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
+            val events = dao.observeEvents(objectiveId).first()
+            val snapshot = events.lastOrNull { it.kind == "execution_config" }?.detail?.let { JSONObject(it) }
                 ?: error("No approved execution settings for this objective.")
+            val timeouts = ExecutionTimeoutPolicyStore.fromSnapshot(snapshot)
+            // Room orders general events by wall clock/UUID. A dedicated sequence prevents same-ms
+            // ties or clock adjustment from selecting an older reservation and restoring spent time.
+            val checkpoint = events.filter { it.kind == "timeout_allowance" }.map {
+                JSONObject(requireNotNull(it.detail)).also { json -> require(json.getLong("sequence") > 0) }
+            }.maxByOrNull { it.getLong("sequence") }
+            val consumed = checkpoint?.getLong("consumedMillis") ?: 0L
+            allowanceSequence = (checkpoint?.getLong("sequence") ?: 0L).also { require(it < Long.MAX_VALUE - 1) } + 1
+            val segment = ExecutionAllowancePolicy.reserve(timeouts, consumed)
+            if (segment == null) {
+                markNeedsAttention(objectiveId, "The finite ${timeouts.overallAllowanceMs / 60_000}min checkpointed allowance is exhausted. Review the work and create a new explicitly approved objective; no automatic continuation.")
+                recordEvent(objectiveId, "timeout_allowance_exhausted", "Checkpointed overall allowance exhausted; no tool or inference request was started.")
+                return "needs_attention"
+            }
+            // Reserve durably before dispatch. A crash consumes this segment conservatively rather than resetting the allowance.
+            recordEvent(objectiveId, "timeout_allowance", JSONObject().put("consumedMillis", segment.reservedConsumedMs)
+                .put("sequence", allowanceSequence).put("reservedMillis", segment.segmentMs).put("runId", currentRunId).put("state", "reserved").toString())
+            reservation = segment
+            allowanceStartedNanos = System.nanoTime()
+            recordEvent(objectiveId, "timeout_profile", "${timeouts.profile.name.lowercase()} profile; ${segment.segmentMs / 60_000}min finite service segment, ${(timeouts.overallAllowanceMs - consumed) / 60_000}min remaining checkpointed allowance. Explicit resume/review is required after pause; this is not an unlimited background entitlement.")
+            segmentWatchdog = scope.launch {
+                delay(segment.segmentMs)
+                recordEvent(objectiveId, "timeout_segment", "Finite service segment ended; checkpointing and pausing for explicit review. Uncertain side effects will not be replayed automatically.")
+                executionControl.requestPause()
+                runJob?.cancel(PauseRequested())
+                bridge.cancelAll()
+            }
             val tasks = dao.getTasks(objectiveId)
             val environment = runCatching { TerminalEnvironment.valueOf(snapshot.optString("environment", "TERMUX_HOST")) }
                 .getOrDefault(TerminalEnvironment.TERMUX_HOST)
@@ -276,10 +313,13 @@ class ObjectiveExecutionService : Service() {
                 require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspace)) { "Select an absolute normalized authorized workspace." }
                 terminalTools = TerminalAgentTools(
                     bridge, workspace, environment,
+                    timeoutSeconds = (timeouts.terminalMs / 1_000).coerceAtLeast(1),
                     useTimeoutBinary = environmentProfile.timeoutAvailable,
                     workspaceApproved = true,
                     guestAlias = guestAlias,
-                    modelCommandGate = AutonomyModelCommandGate(this, environmentId, workspace, environment),
+                    modelCommandGate = AutonomyModelCommandGate(this, environmentId, workspace, environment,
+                        maximumTimeoutSeconds = (timeouts.terminalMs / 1_000).coerceAtLeast(1)),
+                    executionTimeouts = timeouts,
                 )
             }
             val beforeTasksExecute: suspend (List<com.nyx.ai.data.ObjectiveTaskEntity>) -> Boolean = { plannedTasks ->
@@ -396,8 +436,19 @@ class ObjectiveExecutionService : Service() {
             }
             result.status
         } finally {
+            segmentWatchdog?.cancel()
             heartbeat.cancel()
-            withContext(NonCancellable) { dao.releaseLease(objectiveId, ownerId) }
+            withContext(NonCancellable) {
+                try {
+                    reservation?.let { segment ->
+                        val elapsed = ((System.nanoTime() - allowanceStartedNanos) / 1_000_000).coerceAtLeast(0)
+                        recordEvent(objectiveId, "timeout_allowance", JSONObject().put("consumedMillis", segment.settledConsumedMs(elapsed))
+                            .put("sequence", allowanceSequence + 1).put("elapsedMillis", elapsed).put("runId", currentRunId).put("state", "settled").toString())
+                    }
+                } finally {
+                    dao.releaseLease(objectiveId, ownerId)
+                }
+            }
         }
     }
 
@@ -544,10 +595,9 @@ class ObjectiveExecutionService : Service() {
         const val KEY_TERMINAL_WORKSPACE = "terminal_workspace"
         private const val CHANNEL_ID = "nyx_objective_execution"
         private const val NOTIFICATION_ID = 4101
-        // Long objectives are checkpointed and can legitimately exceed half an hour. The watchdog
-        // remains a hard bound, while the lease heartbeat still pauses on thermal, memory, or
-        // battery pressure and the user can pause or cancel at any time.
-        private const val MAX_RUN_MILLIS = 2 * 60 * 60_000L
+        // Bootstrap safety bound; the approved policy starts a separate <=2h segment watchdog.
+        // A 12h Custom allowance requires checkpointed, explicitly resumed segments, never a 12h service.
+        private const val MAX_RUN_MILLIS = ExecutionTimeoutPolicy.MAX_SERVICE_SEGMENT_MS
         private const val LEASE_MILLIS = 90_000L
 
         fun start(context: Context, objectiveId: String) {

@@ -1,5 +1,25 @@
 # NYX Test Results
 
+## 0.8.7 — Project Breakthrough (published)
+
+Executed 2026-11-14 UTC: ./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest, Android SDK /home/ubuntu/Android/Sdk, Java21 and cached external kotlinc on PATH for the host calculator fixture.
+
+BUILD SUCCESSFUL in 1m 48s. **909 JVM tests across 92 classes;0 failures,0 errors,0 skipped.** Real Linux tests cover three overlapping command processes with independent stdout/stderr and exit0/7/0, cancelled-wait uncertainty, dependency/conflict/resource policies and retained Kotlin calculator creation/compilation/behavioral assertions. New task-isolation tests exercise evidence ownership, writer exclusion and provider forking. Timeout tests cover finite profiles, explicit approvals, genuine text versus keepalive, cancellation and reserve/settle/exhaustion. UI/IME instrumentation compiled but was not executed.
+
+APK identity com.nyx.ai, versionCode 20, versionName 0.8.7, minSdk 26, compile/target37, arm64-v8a only. APK SHA-256:4491df96e646ce24a8e7a92c931c48cc00c1b6e685ef4f43e4f121b0f47d96a7. Android test APK SHA-256:d530d81e165b41f1b7727cab9771269a99dd65016522d150969f83a806237a02. Unchanged signer SHA-256:aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55. apksigner and zipalign -c -P16 -v4 passed.
+
+No Android/Termux/Pixel/qwen end-to-end execution, no measured throughput/energy gain. Host/instrumentation compilation is not hardware validation. Source digest is in the sidecar manifest. No AAB or Play publication.
+
+## 0.8.6 — Project Ignition (unpublished candidate)
+
+Executed 2026-11-14 UTC: ANDROID_HOME=/home/ubuntu/Android/Sdk, JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64, with cached kotlinc on PATH, running ./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest.
+
+BUILD SUCCESSFUL in 1m 40s. **833 JVM tests across 82 classes; 0 failures, 0 errors, 0 skipped.** Includes actual AgentRunner loop tests, compact planning validation/transaction/lifecycle tests, fake-provider/MockWebServer tests, real Linux Kotlin calculator creation/compile/behavioral assertions and Java/shell fixtures. The Kotlin fixture skips without a host compiler; this run executed it. UI wiring compiled, not instrumented.
+
+APK: com.nyx.ai, versionCode 19, versionName 0.8.6, minSdk 26, compile/target 37, ARM64-only. APK SHA-256: e8bbb622d6405fa7157adc9e5c753b2f86196848e413a62f32d3b9c101b3c900. Android test APK SHA-256: a5f9f70294bcdf6fa6adf5c0f8a4f5db6d071fa3202e0632ec188394d7e97270. Debug signer SHA-256: aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55 (unchanged). zipalign -c -P 16 -v 4 passed. Source hash is in the sidecar manifest, not recursively embedded in this archive.
+
+No Pixel/qwen/device end-to-end execution was performed. Instrumentation APK compiled but was not executed. No measured battery, speed or completion-rate gain, no AAB, no publication. The public v0.8.5 baseline remains unchanged.
+
 ## 0.8.5 — Project Sovereign (published build)
 
 Executed on 2026-11-14 UTC from `/home/ubuntu/nyx`:

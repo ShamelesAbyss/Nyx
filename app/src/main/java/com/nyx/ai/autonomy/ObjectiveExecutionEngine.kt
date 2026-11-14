@@ -5,12 +5,14 @@ import androidx.room.withTransaction
 import com.nyx.ai.agent.AgentEvent
 import com.nyx.ai.agent.AgentOutcome
 import com.nyx.ai.terminal.TerminalAgentTools
+import com.nyx.ai.terminal.TerminalExecutionScope
 import com.nyx.ai.development.*
 import com.nyx.ai.skills.*
 import com.nyx.ai.agent.AgentRunner
 import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentTools
 import com.nyx.ai.agent.AgentToolProvider
+import com.nyx.ai.agent.AgentToolTaskContext
 import com.nyx.ai.agent.CompositeToolProvider
 import com.nyx.ai.agent.NetworkAgentTools
 import com.nyx.ai.agent.SovereignRunConfig
@@ -30,20 +32,20 @@ import com.nyx.ai.data.ObjectiveEventEntity
 import com.nyx.ai.data.ObjectiveTaskEntity
 import com.nyx.ai.data.TaskEvidenceEntity
 import com.nyx.ai.network.ApiMessage
+import com.nyx.ai.network.InferenceFabric
 import com.nyx.ai.performance.PerformanceController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
@@ -75,8 +77,11 @@ class ObjectiveExecutionEngine(
 ) {
     private val app = context.applicationContext
     private val dao = database.objectiveDao()
-    private val toolTaskMutex = Mutex()
     private var activeRunId: String? = suppliedRunId
+
+    private companion object {
+        val builtinToolLocks = mutableMapOf<String, Mutex>()
+    }
 
     suspend fun planAndExecute(
         objectiveId: String,
@@ -90,7 +95,9 @@ class ObjectiveExecutionEngine(
         saveObjective(requireNotNull(dao.getObjective(objectiveId)).copy(status = "planning", agentId = agent.id, modelId = session.modelId, updatedAt = now(), error = null))
         event(objectiveId, null, "planning", "Generating a bounded task graph; model output is validated before any tool runs.")
         return try {
-            val parsed = requestValidatedPlan(objective, session, agent.id)
+            control.checkpoint()
+            val parsed = requestValidatedPlan(objective, session, agent.id, control)
+            control.checkpoint()
             val now = now()
             dao.upsertTasks(parsed.mapIndexed { index, task ->
                 ObjectiveTaskEntity(
@@ -125,10 +132,10 @@ class ObjectiveExecutionEngine(
         } catch (failure: PlanningFailureException) {
             planningNeedsAttention(objectiveId, failure.failure)
         } catch (pause: PauseRequested) {
-            markPaused(objectiveId, "Paused during planning; no task was executed.")
+            withContext(NonCancellable) { markPaused(objectiveId, "Paused during planning; no task was executed.") }
             throw pause
         } catch (cancel: CancellationException) {
-            markPaused(objectiveId, "Planning was cancelled.")
+            withContext(NonCancellable) { markPaused(objectiveId, "Planning was cancelled.") }
             throw cancel
         } catch (e: Exception) {
             planningNeedsAttention(objectiveId, PlanningRecovery.classify(e))
@@ -143,68 +150,118 @@ class ObjectiveExecutionEngine(
         objective: ObjectiveEntity,
         session: InferenceSession,
         agentId: String,
+        control: ExecutionControl,
     ): List<PlannedObjectiveTask> {
-        var repair: Pair<String, PlanningFailure>? = null
-        var lastFailure: PlanningFailure? = null
-        for (attempt in 1..PlanningRecovery.MAX_PLAN_ATTEMPTS) {
-            event(objective.id, null, "planning_attempt", "Planning attempt $attempt/${PlanningRecovery.MAX_PLAN_ATTEMPTS}; waiting for a bounded model response.", status = "running")
-            val raw = requestPlanText(objective, session, repair)
-            if (raw.isBlank()) {
-                lastFailure = PlanningFailure(PlanningFailureKind.EMPTY_RESPONSE, "The model returned an empty response.")
-                event(objective.id, null, "planning_validation_failed", lastFailure.reason, status = "failed")
-                break
-            }
-            try {
-                return ObjectivePlanValidator.parse(raw, objective.id, agentId)
-            } catch (validation: ObjectivePlanValidationException) {
-                val failure = PlanningRecovery.classify(validation)
-                lastFailure = failure
+        val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
+        val profile = CompactPlanningPolicy.profile(objective.goal, terminalTools != null, toolNames, session.options.contextLength)
+        event(objective.id, null, "planning_profile", "${if (profile.compact) "Compact sequential" else "Full DAG"} planner; output cap ${profile.maxOutputTokens} tokens. A plan is not permission to execute tools.", status = "running")
+        return PlanningRecovery.validatedPlan(
+            objectiveId = objective.id,
+            agentId = agentId,
+            request = { attempt, repair ->
+                control.checkpoint()
+                event(objective.id, null, "planning_attempt", "Planning attempt $attempt/${PlanningRecovery.MAX_PLAN_ATTEMPTS}; waiting for a bounded model response.", status = "running")
+                requestPlanText(objective, session, repair, profile, control)
+            },
+            onRejected = { attempt, failure ->
                 event(objective.id, null, "planning_validation_failed", "Attempt $attempt rejected: ${failure.reason}", status = "failed")
-                if (attempt >= PlanningRecovery.MAX_PLAN_ATTEMPTS || !PlanningRecovery.shouldRepair(failure.kind)) break
+            },
+            onRepair = { failure ->
                 event(objective.id, null, "planning_repair", "One bounded structured-output repair attempt is being made for ${failure.kind.name.lowercase()}.", status = "waiting")
-                repair = raw to failure
-            }
-        }
-        throw PlanningFailureException(lastFailure ?: PlanningFailure(PlanningFailureKind.PROVIDER_ERROR, "Planning produced no usable response."))
+            },
+            validate = { tasks -> CompactPlanningPolicy.validateWorkers(tasks, profile) },
+        )
     }
 
     private suspend fun requestPlanText(
         objective: ObjectiveEntity,
         session: InferenceSession,
         repair: Pair<String, PlanningFailure>?,
+        profile: PlanningProfile,
+        control: ExecutionControl,
     ): String {
-        return coroutineScope {
-            val progress = launch {
-                while (isActive) {
-                    delay(PlanningRecovery.PROGRESS_INTERVAL_MS)
-                    event(objective.id, null, "planning_progress", "Still waiting for the planning response; no tool has run.", status = "waiting")
-                }
-            }
-            try {
-                return@coroutineScope withTimeout(PlanningRecovery.ATTEMPT_TIMEOUT_MS) {
-                val messages = buildList {
-                    add(ApiMessage("system", plannerPrompt(
-                        terminalEnabled = terminalTools != null,
-                        toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty(),
-                    )))
-                    add(ApiMessage("user", "Objective:\n${objective.goal.take(8_000)}"))
-                    repair?.let { (previous, failure) ->
-                        add(ApiMessage("user", PlanningRecovery.repairPrompt(previous, failure)))
-                    }
-                }
-                session.provider.chat(
-                    session.modelId,
-                    messages,
-                    tools = null,
-                    options = session.options,
-                    ).content
-                }
-            } catch (timeout: TimeoutCancellationException) {
-                throw PlanningTimeoutException("The model did not finish planning within ${PlanningRecovery.ATTEMPT_TIMEOUT_MS / 1_000} seconds.")
-            } finally {
-                progress.cancel()
-            }
+        if (objective.goal.length > 8_000) {
+            throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED,
+                "Objective exceeds the 8000-character planner input limit. Shorten or split it; no truncated objective was planned."))
         }
+        val clock = { System.nanoTime() / 1_000_000 }
+        val limits = session.timeouts.planningLimits()
+        val lifecycle = PlanningLifecyclePolicy(clock(), limits)
+        val toolNames = AgentTools.DEFAULT_TOOLS + terminalTools?.names.orEmpty() + extraTools?.names.orEmpty()
+        val systemPrompt = if (profile.compact) CompactPlanningPolicy.prompt(profile, terminalTools != null, toolNames)
+            else plannerPrompt(terminalTools != null, toolNames)
+        val input = CompactPlanningPolicy.prepareInput(objective.goal, systemPrompt, profile, repair)
+        val messages = buildList {
+            add(ApiMessage("system", input.systemPrompt))
+            // Do not silently truncate an objective and execute a plan for only its prefix.
+            add(ApiMessage("user", input.objectivePrompt))
+            input.repairPrompt?.let { add(ApiMessage("user", it)) }
+        }
+        event(objective.id, null, "planning_input", input.metrics.summary(), status = "waiting")
+        var firstTextReported = false
+        suspend fun report(snapshot: PlanningProgress, kind: String = "planning_progress") {
+            if (!firstTextReported && snapshot.firstTokenAfterMs != null) {
+                firstTextReported = true
+                event(objective.id, null, "planning_first_text", "First planning text observed ${snapshot.firstTokenAfterMs}ms after submission. Queue, model load and prompt processing are not separately measured.", status = "running")
+            }
+            val fabric = InferenceFabric.metrics.value
+            val complete = kind == "planning_response"
+            val detail = if (complete) "Provider returned a planning response; validating the entire plan before any task is accepted. ${snapshot.characters} streamed characters observed; elapsed ${snapshot.elapsedMs / 1_000}s."
+                else snapshot.detail(fabric.queued, fabric.active)
+            ExecutionMonitor.update { current ->
+                if (current.objectiveId == objective.id) current.copy(phase = if (complete) "planning_validation" else "planning_${snapshot.stage.name.lowercase()}", message = detail)
+                else current
+            }
+            event(objective.id, null, kind, detail, status = if (complete) "completed" else if (snapshot.stage == PlanningStage.GENERATING) "running" else "waiting")
+        }
+        event(objective.id, null, "planning_timeouts", "${session.timeouts.profile.name.lowercase()} profile: first text ${limits.firstTokenMs / 1_000}s, text inactivity ${limits.stallMs / 1_000}s, finite request ${limits.hardLimitMs / 1_000}s; service segments and overall allowance are separate.", status = "waiting")
+        val result = withTimeoutOrNull(limits.hardLimitMs) {
+            coroutineScope {
+                report(lifecycle.progress(clock()), "planning_waiting")
+                val pending = async {
+                    InferenceFabric.wrap(session.provider).chat(session.modelId, messages, tools = null,
+                        options = session.options.copy(temperature = 0.1,
+                            maxOutputTokens = profile.maxOutputTokens, responseSchema = profile.schema,
+                            contextLength = profile.maxContextTokens ?: session.options.contextLength,
+                            executionTimeouts = session.timeouts),
+                        onToken = { chunk -> lifecycle.token(clock(), chunk) })
+                }
+                try {
+                    var lastStage = PlanningStage.WAITING_FOR_PROVIDER
+                    var lastReportAt = clock()
+                    while (!pending.isCompleted) {
+                        control.checkpoint()
+                        val snapshot = lifecycle.progress(clock())
+                        snapshot.failure?.let { failure ->
+                            report(snapshot, "planning_limit")
+                            throw PlanningFailureException(failure)
+                        }
+                        if (snapshot.characters > ObjectivePlanValidator.MAX_JSON_BYTES) {
+                            throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED, "Planning stream exceeded the bounded response size; no partial plan was accepted."))
+                        }
+                        if (snapshot.stage != lastStage || clock() - lastReportAt >= PlanningRecovery.PROGRESS_INTERVAL_MS) {
+                            report(snapshot)
+                            lastStage = snapshot.stage
+                            lastReportAt = clock()
+                        }
+                        delay(PlanningRecovery.WATCHDOG_INTERVAL_MS)
+                    }
+                    control.checkpoint()
+                    val completed = pending.await()
+                    val snapshot = lifecycle.progress(clock())
+                    snapshot.failure?.let { throw PlanningFailureException(it) }
+                    report(snapshot, "planning_response")
+                    completed
+                } finally {
+                    pending.cancel()
+                }
+            }
+        } ?: throw PlanningTimeoutException("Planning reached the ${limits.hardLimitMs / 1_000}s hard request limit; no partial plan was accepted.")
+        currentCoroutineContext().ensureActive()
+        control.checkpoint()
+        if (!result.done) throw PlanningFailureException(PlanningFailure(PlanningFailureKind.INTERRUPTED, "Provider marked the planning response incomplete; no partial plan was accepted."))
+        if (result.toolCalls.isNotEmpty()) throw PlanningFailureException(PlanningFailure(PlanningFailureKind.SCHEMA_REJECTED, "Planning returned tool calls despite a tool-free request; no task was accepted."))
+        return result.content
     }
 
     private suspend fun planningNeedsAttention(objectiveId: String, failure: PlanningFailure): ObjectiveEntity {
@@ -282,7 +339,8 @@ class ObjectiveExecutionEngine(
                         priority = task.priority,
                         workerKind = parseWorker(task.workerKind),
                         dependsOn = decodeDependencies(task.dependsOnJson).toSet(),
-                        status = task.status,
+                        // Launch reservations count even before runTask's first Room write.
+                        status = if (task.id in active) "running" else task.status,
                     )
                 }
                 val decision = ConcurrentTaskScheduler.decide(snapshots, policy)
@@ -302,8 +360,9 @@ class ObjectiveExecutionEngine(
                     val task = tasks.firstOrNull { it.id == scheduled.id } ?: continue
                     active[scheduled.id] = launch {
                         try {
-                            if (terminalTools != null) toolTaskMutex.withLock { runTask(objectiveId, task, agent, session, control) }
-                            else runTask(objectiveId, task, agent, session, control)
+                            withContext(TerminalExecutionScope(objectiveId, task.id)) {
+                                runTask(objectiveId, task, agent, session, control)
+                            }
                         } catch (pause: PauseRequested) {
                             // Recorded by runTask; the loop below performs the pause transition.
                         } catch (cancel: CancellationException) {
@@ -353,6 +412,11 @@ class ObjectiveExecutionEngine(
         control: ExecutionControl,
     ) = coroutineScope {
         control.checkpoint()
+        val toolContext = AgentToolTaskContext(objectiveId, task.id, session.timeouts)
+        val terminalTools = this@ObjectiveExecutionEngine.terminalTools?.forTask(toolContext)
+        val extraTools = this@ObjectiveExecutionEngine.extraTools?.forTask(toolContext)
+        // Verification must use the same task-local terminal instance, never drain its parent.
+        val fileProbe = (terminalTools as? FileProbe) ?: this@ObjectiveExecutionEngine.fileProbe
         val attempt = task.attemptCount + 1
         val startedAt = now()
         val objectiveGoal = dao.getObjective(objectiveId)?.goal.orEmpty()
@@ -420,11 +484,21 @@ class ObjectiveExecutionEngine(
         val configured = config.optJSONArray("tools")?.let { raw ->
             (0 until raw.length()).map { raw.optString(it) }.toSet()
         } ?: AgentTools.DEFAULT_TOOLS
-        val objectiveTools: AgentToolProvider? = when {
-            terminalTools != null && extraTools != null -> CompositeToolProvider(listOf(terminalTools, extraTools))
-            terminalTools != null -> terminalTools
-            else -> extraTools
+        val builtins = AgentTools(app, agent.id)
+        val storageId = agent.id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(64).ifBlank { "agent" }
+        val builtinLock = synchronized(builtinToolLocks) {
+            builtinToolLocks.getOrPut("${app.filesDir.absolutePath}/$storageId") { Mutex() }
         }
+        val builtinProvider = object : AgentToolProvider {
+            override val names = AgentTools.DEFAULT_TOOLS
+            override fun schemas(): JSONArray = builtins.schemas()
+            override suspend fun execute(call: com.nyx.ai.network.ToolCall): String =
+                builtinLock.withLock { builtins.execute(call) }
+        }
+        // Preserve agent-private memory/workspace semantics, but prevent sibling read/write races.
+        val objectiveTools: AgentToolProvider = CompositeToolProvider(
+            listOfNotNull(builtinProvider, terminalTools, extraTools),
+        )
         val approvedSkills = if (terminalTools != null) {
             val project = (terminalTools as? TerminalAgentTools)?.inspectProject()
             val preconditions = setOf(SkillPrecondition.WORKSPACE_SELECTED, SkillPrecondition.TERMINAL_AVAILABLE) +
@@ -479,6 +553,8 @@ class ObjectiveExecutionEngine(
         }
         var developmentPassed: Boolean? = null
         var developmentFinalCommands: List<DevelopmentCommand>? = null
+        // Skill/toolchain preflight is not execution evidence for a worker's completion claim.
+        objectiveTools?.drainEvidence()
         val outcome = try {
             if (task.workerKind == "development") {
                 val concrete = terminalTools as? TerminalAgentTools ?: error("Development requires an explicitly approved Termux workspace and available toolchain.")
@@ -486,11 +562,12 @@ class ObjectiveExecutionEngine(
                 val budget = DevelopmentBudget(
                     maxIterations = preferences.getInt("repair_iterations", 3).coerceIn(1, 5),
                     maxInferenceCalls = preferences.getInt("repair_calls", 4).coerceIn(1, 6),
-                    maxElapsedMillis = preferences.getLong("repair_millis", 300_000).coerceIn(30_000, 600_000),
+                    maxElapsedMillis = minOf(session.timeouts.buildMs, preferences.getLong("repair_millis", session.timeouts.buildMs).coerceIn(30_000, ExecutionTimeoutPolicy.MAX_SERVICE_SEGMENT_MS)),
                     maxEditedFiles = preferences.getInt("repair_files", 8).coerceIn(1, 12),
                     maxContextChars = minOf(24_000, session.options.contextLength * 2).coerceAtLeast(1024),
                 )
-                val report = DevelopmentOrchestrator(TerminalDevelopmentEnvironment(concrete)).run(task.instructions, session.provider, session.modelId, session.options, budget) {
+                event(objectiveId, task.id, "development_budget", "Repair loop has a ${budget.maxElapsedMillis / 1_000}s effective elapsed ceiling (selected build policy ${session.timeouts.buildMs / 1_000}s; any shorter saved repair budget still applies). Terminal and build operations retain their separate finite policy ceilings.")
+                val report = DevelopmentOrchestrator(TerminalDevelopmentEnvironment(concrete)).run(task.instructions, InferenceFabric.wrap(session.provider), session.modelId, session.options.copy(executionTimeouts = session.timeouts), budget) {
                     eventChannel.trySend(AgentEvent("development_" + it.phase, "Iteration ${it.iteration}: ${it.message}"))
                 }
                 developmentPassed = report.passed
@@ -505,11 +582,11 @@ class ObjectiveExecutionEngine(
                     report.commands.joinToString("\n") { "${it.kind}: ${it.command} -> exit ${it.exitCode}" } +
                     "\nChanged files: ${report.files.joinToString()}\nCheckpoints: ${report.checkpoints.joinToString { it.id }}\nDiff:\n${report.diff}"
                 AgentOutcome(text, emptyList(), report.inferenceCalls, report.evidence)
-            } else AgentRunner(app, session.provider, objectiveTools).run(
+            } else AgentRunner(app, InferenceFabric.wrap(session.provider), objectiveTools).run(
                 spec = spec,
                 task = task.instructions,
                 sharedContext = sharedContext,
-                options = session.options,
+                options = session.options.copy(executionTimeouts = session.timeouts),
                 onEvent = { eventChannel.trySend(it) },
                 sovereign = SovereignRunConfig(
                     depth = depth,
@@ -525,6 +602,9 @@ class ObjectiveExecutionEngine(
         }
         control.checkpoint()
 
+        check(outcome.evidence.all { it.objectiveId == objectiveId && it.taskId == task.id }) {
+            "Task evidence ownership mismatch; no cross-task completion can be established."
+        }
         working = SovereignWorkingState.fromJson(outcome.workingStateJson) ?: working
         if (outcome.falseSuccessRisk) {
             working = working.withError("Completion claim rejected: no successful tool observation supported it.")

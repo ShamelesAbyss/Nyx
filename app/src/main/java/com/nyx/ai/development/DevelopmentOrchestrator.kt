@@ -93,17 +93,23 @@ class DevelopmentOrchestrator(
             val finished = withTimeoutOrNull(budget.maxElapsedMillis) {
                 event("discover", 0, "Read-only workspace and toolchain discovery")
                 discovery = environment.discover(); collect()
-                val discovered = requireNotNull(discovery)
-                if (!discovered.ready || discovered.missingTools.isNotEmpty() || !ProjectRunKind.entries.all { it in discovered.commands }) {
+                var discovered = requireNotNull(discovery)
+                val creatingProject = discovered.canCreateProject && classification.kind == GoalKind.CREATE_FEATURE
+                if (!creatingProject && (!discovered.ready || discovered.missingTools.isNotEmpty() || !ProjectRunKind.entries.all { it in discovered.commands })) {
                     reason = "environment_unavailable: ${discovered.reason}; missing=${discovered.missingTools.joinToString()}"
                     return@withTimeoutOrNull true
                 }
                 event("index", 0, "Reading bounded source snapshots with hashes")
                 var index = environment.index(budget.maxIndexFiles, budget.maxFileBytes); collect()
+                if (creatingProject && (index.isNotEmpty() || discovered.missingTools.isNotEmpty())) {
+                    reason = "environment_unavailable: empty workspace creation precondition changed"
+                    return@withTimeoutOrNull true
+                }
                 sourceStates += state(index)
-                val baseline = verify(0)
+                // There is no build system or baseline in an empty workspace. Do not fabricate one.
+                val baseline = if (creatingProject) emptyList() else verify(0)
                 baselinePassed = verified(baseline)
-                iterations += DevelopmentIteration(0, baseline, reason = if (baselinePassed) "baseline_passed" else "baseline_failed")
+                iterations += DevelopmentIteration(0, baseline, reason = when { creatingProject -> "project_creation_no_baseline"; baselinePassed -> "baseline_passed"; else -> "baseline_failed" })
                 if (baselinePassed && criteria.goalKind in setOf(GoalKind.DIAGNOSE, GoalKind.VERIFY_ARTIFACT)) {
                     // These goals are satisfied by a deterministic, successful inspection.
                     outcome = AcceptanceEvaluator.evaluate(criteria, AcceptanceEvidence(
@@ -124,7 +130,7 @@ class DevelopmentOrchestrator(
                 if (baseline.any { !it.infrastructureOk }) {
                     reason = "command_infrastructure_failure"; return@withTimeoutOrNull true
                 }
-                if (index.isEmpty()) { reason = "no_readable_sources"; return@withTimeoutOrNull true }
+                if (index.isEmpty() && !creatingProject) { reason = "no_readable_sources"; return@withTimeoutOrNull true }
                 var failures = baseline
                 for (iteration in 1..budget.maxIterations) {
                     coroutineContext.ensureActive()
@@ -169,6 +175,16 @@ class DevelopmentOrchestrator(
                     editBytes += patch.files.sumOf { it.content.toByteArray(Charsets.UTF_8).size }
                     changedSourceCount += patch.files.count { isSourcePath(it.path) }
                     testEvidence = testEvidence || patch.files.any { isTestPath(it.path) }
+                    if (creatingProject && iteration == 1) {
+                        discovered = environment.discover(); discovery = discovered; collect()
+                        if (!discovered.ready || discovered.missingTools.isNotEmpty() || !ProjectRunKind.entries.all { it in discovered.commands }) {
+                            reason = "environment_unavailable_after_creation: ${discovered.reason}; missing=${discovered.missingTools.joinToString()}"
+                            review = true
+                            diff = environment.diff(checkpoints, budget.maxDiffChars); collect()
+                            iterations += DevelopmentIteration(iteration, emptyList(), patch.files.map { it.path }, applied.checkpoint.id, reason)
+                            break
+                        }
+                    }
                     event("verify", iteration, "Running actual build and tests after edits")
                     val tested = verify(iteration)
                     diff = environment.diff(checkpoints, budget.maxDiffChars); collect()
@@ -229,6 +245,9 @@ class DevelopmentOrchestrator(
             "Acceptance: source change required=${criteria.requiresSourceChange}; new or changed test evidence required=${criteria.requiresNewTestEvidence}; " +
             "commands=${criteria.requiredCommands.joinToString()}\n" +
             "Project: ${discovery.projectType}\n" +
+            (if (discovery.canCreateProject) "Empty approved workspace: create a complete project and behavioral tests, not a repair. No existing build system or source hashes exist. " +
+                "Use root-level files because new parent directories are not implicitly created. For Kotlin CLI use Main.kt plus a default-package TestMain.kt with main() behavioral assertions; " +
+                "for Java use Main.java plus default-package TestMain.java; for POSIX shell use main.sh plus test.sh. Do not add Gradle or Android SDK dependencies to standalone CLI goals.\n" else "") +
             "Limits: ${budget.maxFilesPerPatch} files, ${budget.maxFileBytes} UTF-8 bytes per file. Existing files require the exact observed SHA-256; new files use MISSING.\n" +
             commands.joinToString("\n") { "COMMAND ${it.kind} ${it.command} EXIT ${it.exitCode}\nSTDOUT:\n${it.stdout.take(5_000)}\nSTDERR:\n${it.stderr.take(3_000)}" }
         val result = StringBuilder(header.take(budget.maxContextChars))
@@ -241,7 +260,7 @@ class DevelopmentOrchestrator(
 
     private companion object {
         val ERROR_PATH = Regex("""(?:^|\s|/)((?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\.(?:kt|kts|java|py|js|ts|tsx|c|cpp|h|hpp|rs|go|rb|cs|swift))[:(]""")
-        val SOURCE_EXTENSIONS = setOf("kt", "kts", "java", "c", "h", "cpp", "hpp", "py", "js", "ts", "tsx", "jsx", "rs", "go", "rb", "cs", "swift", "m", "mm")
+        val SOURCE_EXTENSIONS = setOf("kt", "kts", "java", "sh", "c", "h", "cpp", "hpp", "py", "js", "ts", "tsx", "jsx", "rs", "go", "rb", "cs", "swift", "m", "mm")
 
         fun isTestPath(path: String): Boolean {
             val lower = path.lowercase()

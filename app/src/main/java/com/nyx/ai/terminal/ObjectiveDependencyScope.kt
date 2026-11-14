@@ -8,34 +8,35 @@ data class PlannedDependencyTask(
     val verification: String,
 )
 
-/**
- * Selects a toolchain from the tasks that will actually invoke the authorized environment.
- * Objective prose alone is not sufficient: planning, filesystem, and verification-only tasks do
- * not trigger development package checks. Task text is used so explicit negations are respected by
- * [DependencyPlanner.inferProjectKind].
- */
+/** Selects dependencies only from tasks that actually invoke the authorized environment. */
 object ObjectiveDependencyScope {
     private val ENVIRONMENT_WORKERS = setOf("development", "terminal")
 
-    fun requiredProjectKind(tasks: List<PlannedDependencyTask>): ProjectKind? {
-        val executableTasks = tasks.filter { it.workerKind.trim().lowercase() in ENVIRONMENT_WORKERS }
-        if (executableTasks.isEmpty()) return null
-        val taskContext = executableTasks.joinToString("\n") {
-            listOf(it.title, it.instructions, it.verification).joinToString("\n")
+    /** Never join unrelated tasks: a device mention in one task cannot change another's target. */
+    fun requiredProjectKinds(tasks: List<PlannedDependencyTask>): List<ProjectKind> = tasks
+        .filter { it.workerKind.trim().lowercase() in ENVIRONMENT_WORKERS }
+        .map { task ->
+            val instructions = DependencyPlanner.inferProjectKind(task.instructions)
+            val explicitShell = Regex("(?i)\\b(?:posix\\s+shell|shell\\s+(?:script|only)|bash\\s+script)\\b").containsMatchIn(task.instructions)
+            val target = DependencyPlanner.inferProjectKind(listOf(task.title, task.instructions).joinToString("\n"))
+            when {
+                explicitShell && instructions == ProjectKind.GENERIC -> ProjectKind.GENERIC
+                target != ProjectKind.GENERIC -> target
+                else -> DependencyPlanner.inferProjectKind(task.verification)
+            }
         }
-        return DependencyPlanner.inferProjectKind(taskContext)
-            .takeUnless { it == ProjectKind.GENERIC }
-    }
+        .filter { it != ProjectKind.GENERIC }
+        .distinct()
 
-    /**
-     * Runs dependency preparation only when the persisted tasks actually require a toolchain.
-     * The execution engine calls this gate after first planning and again before resuming tasks.
-     */
+    /** Compatibility accessor for callers displaying a single task's primary toolchain. */
+    fun requiredProjectKind(tasks: List<PlannedDependencyTask>): ProjectKind? = requiredProjectKinds(tasks).firstOrNull()
+
+    /** Preparation retains the existing approval/install gate and stops at the first blocked plan. */
     suspend fun beforeExecution(
         tasks: List<PlannedDependencyTask>,
         prepare: suspend (ProjectKind) -> Boolean,
     ): Boolean {
-        val kind = requiredProjectKind(tasks) ?: return true
-        return prepare(kind)
+        for (kind in requiredProjectKinds(tasks)) if (!prepare(kind)) return false
+        return true
     }
 }

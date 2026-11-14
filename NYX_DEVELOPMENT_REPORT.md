@@ -1,5 +1,13 @@
 # NYX Eclipse AI — Development Reports
 
+## v0.8.7 — Project Breakthrough (published)
+
+Focused keyboard/draft repair, smaller planning workload, mobile execution patience, isolated concurrent operation evidence and task/workspace conflict protection are integrated. 909 JVM tests across 92 classes and clean ARM64 APK/instrumentation compilation passed. Hardware keyboard/local-model reliability remains unconfirmed. See [implementation report](V087_IMPLEMENTATION_REPORT.md). Local v0.8.6 preserved; published on GitHub.
+
+## v0.8.6 — Project Ignition (unpublished)
+
+Compact small-model planning, strict response extraction, stream-aware lifecycle, provider-specific token/schema options, manual diagnostic, task-specific Kotlin/JVM dependencies and standalone development are implemented. 833 JVM tests across 82 classes pass; clean ARM64 build and unchanged signer are verified. Real Linux fixture compilation is distinct from real-model/Android verification. See [implementation report](V086_IMPLEMENTATION_REPORT.md). No push/tag/release; v0.8.5 remains public.
+
 ## v0.8.5 — Project Sovereign (published)
 
 NYX 0.8.5 is versionCode 18/versionName 0.8.5 for `com.nyx.ai`, published as [GitHub release v0.8.5](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5). It strengthens the existing objective execution path rather than adding a parallel engine: adaptive deliberation budgets, durable working state, task-scoped tools, a false-success guard, bounded action repair, repeated-failure stops, and a two-hour checkpointed watchdog. The planner now sees the tools actually enabled for the run.

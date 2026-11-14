@@ -8,6 +8,12 @@ enum class ProjectKind {
     /** A Kotlin/JVM project built with Gradle on the JVM. */
     KOTLIN_JVM,
 
+    /** Standalone Kotlin/JVM sources compiled with kotlinc, without Gradle or an Android SDK. */
+    KOTLIN_CLI,
+
+    /** Standalone Java sources compiled and run with the JDK. */
+    JAVA_JVM,
+
     /** An Android application that needs the Android SDK and device tooling. */
     ANDROID_APP,
 
@@ -274,27 +280,37 @@ object DependencyPlanner {
     /**
      * Infers the project kind from goal text.
      *
-     * Matching is case-insensitive and ordered: Android wins over Kotlin because an Android app
-     * also mentions Kotlin or Gradle, and a Kotlin/JVM goal wins over C/C++ because it may mention
-     * CMake or C++. Text with no known keyword is [ProjectKind.GENERIC].
+     * Android must describe the development target, not the device running NYX. Standalone JVM
+     * goals select a compiler rather than assuming a Gradle project already exists. Matching is
+     * bounded, case-insensitive and does not inspect installed tools.
      */
     fun inferProjectKind(goal: String): ProjectKind {
         if (goal.isBlank()) return ProjectKind.GENERIC
-        val android = hasPositiveMention(goal, "android")
-        val app = hasPositiveMention(goal, "app(?:lication)?|apk")
-        if (android && app) {
+        val text = goal.take(8_000)
+        val kotlin = hasPositiveMention(text, "kotlin|kotlinc")
+        val java = hasPositiveMention(text, "java|javac")
+        val gradle = hasPositiveMention(text, "gradle")
+        val cli = hasPositiveMention(text, "command[- ]line|console|cli|standalone|kotlinc|javac")
+        val jvm = kotlin || java || hasPositiveMention(text, "jvm")
+        val androidTarget = "android\\s+(?:native\\s+)?(?:app(?:lication)?|apk|library)|apk|aar|com\\.android\\.(?:application|library)"
+        val bridge = if (cli || jvm) "\\s+(?:(?!(?:kotlin|java|jvm|cli|command|console|using|inside|on|with|via|through|from|nyx)\\b)\\w+\\W+){0,4}" else "\\b(?:\\W+\\w+){0,6}\\W+"
+        val androidDevelopment = "(?:build|develop|compile|create|implement|repair|fix|assemble|package|release)$bridge(?:$androidTarget|android\\s+(?:sdk|studio))"
+        val androidArtifact = hasPositiveMention(text, "(?:to|into|as)\\s+(?:an?\\s+)?(?:apk|aar)")
+        if (hasPositiveMention(text, androidDevelopment) || androidArtifact || (!cli && !jvm && hasPositiveMention(text, androidTarget))) {
             return ProjectKind.ANDROID_APP
         }
-        if (listOf("kotlin", "gradle", "jvm").any { hasPositiveMention(goal, it) }) {
+        if (kotlin && cli && !gradle) return ProjectKind.KOTLIN_CLI
+        if (java && !kotlin && !gradle) return ProjectKind.JAVA_JVM
+        if (kotlin || gradle || hasPositiveMention(text, "jvm")) {
             return ProjectKind.KOTLIN_JVM
         }
-        if (listOf("c\\+\\+", "cmake", "c project", "qt").any { hasPositiveMention(goal, it) }) {
+        if (listOf("c\\+\\+", "cmake", "c project", "qt").any { hasPositiveMention(text, it) }) {
             return ProjectKind.C_CPP
         }
-        if (listOf("node(?:\\.js)?", "npm", "typescript", "react").any { hasPositiveMention(goal, it) }) {
+        if (listOf("node(?:\\.js)?", "npm", "typescript", "react").any { hasPositiveMention(text, it) }) {
             return ProjectKind.NODE
         }
-        if (listOf("python", "django", "flask").any { hasPositiveMention(goal, it) }) {
+        if (listOf("python", "django", "flask").any { hasPositiveMention(text, it) }) {
             return ProjectKind.PYTHON
         }
         return ProjectKind.GENERIC
@@ -309,10 +325,12 @@ object DependencyPlanner {
         return keyword.findAll(text).any { match ->
             val clauseStart = (text.lastIndexOfAny(charArrayOf('.', '!', '?', ';', '\n', '\r'), match.range.first) + 1)
                 .coerceAtMost(match.range.first)
-            val prefix = text.substring(clauseStart, match.range.first)
+            val prefix = text.substring(clauseStart, match.range.first).split(Regex("(?i)\\b(?:but|instead|rather)\\b")).last()
             val negated = negation.containsMatchIn(prefix) &&
                 !Regex("(?i)\\bnot\\s+only\\b").containsMatchIn(prefix)
-            !negated
+            val suffix = text.substring(match.range.last + 1).take(100)
+            val rejected = Regex("(?i)^\\s*(?:(?:sdk|toolchain|development)\\s+)?(?:is|are)\\s+(?:not\\s+(?:needed|required|requested)|unnecessary)").containsMatchIn(suffix)
+            !negated && !rejected
         }
     }
 
@@ -335,6 +353,20 @@ object DependencyPlanner {
             ToolRequirement("java", "Runs the JVM build tools."),
             ToolRequirement("javac", "Compiles JVM sources for the build."),
             ToolRequirement("gradle", "Drives the Gradle build."),
+            ToolRequirement("git", "Fetches and versions project sources.", required = false),
+        )
+
+        ProjectKind.KOTLIN_CLI -> listOf(
+            ToolRequirement("sh", "Runs compiler and test steps."),
+            ToolRequirement("java", "Runs Kotlin/JVM programs and the Kotlin compiler."),
+            ToolRequirement("kotlinc", "Compiles standalone Kotlin/JVM sources without Gradle."),
+            ToolRequirement("git", "Fetches and versions project sources.", required = false),
+        )
+
+        ProjectKind.JAVA_JVM -> listOf(
+            ToolRequirement("sh", "Runs compiler and test steps."),
+            ToolRequirement("java", "Runs Java programs and tests."),
+            ToolRequirement("javac", "Compiles standalone Java sources."),
             ToolRequirement("git", "Fetches and versions project sources.", required = false),
         )
 

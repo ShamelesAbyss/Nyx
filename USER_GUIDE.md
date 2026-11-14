@@ -1,4 +1,20 @@
-# NYX User Guide — v0.8.5 “Project Sovereign”
+# NYX User Guide — v0.8.7 Project Breakthrough
+
+## v0.8.7 — Project Breakthrough (published)
+
+Use the expandable editor for long objective/chat/terminal drafts. Done/Back return text without submitting. Nonsecret drafts use saved state through configuration changes; secret fields do not. Keyboard/foldable hardware testing is pending.
+
+Settings execution patience is distinct from energy mode. Standard30min and Patient60min retain finite first-text/inactivity/request limits. Extended120min and Custom cumulative minutes require explicit confirmation; they do not promise uninterrupted service execution. New objectives retain snapshots; ordinary chat and the short model diagnostic retain their prior limits. Keep exact command/package/workspace approvals.
+
+Mission Control and Terminal show operation contexts, isolated bounded details, requested capacity and uncertain reservations. Capacity3 is supported when resources and conflicts allow, not mandatory; Balanced may admit2. Never release an uncertain reservation until independently confirming the operation stopped. Release does not kill/replay it or prove success. See [device procedure and limits](V087_IMPLEMENTATION_REPORT.md). Official download: [v0.8.7](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.7).
+
+## v0.8.6 — Project Ignition (unpublished candidate)
+
+The candidate uses short validated plans for straightforward objectives; it reports actual streamed planning progress or a bounded stall rather than repeatedly saying it is waiting. Queue admission/model-loading/prompt timing remain unknown when the provider does not expose them.
+
+Open **Models → Check selected model** to run one explicit small diagnostic. It can load the selected model; no tools or model downloads are requested. The 30-second cancellation budget includes inventory and queue/loading. Reported token rates use provider counters only; unknown values are not estimated. Stop other work first.
+
+For standalone Kotlin creation, request root-level source and TestMain.kt behavioral tests in the approved workspace, not an Android application. Kotlin CLI requires Java/kotlinc, not Android SDK. Explicit package approvals and guest/workspace verification remain required. Consult [V086_IMPLEMENTATION_REPORT.md](V086_IMPLEMENTATION_REPORT.md) for the Pixel validation procedure and limitations. v0.8.5 remains the latest public release.
 
 > v0.8.5 “Project Sovereign” is the latest published release. It adds adaptive deliberation budgets, durable working state, task-scoped tools, a false-success guard, bounded self-repair, and a two-hour checkpointed objective window. The JVM suite and clean Android build are verified; the Sovereign runtime behavior has not yet been validated on a physical device or against a real provider/model.
 

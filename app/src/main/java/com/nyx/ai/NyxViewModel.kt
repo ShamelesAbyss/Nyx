@@ -11,6 +11,9 @@ import com.nyx.ai.agent.AgentSpec
 import com.nyx.ai.agent.AgentTools
 import com.nyx.ai.autonomy.ExecutionMonitor
 import com.nyx.ai.autonomy.ExecutionRecovery
+import com.nyx.ai.autonomy.ExecutionTimeoutPolicy
+import com.nyx.ai.autonomy.ExecutionTimeoutPolicyStore
+import com.nyx.ai.autonomy.ExecutionTimeoutProfile
 import com.nyx.ai.autonomy.WorkerActivityBus
 import com.nyx.ai.autonomy.WorkerActivityKind
 import com.nyx.ai.autonomy.Preflight
@@ -112,6 +115,8 @@ data class NyxState(
     val connected: Boolean = false,
     val models: List<LocalModel> = emptyList(),
     val selectedModel: String = "",
+    val diagnosticRunning: Boolean = false,
+    val diagnosticSummary: String = "",
     val conversations: List<ConversationEntity> = emptyList(),
     val activeConversationId: String? = null,
     val messages: List<MessageEntity> = emptyList(),
@@ -142,6 +147,8 @@ data class NyxState(
     val objectiveStreaming: String = "",
     val objectivePhase: String = "idle",
     val terminalHistory: List<TerminalCommandEntity> = emptyList(),
+    val terminalOperations: List<com.nyx.ai.terminal.TerminalOperationEvidence> = emptyList(),
+    val requestedTerminalContexts: Int = 3,
     val terminalProfile: EnvironmentProfile? = null,
     val terminalDiscovering: Boolean = false,
     val terminalRunning: Boolean = false,
@@ -180,6 +187,7 @@ data class NyxState(
     val contextLength: Int = 4096,
     val cpuThreads: Int = 4,
     val performance: PerformanceSnapshot = PerformanceSnapshot(),
+    val executionTimeoutPolicy: ExecutionTimeoutPolicy = ExecutionTimeoutPolicy.forProfile(),
     val error: String = ""
 ) { val nativeMode: Boolean get() = endpoint == "native://local" }
 
@@ -190,6 +198,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     private val nativeRepository = NativeModelRepository(application)
     private val providerFactory = InferenceClientFactory(db, credentialVault, application)
     private val prefs = application.getSharedPreferences("nyx_settings", 0)
+    private val timeoutPolicyStore = ExecutionTimeoutPolicyStore(application)
+    private val restoredTimeoutPolicy = runCatching { timeoutPolicyStore.selected() }
     private val environmentProfiles = EnvironmentProfileStore(application)
     private val arsenalRepository = ArsenalRepository(application)
     private val gatewayRepository = GatewayRepository(
@@ -213,6 +223,8 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             terminalEnvironment = runCatching { TerminalEnvironment.valueOf(prefs.getString("terminal_environment", "TERMUX_HOST") ?: "TERMUX_HOST") }.getOrDefault(TerminalEnvironment.TERMUX_HOST),
             terminalWorkspace = prefs.getString(ObjectiveExecutionService.KEY_TERMINAL_WORKSPACE, "") ?: "",
             guestAlias = prefs.getString("terminal_guest_alias", "debian") ?: "debian",
+            executionTimeoutPolicy = restoredTimeoutPolicy.getOrDefault(ExecutionTimeoutPolicy.forProfile()),
+            error = if (restoredTimeoutPolicy.isFailure) "Saved execution timeout profile is invalid; Standard limits are active. Select a valid profile in Settings." else "",
         )
     )
     val state: StateFlow<NyxState> = _state.asStateFlow()
@@ -435,7 +447,31 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         return providerFactory.providerFor(endpointRecordId(endpoint)).provider
     }
 
+    fun diagnoseSelectedModel() {
+        val s = _state.value
+        if (s.diagnosticRunning || s.isGenerating || s.agentRunning || s.workflowRunning ||
+            s.objectiveRunning || ExecutionMonitor.state.value.running || s.performance.calibrationRunning ||
+            s.nativeStatus.phase == NativePhase.LOADING || s.selectedModel.isBlank()) {
+            _state.update { it.copy(error = "Select a model and stop active work before running the diagnostic.") }
+            return
+        }
+        _state.update { it.copy(diagnosticRunning = true, diagnosticSummary = "Checking selected model; queue/load timing is unknown.") }
+        viewModelScope.launch {
+            try {
+                val result = com.nyx.ai.network.ModelDiagnostic.run(inferenceProvider(s.endpoint), s.selectedModel, options())
+                _state.update { it.copy(diagnosticSummary = result.summary) }
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                _state.update { it.copy(diagnosticSummary = "Diagnostic could not start. Check provider, model and connection permissions.") }
+            } finally {
+                _state.update { it.copy(diagnosticRunning = false) }
+            }
+        }
+    }
+
     fun selectModel(model: String) {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) { _state.update { it.copy(error = "Stop active work before changing the model.") }; return }
         prefs.edit().putString("selected_model", model).apply()
         _state.update { it.copy(selectedModel = model) }
@@ -468,7 +504,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     /** Re-load the resident model with the current tuning. Only valid at an idle, non-objective boundary. */
     fun applyPerformanceToNative() {
         val current = _state.value
-        if (current.isGenerating || current.agentRunning || current.workflowRunning || current.objectiveRunning ||
+        if (current.diagnosticRunning || current.isGenerating || current.agentRunning || current.workflowRunning || current.objectiveRunning ||
             ExecutionMonitor.state.value.running) {
             _state.update { it.copy(error = "Stop active inference or objectives before applying a new native configuration.") }
             return
@@ -493,6 +529,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runCalibration() {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val current = _state.value
         if (current.performance.calibrationRunning) return
         if (current.isGenerating || current.agentRunning || current.workflowRunning ||
@@ -561,6 +598,18 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         return InferenceOptions(current.temperature.toDouble(), current.contextLength, threads)
     }
 
+    /** Selection applies to new runs; already snapshotted objectives and live runs are unchanged. */
+    fun setExecutionTimeoutProfile(profile: ExecutionTimeoutProfile, customMinutes: Int? = null, explicitLongRunApproval: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val selected = timeoutPolicyStore.select(profile, customMinutes, explicitLongRunApproval)
+                _state.update { it.copy(executionTimeoutPolicy = selected, error = "") }
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message?.take(220) ?: "Could not save the execution timeout profile.") }
+            }
+        }
+    }
+
     private suspend fun releaseIdleNativeModelIfNeeded() {
         val current = _state.value
         val minutes = current.performance.tuning.idleUnloadMinutes
@@ -596,6 +645,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             .put("options", JSONObject().put("temperature", s.temperature).put("contextLength", s.contextLength).put("cpuThreads", s.cpuThreads))
             .put("terminalEnabled", s.terminalToolsEnabled).put("workspace", s.terminalWorkspace)
             .put("environment", s.terminalEnvironment.name).put("guestAlias", s.guestAlias)
+            .put(ExecutionTimeoutPolicyStore.SNAPSHOT_KEY, timeoutPolicyStore.snapshot(s.executionTimeoutPolicy))
         db.objectiveDao().appendEvent(ObjectiveEventEntity(UUID.randomUUID().toString(), id, null, "execution_config", snapshot.toString(), System.currentTimeMillis()))
     }
 
@@ -603,12 +653,14 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) { _state.update { it.copy(nativeModels = nativeRepository.models()) } }
     }
     fun useNativeProvider() {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) return
         prefs.edit().putString("endpoint", "native://local").putString("selected_model", "").apply()
         _state.update { it.copy(endpoint = "native://local", selectedModel = "", credentialConfigured = false) }
         refreshNativeModels(); refreshModels()
     }
     fun loadNativeModel(model: NativeModel) {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         if (_state.value.isGenerating || _state.value.agentRunning || _state.value.workflowRunning || ExecutionMonitor.state.value.running) return
         viewModelScope.launch {
             try {
@@ -664,6 +716,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendMessage(text: String) {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val prompt = text.trim()
         if (prompt.isBlank() || _state.value.isGenerating) return
         if (!reserveInference()) {
@@ -844,6 +897,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Creates and executes a durable objective independently of a chat turn. */
     fun createObjective(goal: String, development: Boolean = false) {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val clean = goal.trim().take(8_000)
         if (clean.isBlank()) return
         if (development && !_state.value.terminalToolsEnabled) { _state.update { it.copy(error = "Enable an approved development workspace first.") }; return }
@@ -922,6 +976,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Re-running failed or interrupted tools is always an explicit user action. */
     fun resumeObjective(id: String, userApprovedRetry: Boolean) {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val s = _state.value
         workspaceProblem(s)?.let { problem -> _state.update { it.copy(error = problem) }; return }
         val objective = s.objectives.firstOrNull { it.id == id } ?: return
@@ -998,13 +1053,33 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            terminalRepository.observeHistory(60).collect { rows -> _state.update { it.copy(terminalHistory = rows) } }
+            terminalRepository.observeHistory(60).collect { rows -> _state.update { it.copy(terminalHistory = rows) }; refreshTerminalOperations() }
+        }
+    }
+
+    fun refreshTerminalOperations() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { terminalBridge.operationHistory() }.onSuccess { rows ->
+                val requested = app.getSharedPreferences("terminal_execution", android.content.Context.MODE_PRIVATE).getInt("max_contexts", 3)
+                _state.update { it.copy(terminalOperations = rows.sortedByDescending { row -> row.startedAt }.take(60), requestedTerminalContexts = requested) }
+            }.onFailure { _state.update { it.copy(terminalMessage = "Operation history needs review; terminal admission remains conservative.") } }
+        }
+    }
+    fun setTerminalContexts(count: Int) {
+        terminalBridge.configureCommandContexts(count)
+        refreshTerminalOperations()
+    }
+    fun confirmTerminalOperationStopped(id: String) {
+        viewModelScope.launch {
+            terminalBridge.acknowledgeReviewedOperation(id, confirmedNoLongerRunning = true)
+            refreshTerminalOperations()
         }
     }
 
     // ---- Terminal -------------------------------------------------------------------------
 
     fun refreshTerminalEnvironment() {
+        refreshTerminalOperations()
         if (_state.value.terminalDiscovering) return
         viewModelScope.launch {
             _state.update { it.copy(terminalDiscovering = true, terminalMessage = "Probing Termux…") }
@@ -2090,6 +2165,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runAgent() {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val s = _state.value
         if (s.isGenerating || s.agentRunning || s.workflowRunning) { _state.update { it.copy(error = "Another inference task is already running. Stop it before starting an agent.") }; return }
         val agent = s.agents.firstOrNull { it.id == s.selectedAgentId } ?: run { _state.update { it.copy(error = "Select an agent first.") }; return }
@@ -2106,7 +2182,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
             logDao.upsert(row)
             try {
                 val spec = toSpec(agent, s.selectedModel)
-                val outcome = AgentRunner(app, inferenceProvider(s.endpoint)).run(spec, s.agentTask, options = options(), onEvent = ::appendAgentEvent) { token ->
+                val outcome = AgentRunner(app, inferenceProvider(s.endpoint)).run(spec, s.agentTask, options = options().copy(executionTimeouts = s.executionTimeoutPolicy), onEvent = ::appendAgentEvent) { token ->
                     _state.update { it.copy(agentOutput = it.agentOutput + token) }
                 }
                 _state.update { it.copy(agentOutput = outcome.result) }
@@ -2126,6 +2202,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     fun stopAgent() { agentJob?.cancel(); agentJob = null }
 
     fun runWorkflow() {
+        if (_state.value.diagnosticRunning) { _state.update { it.copy(error = "Wait for the model diagnostic to finish.") }; return }
         val s = _state.value
         if (s.isGenerating || s.agentRunning || s.workflowRunning) { _state.update { it.copy(error = "Another inference task is already running. Stop it before starting a workflow.") }; return }
         val chosen = s.agents.filter { it.id in s.workflowAgentIds }
@@ -2146,7 +2223,7 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
                 val runner = AgentRunner(app, inferenceProvider(s.endpoint))
                 chosen.forEachIndexed { index, agent ->
                     _state.update { it.copy(workflowOutput = "${it.workflowOutput}\n\n## ${agent.name}\n") }
-                    val outcome = runner.run(toSpec(agent, s.selectedModel), s.workflowTask, context, options(), ::appendAgentEvent) { token ->
+                    val outcome = runner.run(toSpec(agent, s.selectedModel), s.workflowTask, context, options().copy(executionTimeouts = s.executionTimeoutPolicy), ::appendAgentEvent) { token ->
                         _state.update { it.copy(workflowOutput = it.workflowOutput + token) }
                     }
                     outputs += "${agent.name}:\n${outcome.result}"

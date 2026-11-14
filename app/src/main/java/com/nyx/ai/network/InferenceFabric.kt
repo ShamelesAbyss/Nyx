@@ -38,27 +38,30 @@ object InferenceFabric {
             _metrics.update { it.copy(queued = pending.get()) }
             var admitted = false
             try {
-                return gate.withPermit {
-                    admitted = true
-                    pending.decrementAndGet()
-                    _metrics.update { it.copy(queued = pending.get(), active = 1, calls = it.calls + 1, provider = delegate.displayName, lastFailure = null) }
-                    val started = System.nanoTime()
-                    try {
-                        val result = withTimeout(10 * 60_000L) {
-                            delegate.chat(model, messages, tools, options) { chunk ->
-                                _metrics.update { it.copy(streamedChunks = it.streamedChunks + 1, generatedCharacters = it.generatedCharacters + chunk.length) }
-                                onToken(chunk)
+                // Selected deadlines include queue waiting; no global metric is used to infer admission.
+                return withExecutionTimeouts(options, onToken) { observedText ->
+                    gate.withPermit {
+                        admitted = true
+                        pending.decrementAndGet()
+                        _metrics.update { it.copy(queued = pending.get(), active = 1, calls = it.calls + 1, provider = delegate.displayName, lastFailure = null) }
+                        val started = System.nanoTime()
+                        try {
+                            suspend fun dispatch(): ChatResult = delegate.chat(model, messages, tools, options) { chunk ->
+                                if (chunk.isNotEmpty()) _metrics.update { it.copy(streamedChunks = it.streamedChunks + 1, generatedCharacters = it.generatedCharacters + chunk.length) }
+                                observedText(chunk)
                             }
+                            val result = if (options.executionTimeouts == null) withTimeout(10 * 60_000L) { dispatch() }
+                                else dispatch()
+                            currentCoroutineContext().ensureActive()
+                            _metrics.update { it.copy(completed = it.completed + 1) }
+                            result
+                        } catch (cancel: CancellationException) {
+                            _metrics.update { it.copy(cancelled = it.cancelled + 1) }; throw cancel
+                        } catch (e: Exception) {
+                            _metrics.update { it.copy(failed = it.failed + 1, lastFailure = e.javaClass.simpleName) }; throw e
+                        } finally {
+                            _metrics.update { it.copy(active = 0, lastLatencyMillis = (System.nanoTime() - started) / 1_000_000) }
                         }
-                        currentCoroutineContext().ensureActive()
-                        _metrics.update { it.copy(completed = it.completed + 1) }
-                        result
-                    } catch (cancel: CancellationException) {
-                        _metrics.update { it.copy(cancelled = it.cancelled + 1) }; throw cancel
-                    } catch (e: Exception) {
-                        _metrics.update { it.copy(failed = it.failed + 1, lastFailure = e.javaClass.simpleName) }; throw e
-                    } finally {
-                        _metrics.update { it.copy(active = 0, lastLatencyMillis = (System.nanoTime() - started) / 1_000_000) }
                     }
                 }
             } finally {

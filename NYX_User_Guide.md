@@ -1,5 +1,5 @@
-# NYX User Guide — v0.8.5 Project Sovereign
+# NYX User Guide — v0.8.7 Project Breakthrough
 
-This legacy filename is retained to avoid removing existing repository documentation. The canonical, current instructions are in [USER_GUIDE.md](USER_GUIDE.md).
+This legacy filename is preserved for existing links. Current documentation is in [USER_GUIDE.md](USER_GUIDE.md); see the [official release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.7), [release notes](RELEASE_NOTES_v0.8.7.md), [implementation report](V087_IMPLEMENTATION_REPORT.md) and [test results](TEST_RESULTS.md).
 
-The v0.8.5 guide covers adaptive deliberation, durable working state, task-scoped tools, evidence-backed completion, bounded self-repair, the two-hour objective window, Project Endurance operating modes, local model options, existing autonomy safeguards, Termux Host and Debian PRoot setup, workspaces, command approvals, recovery, and known limits. The Sovereign runtime behavior remains unverified on physical hardware and against a real provider/model. See the [official release](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.8.5).
+v0.8.7 includes the previously unpublished Project Ignition, patient execution, keyboard/draft repairs, task-isolated evidence and independent terminal operations. Package com.nyx.ai, versionCode 20 / versionName 0.8.7; ARM64 debug-signed, min API 26, target 37. Clean build passed 909 JVM tests across 92 classes. Instrumentation compiled but was not executed; keyboard/slow-qwen/Android concurrency require hardware validation.

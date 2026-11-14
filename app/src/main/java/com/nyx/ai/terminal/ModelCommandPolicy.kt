@@ -31,6 +31,7 @@ data class ModelCommandRequest(
     val workingDirectory: String? = null,
     val timeoutSeconds: Long? = null,
     val environment: TerminalEnvironment = TerminalEnvironment.TERMUX_HOST,
+    val maximumTimeoutSeconds: Long = ModelCommandPolicy.MAX_TIMEOUT_SECONDS,
 )
 
 /**
@@ -69,6 +70,7 @@ object ModelCommandPolicy {
     )
 
     fun assess(request: ModelCommandRequest): ModelCommandDecision {
+        if (request.maximumTimeoutSeconds !in 1L..7_200L) return denied("Invalid caller-owned command timeout ceiling.")
         val command = request.command.trim()
         if (command.isEmpty()) return denied("The command is empty.")
         if (command.length > CommandPolicy.MAX_COMMAND_CHARS) {
@@ -129,7 +131,7 @@ object ModelCommandPolicy {
             )
         }
 
-        val timeout = (request.timeoutSeconds ?: DEFAULT_TIMEOUT_SECONDS).coerceIn(1L, MAX_TIMEOUT_SECONDS)
+        val timeout = (request.timeoutSeconds ?: DEFAULT_TIMEOUT_SECONDS).coerceIn(1L, request.maximumTimeoutSeconds)
         return ModelCommandDecision(
             allowed = true,
             reason = if (assessment.risk == CommandRisk.READ_ONLY) {
@@ -177,6 +179,7 @@ class AutonomyModelCommandGate(
     private val environmentId: String,
     private val workspaceRoot: String,
     private val environment: TerminalEnvironment,
+    private val maximumTimeoutSeconds: Long = ModelCommandPolicy.MAX_TIMEOUT_SECONDS,
 ) : ModelCommandGate {
     override suspend fun authorize(
         command: String,
@@ -190,6 +193,7 @@ class AutonomyModelCommandGate(
                 workingDirectory = workingDirectory,
                 timeoutSeconds = timeoutSeconds,
                 environment = environment,
+                maximumTimeoutSeconds = maximumTimeoutSeconds,
             ),
         )
         if (!assessment.allowed) return assessment

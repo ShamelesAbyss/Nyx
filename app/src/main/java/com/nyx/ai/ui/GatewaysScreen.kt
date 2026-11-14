@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -30,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,10 +60,11 @@ private val GRed = Color(0xFFFF8E9B)
 
 @Composable
 fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
-    var editing by remember { mutableStateOf<GatewayServerConfig?>(null) }
-    var showCreate by remember { mutableStateOf(false) }
-    var invokeTools by remember { mutableStateOf<Pair<GatewayServerConfig, List<GatewayTool>>?>(null) }
-    var outputOpen by remember { mutableStateOf(false) }
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editing = state.gatewayServers.firstOrNull { it.id == editingId }
+    var showCreate by rememberSaveable { mutableStateOf(false) }
+    var invokeServerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var outputOpen by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -69,7 +73,7 @@ fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
             }
             OutlinedButton(onClick = { vm.refreshGateways() }) { Text("Refresh") }
             Spacer(Modifier.width(6.dp))
-            Button(onClick = { editing = null; showCreate = true }) { Text("Add") }
+            Button(onClick = { editingId = null; showCreate = true }) { Text("Add") }
         }
         if (state.gatewayMessage.isNotBlank()) Text(state.gatewayMessage, color = if (state.gatewayMessage.contains("fail", true) || state.gatewayMessage.contains("denied", true)) GRed else GMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
         Text("Tokens are stored only in Android Keystore-backed storage; only the opaque reference is saved here. GitHub writes are distinct tools and still pass the autonomy policy.", color = GMuted, fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
@@ -81,8 +85,8 @@ fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
                     toolCount = state.gatewayTools[server.id]?.size,
                     onToggle = { vm.setGatewayEnabled(server.id, it) },
                     onCheck = { vm.checkGateway(server.id) },
-                    onTools = { invokeTools = server to (state.gatewayTools[server.id] ?: emptyList()) },
-                    onEdit = { editing = server; showCreate = true },
+                    onTools = { invokeServerId = server.id },
+                    onEdit = { editingId = server.id; showCreate = true },
                     onDelete = { vm.deleteGateway(server.id) },
                 )
             }
@@ -98,12 +102,13 @@ fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
             }
         }
     }
-    if (showCreate) GatewayEditor(initial = editing, onDismiss = { showCreate = false; editing = null }, onSave = { id, name, kind, endpoint, token, allow, enabled ->
+    // Wait for a restored ID to resolve instead of silently opening a new-server editor.
+    if (showCreate && (editingId == null || editing != null)) GatewayEditor(initial = editing, onDismiss = { showCreate = false; editingId = null }, onSave = { id, name, kind, endpoint, token, allow, enabled ->
         vm.saveGateway(id, name, kind, endpoint, token, allow, enabled)
-        showCreate = false; editing = null
+        showCreate = false; editingId = null
     })
-    invokeTools?.let { (server, tools) ->
-        ToolPicker(server, tools, onDismiss = { invokeTools = null }, onCall = { tool, args -> vm.callGateway(server.id, tool, args); invokeTools = null })
+    state.gatewayServers.firstOrNull { it.id == invokeServerId }?.let { server ->
+        ToolPicker(server, state.gatewayTools[server.id].orEmpty(), onDismiss = { invokeServerId = null }, onCall = { tool, args -> vm.callGateway(server.id, tool, args); invokeServerId = null })
     }
 }
 
@@ -138,18 +143,19 @@ private fun GatewayCard(server: GatewayServerConfig, health: GatewayHealth?, too
 
 @Composable
 private fun GatewayEditor(initial: GatewayServerConfig?, onDismiss: () -> Unit, onSave: (String?, String, GatewayKind, String, String, String, Boolean) -> Unit) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var kind by remember { mutableStateOf(initial?.kind ?: GatewayKind.MCP_HTTP) }
-    var endpoint by remember { mutableStateOf(initial?.endpoint ?: "") }
+    var name by rememberSaveable(initial?.id) { mutableStateOf(initial?.name ?: "") }
+    var kind by rememberSaveable(initial?.id) { mutableStateOf(initial?.kind ?: GatewayKind.MCP_HTTP) }
+    var endpoint by rememberSaveable(initial?.id) { mutableStateOf(initial?.endpoint ?: "") }
+    // Credential drafts are deliberately memory-only, never part of saved instance state.
     var token by remember { mutableStateOf("") }
-    var allow by remember { mutableStateOf(initial?.allowedTools?.joinToString(", ") ?: "") }
-    var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
+    var allow by rememberSaveable(initial?.id) { mutableStateOf(initial?.allowedTools?.joinToString(", ") ?: "") }
+    var enabled by rememberSaveable(initial?.id) { mutableStateOf(initial?.enabled ?: true) }
     var kindMenu by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss, containerColor = GSurface,
         title = { Text(if (initial == null) "Add gateway" else "Edit gateway", color = GText) },
         text = {
-            Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -176,14 +182,14 @@ private fun GatewayEditor(initial: GatewayServerConfig?, onDismiss: () -> Unit, 
 
 @Composable
 private fun ToolPicker(server: GatewayServerConfig, tools: List<GatewayTool>, onDismiss: () -> Unit, onCall: (String, String) -> Unit) {
-    var selected by remember { mutableStateOf(tools.firstOrNull()?.name ?: "") }
+    var selected by rememberSaveable(server.id) { mutableStateOf(tools.firstOrNull()?.name ?: "") }
     var menu by remember { mutableStateOf(false) }
-    var args by remember { mutableStateOf("{}") }
+    var args by rememberSaveable(server.id) { mutableStateOf("{}") }
     AlertDialog(
         onDismissRequest = onDismiss, containerColor = GSurface,
         title = { Text(server.name, color = GText) },
         text = {
-            Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 if (tools.isEmpty()) Text("Check the gateway first. No allowed tools were returned.", color = GMuted, fontSize = 12.sp)
                 else {
                     OutlinedButton(onClick = { menu = true }, modifier = Modifier.fillMaxWidth()) { Text(selected.ifBlank { "Choose a tool" }, maxLines = 1) }
@@ -191,7 +197,7 @@ private fun ToolPicker(server: GatewayServerConfig, tools: List<GatewayTool>, on
                         tools.forEach { tool -> DropdownMenuItem(text = { Text("${tool.name} · ${tool.description.take(50)}") }, onClick = { selected = tool.name; menu = false }) }
                     }
                     Spacer(Modifier.height(7.dp))
-                    OutlinedTextField(args, { args = it }, label = { Text("Arguments (JSON object)") }, textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), minLines = 4, modifier = Modifier.fillMaxWidth())
+                    ExpandableDraftField(args, { args = it }, label = "Arguments (JSON object)", textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), minLines = 4, modifier = Modifier.fillMaxWidth())
                     val schemaName = tools.firstOrNull { it.name == selected }?.inputSchemaJson.orEmpty()
                     if (schemaName.isNotBlank()) Text(schemaName.take(500), color = GMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 4.dp))
                 }

@@ -18,6 +18,17 @@ data class ResourceProfile(
 )
 
 object ResourcePolicy {
+    /** Finite lightweight commands only; never widens inference or development capacity. */
+    fun terminalCapacity(resources: DeviceResources, requestedContexts: Int = 3, parallelismCap: Int = 8): Int {
+        if (resources.availableStorageMb < 64L) return 0 // evidence must remain durable
+        val resourceCap = when (profile(resources).tier) {
+            "constrained" -> 1
+            "standard" -> 2
+            else -> ((resources.availMemMb - 768L) / 256L).coerceIn(1L, 8L).toInt()
+        }
+        return minOf(requestedContexts.coerceIn(1, 8), parallelismCap.coerceIn(1, 8), resourceCap)
+    }
+
     fun profile(
         resources: DeviceResources,
         requestedParallelism: Int = 0,

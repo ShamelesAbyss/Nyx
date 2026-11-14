@@ -21,7 +21,8 @@ data class TerminalCommandRequest(
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS = 120_000L
         const val DEFAULT_DISTRO_ALIAS = "debian"
-        const val MAX_TIMEOUT_MILLIS = 10 * 60 * 1000L
+        // Central timeout profiles may authorize longer tools, never a >2h continuous segment.
+        const val MAX_TIMEOUT_MILLIS = 120 * 60 * 1000L
         const val MAX_COMMAND_PATH_CHARS = 4_096
         const val MAX_ARGUMENT_COUNT = 256
         const val MAX_ARGUMENT_CHARS = 8_192

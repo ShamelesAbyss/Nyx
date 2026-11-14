@@ -74,9 +74,10 @@ class TermuxIpcAdapter(
     /** Dispatches a command only after explicit per-command approval. Results arrive once on callback. */
     fun execute(
         request: TerminalCommandRequest,
+        operationId: String = UUID.randomUUID().toString(),
         callback: (TerminalCommandResult) -> Unit,
     ): TerminalCommandHandle? {
-        val requestId = UUID.randomUUID().toString()
+        val requestId = operationId
         if (!request.authorized) {
             callback(TerminalCommandResult(requestId, TerminalResultKind.DENIED, message = "Explicit per-command authorization is required"))
             return null

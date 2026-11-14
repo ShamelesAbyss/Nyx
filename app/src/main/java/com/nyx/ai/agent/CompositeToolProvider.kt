@@ -35,4 +35,7 @@ class CompositeToolProvider(private val providers: List<AgentToolProvider>) : Ag
     }
 
     override fun drainEvidence(): List<ToolExecutionEvidence> = providers.flatMap { it.drainEvidence() }
+
+    override fun forTask(context: AgentToolTaskContext): AgentToolProvider =
+        CompositeToolProvider(providers.map { it.forTask(context) })
 }

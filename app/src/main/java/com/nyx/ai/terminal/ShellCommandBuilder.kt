@@ -38,7 +38,7 @@ object ShellCommandBuilder {
             "cd -- ${quote(workingDirectory)} && $command"
         }
         if (!useTimeoutBinary || timeoutSeconds == null || timeoutSeconds <= 0) return body
-        val seconds = timeoutSeconds.coerceIn(1, 600)
+        val seconds = timeoutSeconds.coerceIn(1, TerminalCommandRequest.MAX_TIMEOUT_MILLIS / 1000L)
         return "timeout -k 5 $seconds bash -lc ${quote(body)}"
     }
 
@@ -54,7 +54,7 @@ object ShellCommandBuilder {
         arguments = listOf("-lc", wrap(command, workingDirectory, timeoutSeconds, useTimeoutBinary)),
         workingDirectory = null,
         authorized = authorized,
-        timeoutMillis = ((timeoutSeconds ?: 120L) * 1000L).coerceIn(1_000L, TerminalCommandRequest.MAX_TIMEOUT_MILLIS),
+        timeoutMillis = (timeoutSeconds ?: 120L).coerceIn(1, TerminalCommandRequest.MAX_TIMEOUT_MILLIS / 1000L) * 1000L,
     )
 
     fun prootRequest(
@@ -71,6 +71,6 @@ object ShellCommandBuilder {
         workingDirectory = null,
         distroAlias = distroAlias,
         authorized = authorized,
-        timeoutMillis = ((timeoutSeconds ?: 120L) * 1000L).coerceIn(1_000L, TerminalCommandRequest.MAX_TIMEOUT_MILLIS),
+        timeoutMillis = (timeoutSeconds ?: 120L).coerceIn(1, TerminalCommandRequest.MAX_TIMEOUT_MILLIS / 1000L) * 1000L,
     )
 }

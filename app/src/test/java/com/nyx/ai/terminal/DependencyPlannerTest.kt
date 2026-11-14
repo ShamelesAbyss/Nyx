@@ -302,4 +302,57 @@ class DependencyPlannerTest {
         assertTrue(plan.blockers.any { it.contains("No installable JDK") })
         assertFalse(plan.canProceed)
     }
+
+    @Test
+    fun `kotlin calculator command line target never requires Android sdk or Gradle`() {
+        for (goal in listOf(
+            "Create a calculator Kotlin command-line app on Android using NYX.",
+            "Build Kotlin CLI using the NYX Android app.",
+            "Create a Kotlin console calculator; Android is the runtime device, not the target.",
+            "Create a standalone Kotlin app; do not use Gradle or the Android SDK.",
+            "Build a Kotlin command-line calculator, not an Android application.",
+        )) {
+            val kind = DependencyPlanner.inferProjectKind(goal)
+            assertEquals(goal, ProjectKind.KOTLIN_CLI, kind)
+            val plan = DependencyPlanner.plan(kind, debian, guestTools("sh", "java", "kotlinc"))
+            assertTrue(goal, plan.canProceed)
+            assertTrue(plan.missing.isEmpty())
+            assertTrue(plan.candidates.isEmpty())
+            assertTrue(plan.requirements.none { it.tool in setOf("gradle", "sdkmanager", "adb") })
+        }
+    }
+
+    @Test
+    fun `kotlin compiler uses trusted package and rejects inherited guest compiler`() {
+        val plan = DependencyPlanner.plan(ProjectKind.KOTLIN_CLI, debian,
+            guestTools("sh", "java") + ("kotlinc" to guestTool(ExecutableOrigin.GUEST_INHERITED_TERMUX)))
+        assertEquals(listOf("kotlinc"), plan.missing.map { it.tool })
+        assertEquals("apt-get install -y --no-install-recommends kotlin", plan.candidates.single().command)
+        assertTrue(plan.candidates.single().trusted)
+        assertTrue(plan.canProceed)
+    }
+
+    @Test
+    fun `java command line development needs only the jdk`() {
+        val kind = DependencyPlanner.inferProjectKind("Create a Java command-line calculator on Android.")
+        assertEquals(ProjectKind.JAVA_JVM, kind)
+        val plan = DependencyPlanner.plan(kind, host, mapOf("sh" to hostTool()))
+        assertEquals(listOf("java", "javac"), plan.missing.map { it.tool })
+        assertEquals(listOf("openjdk-17"), plan.candidates.map { it.packageName })
+        assertTrue(plan.canProceed)
+    }
+
+    @Test
+    fun `target inference handles contrast and Android development without paired runtime words`() {
+        assertEquals(ProjectKind.KOTLIN_CLI, DependencyPlanner.inferProjectKind("Do not build an Android app, but create a Kotlin CLI calculator."))
+        assertEquals(ProjectKind.GENERIC, DependencyPlanner.inferProjectKind("Use shell only; Android application is not required."))
+        assertEquals(ProjectKind.ANDROID_APP, DependencyPlanner.inferProjectKind("Build an Android app and provide a CLI test harness in Kotlin."))
+        assertEquals(ProjectKind.ANDROID_APP, DependencyPlanner.inferProjectKind("Compile an APK with Kotlin."))
+        assertEquals(ProjectKind.KOTLIN_JVM, DependencyPlanner.inferProjectKind("Create a Kotlin CLI calculator using Gradle."))
+        assertEquals(ProjectKind.GENERIC, DependencyPlanner.inferProjectKind("Run a shell app. The host device uses Android."))
+        assertEquals(ProjectKind.KOTLIN_JVM, DependencyPlanner.inferProjectKind("Build a Kotlin JVM calculator in the NYX Android app."))
+        assertEquals(ProjectKind.KOTLIN_JVM, DependencyPlanner.inferProjectKind("Create a Kotlin library using NYX Android app as the runtime host."))
+        assertEquals(ProjectKind.ANDROID_APP, DependencyPlanner.inferProjectKind("Build a calculator Android app using Kotlin."))
+        assertEquals(ProjectKind.ANDROID_APP, DependencyPlanner.inferProjectKind("Compile Kotlin sources into an APK."))
+    }
 }

@@ -135,7 +135,10 @@ class TerminalRepository(
         } else if (assessment.requiresConfirmation && !approvedByUser) {
             TerminalCommandResult(null, TerminalResultKind.CONFIRMATION_REQUIRED, message = assessment.reasons.joinToString("; "))
         } else {
-            bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser, guestAlias)
+            bridge.runShell(command, environment, workingDirectory, timeoutSeconds, useTimeoutBinary, approvedByUser, guestAlias,
+                TerminalOperationContext(id, objectiveId, taskId,
+                    namespace = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias",
+                    workspace = workingDirectory, readOnly = assessment.risk == CommandRisk.READ_ONLY))
         } } catch (cancel: CancellationException) {
             withContext(NonCancellable) {
                 database.terminalCommandDao().upsert(row.copy(status = "needs_review", finishedAt = System.currentTimeMillis(), error = "Result wait cancelled. Termux process may still run until its timeout; do not replay automatically."))
@@ -143,7 +146,7 @@ class TerminalRepository(
             throw cancel
         }
 
-        database.terminalCommandDao().upsert(
+        withContext(NonCancellable) { database.terminalCommandDao().upsert(
             row.copy(
                 status = TerminalResultPolicy.persistedStatus(result.kind),
                 exitCode = result.exitCode,
@@ -152,8 +155,8 @@ class TerminalRepository(
                 finishedAt = System.currentTimeMillis(),
                 error = result.message?.take(600),
             )
-        )
-        return result
+        ) }
+        return result.copy(requestId = id)
     }
 
     suspend fun clearHistory() {

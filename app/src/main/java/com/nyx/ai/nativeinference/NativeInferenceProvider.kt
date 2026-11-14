@@ -39,7 +39,9 @@ class NativeInferenceProvider(
             throw ToolCallingUnsupportedException("Native GGUF does not provide native function calls. Use the parent orchestrator's validated text-action protocol.")
         val selected = withContext(Dispatchers.IO) { repository.find(model) }
             ?: throw java.io.IOException("Native model must be an imported private repository file")
-        return ChatResult(content = NativeRuntime.generate(selected.path, messages, options, generationOptions, onToken), done = true)
+        val boundedGeneration = generationOptions.copy(maxOutputTokens = options.nativeOutputTokenLimit(generationOptions.maxOutputTokens))
+        // Preserve request context/thread settings and the configured generation seed. No schema grammar API exists here.
+        return ChatResult(content = NativeRuntime.generate(selected.path, messages, options, boundedGeneration, onToken), done = true)
     }
     /** Runtime ownership is process-wide. Closing an adapter must not asynchronously unload another owner's session. */
     override fun close() { /* Explicit NativeRuntime.cancel()/unload() are owned by the application. */ }

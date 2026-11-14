@@ -1,4 +1,14 @@
-# Building NYX 0.8.5 — Project Sovereign
+# Building NYX 0.8.7 — Project Breakthrough
+
+## v0.8.7 Project Breakthrough published release
+
+VersionCode 20/versionName 0.8.7, package com.nyx.ai. Clean testDebugUnitTest assembleDebug assembleDebugAndroidTest passed in 1m 48s:909 tests across 92 classes,zero failures/errors/skips. Host Kotlin fixture needs kotlinc on PATH; this run used a temporary wrapper over cached compiler jars outside the candidate. Instrumentation compiled, not run. Artifact identity/signature and16 KB alignment passed; no AAB or Play publication. Release files are NYX-v0.8.7.apk, NYX-v0.8.7-androidTest.apk, NYX-Source-v0.8.7.zip and NYX-v0.8.7-SHA256SUMS.txt. Historical/public instructions below are preserved.
+
+## v0.8.6 Project Ignition — historical unpublished build, included in v0.8.7
+
+Build identity: com.nyx.ai, versionCode 19, versionName 0.8.6; compile/target 37, minSdk 26, arm64-v8a. The local candidate passed clean testDebugUnitTest assembleDebug assembleDebugAndroidTest in 1m 40s: 833 tests across 82 classes, no failures/errors/skips. The Kotlin-host fixture requires kotlinc on PATH and skips when unavailable; this verified run supplied the cached Kotlin compiler through a temporary external wrapper, not a bundled app dependency. Instrumentation was not executed. No push/tag/release or AAB.
+
+The installed build/test toolchain and setup below are retained. The official download links below still point to historical public releases; the candidate files are delivered separately as NYX-v0.8.6.apk, NYX-v0.8.6-androidTest.apk, NYX-Source-v0.8.6.zip and NYX-v0.8.6-SHA256SUMS.txt.
 
 Package identity: `com.nyx.ai`, versionCode **18**, versionName **0.8.5**. The published release passed `./gradlew --no-daemon clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`: **731 JVM tests** pass across 70 classes, the ARM64 debug APK builds, and the instrumentation-test APK compiles. The APK is debug-signed, not a production Play build. No Android device was attached to the build environment. Native inference, the Sovereign execution loop, calibration, KV reuse, and Termux/PRoot runtime remain device-validation items.
 ## v0.8.5 release artifacts

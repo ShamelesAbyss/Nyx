@@ -11,12 +11,16 @@ data class TaskSnapshot(
 object TaskGraphScheduler {
     private val terminalFailures = setOf("failed", "blocked", "needs_review", "cancelled")
 
-    /** Returns only one task, intentionally serializing model/tool work on resource-limited phones. */
-    fun nextReady(tasks: List<TaskSnapshot>): TaskSnapshot? {
+    /** Legacy coordinator remains serial; terminal admission is independently bounded. */
+    fun nextReady(tasks: List<TaskSnapshot>): TaskSnapshot? = ready(tasks, 1).firstOrNull()
+
+    /** Only already-completed dependencies count. Selected tasks do not unblock their children. */
+    fun ready(tasks: List<TaskSnapshot>, capacity: Int): List<TaskSnapshot> {
         val byId = tasks.associateBy { it.id }
         return tasks.asSequence().filter { task ->
             task.status == "pending" && task.dependsOn.all { dep -> byId[dep]?.status == "completed" }
-        }.sortedBy { it.ordinal }.firstOrNull()
+        }.sortedWith(compareBy<TaskSnapshot> { it.ordinal }.thenBy { it.id })
+            .take(capacity.coerceAtLeast(0)).toList()
     }
 
     /** Identifies tasks that can never become ready without repairing/replanning a prerequisite. */

@@ -1,8 +1,10 @@
 package com.nyx.ai.terminal
 
 import com.nyx.ai.agent.AgentToolProvider
+import com.nyx.ai.agent.AgentToolTaskContext
 import com.nyx.ai.agent.FileProbe
 import com.nyx.ai.agent.ToolExecutionEvidence
+import com.nyx.ai.autonomy.ExecutionTimeoutPolicy
 import com.nyx.ai.development.CheckpointFile
 import com.nyx.ai.development.DevelopmentCheckpoint
 import com.nyx.ai.development.DevelopmentCommand
@@ -17,6 +19,9 @@ import com.nyx.ai.development.developmentDiff
 import com.nyx.ai.development.developmentSha256
 import com.nyx.ai.network.ToolCall
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
@@ -26,6 +31,8 @@ import java.nio.charset.CodingErrorAction
 import java.util.Base64
 import java.util.Collections
 import java.util.UUID
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /** Test seam: callers must never forward model strings directly to this executor. */
 fun interface TerminalToolExecutor {
@@ -47,6 +54,8 @@ class TerminalAgentTools(
     private val workspaceApproved: Boolean = false,
     private val guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
     private val modelCommandGate: ModelCommandGate? = null,
+    private val executionTimeouts: ExecutionTimeoutPolicy? = null,
+    private val taskContext: AgentToolTaskContext? = null,
 ) : AgentToolProvider, FileProbe {
     constructor(
         bridge: TerminalBridge,
@@ -57,9 +66,10 @@ class TerminalAgentTools(
         workspaceApproved: Boolean = false,
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
         modelCommandGate: ModelCommandGate? = null,
+        executionTimeouts: ExecutionTimeoutPolicy? = null,
     ) : this(TerminalToolExecutor { command, env, directory, timeout, hardTimeout ->
         bridge.runShell(command, env, directory, timeout, hardTimeout, approved = true, guestAlias = guestAlias)
-    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias, modelCommandGate)
+    }, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved, guestAlias, modelCommandGate, executionTimeouts)
 
     init { require(DevelopmentPaths.isAbsoluteNormalizedWorkspace(workspaceRoot)) { "Workspace must be absolute and normalized; resolve ~/ before constructing terminal tools" } }
 
@@ -71,6 +81,20 @@ class TerminalAgentTools(
     private var buildCommand: String? = null
     private var testCommand: String? = null
     private val knownCheckpoints = mutableMapOf<String, DevelopmentCheckpoint>()
+
+    override fun forTask(context: AgentToolTaskContext): TerminalAgentTools = TerminalAgentTools(
+        executor, workspaceRoot, environment, timeoutSeconds, useTimeoutBinary, workspaceApproved,
+        guestAlias, modelCommandGate, context.timeouts, context,
+    )
+
+    private val terminalCeiling: Long get() = (executionTimeouts?.terminalMs?.div(1_000) ?: timeoutSeconds).coerceIn(1, 7_200)
+    private val buildCeiling: Long get() = (executionTimeouts?.buildMs?.div(1_000) ?: timeoutSeconds.coerceAtMost(600)).coerceIn(1, 7_200)
+    private suspend fun <T> workspaceLease(readOnly: Boolean, block: suspend () -> T): T =
+        TerminalToolWorkspaceRegistry.withLease(
+            TerminalOperationContext(objectiveId = taskContext?.objectiveId, taskId = taskContext?.taskId,
+                namespace = if (environment == TerminalEnvironment.DEBIAN_PROOT) "proot:$guestAlias" else "termux_host",
+                workspace = workspaceRoot, readOnly = readOnly), block,
+        )
 
     override fun schemas(): JSONArray = JSONArray().apply {
         put(schema("terminal_run", "Run one policy-validated command in the approved workspace. Destructive and credential commands are denied; the environment is not a security sandbox.", obj("command" to "string", "working_directory" to "string", "timeout_seconds" to "integer"), listOf("command")))
@@ -148,17 +172,18 @@ class TerminalAgentTools(
         if (ModelCommandPolicy.resolveWorkingDirectory(workspaceRoot, workingDirectory) != workingDirectory) {
             return denied("terminal_run", "The gate returned a working directory outside the approved workspace.")
         }
-        val timeout = decision.timeoutSeconds.coerceIn(1L, ModelCommandPolicy.MAX_TIMEOUT_SECONDS)
+        // The authorizer may narrow the request; neither it nor model arguments can widen policy.
+        val timeout = minOf(decision.timeoutSeconds.coerceAtLeast(1), requestedTimeout?.coerceAtLeast(1) ?: terminalCeiling, terminalCeiling)
         val guarded = rootGuard() +
             "[ \"\$(realpath -e -- ${quote(workingDirectory)})\" = ${quote(workingDirectory)} ] && [ -d ${quote(workingDirectory)} ] || exit 72; " +
             "cd -- ${quote(workingDirectory)} && $command"
-        val result = controlled(
+        val result = workspaceLease(decision.risk == CommandRisk.READ_ONLY && TerminalConcurrencyPolicy.canShareWorkspace(command)) { controlled(
             "terminal_run",
             guarded,
             timeout = timeout,
             mutating = decision.risk != CommandRisk.READ_ONLY,
             hardTimeout = true,
-        )
+        ) }
         return JSONObject()
             .put("command", command.take(4_000))
             .put("workingDirectory", workingDirectory)
@@ -191,16 +216,24 @@ class TerminalAgentTools(
         return snapshot.content.take(maxChars.coerceIn(0, MAX_FILE_BYTES))
     }
 
+    suspend fun inspectProject(): DevelopmentDiscovery = workspaceLease(true) { inspectProjectLocked() }
+
     /** Read-only discovery never attempts installs or loops on missing compilers. */
-    suspend fun inspectProject(): DevelopmentDiscovery {
+    private suspend fun inspectProjectLocked(): DevelopmentDiscovery {
         buildCommand = null; testCommand = null
         val result = controlled("project_inspect", rootGuard() + "for f in settings.gradle.kts settings.gradle build.gradle.kts build.gradle gradlew package.json pyproject.toml setup.py Cargo.toml go.mod Makefile CMakeLists.txt; do if [ -f \"\$f\" ] && [ ! -L \"\$f\" ]; then printf 'MARKER:%s\\n' \"\$f\"; fi; done; " +
-            "for t in realpath sha256sum head wc base64 mktemp mv cp mkdir cut chmod find timeout dd java javac gradle node npm python3 cargo rustc go make cc cmake; do p=\$(command -v \"\$t\" 2>/dev/null); if [ -n \"\$p\" ]; then printf 'TOOL:%s=%s\\n' \"\$t\" \"\$p\"; fi; done")
+            "for f in *.kt *.java *.sh; do if [ -f \"\$f\" ] && [ ! -L \"\$f\" ]; then printf 'SOURCE:%s\\n' \"\$f\"; fi; done; " +
+            "empty=1; for f in .[!.]* ..?* *; do [ -e \"\$f\" ] || [ -L \"\$f\" ] || continue; [ \"\$f\" = .nyx-checkpoints ] && continue; empty=0; break; done; printf 'EMPTY:%s\\n' \"\$empty\"; " +
+            "for t in realpath sha256sum head wc base64 mktemp mv cp mkdir cut chmod find timeout dd sh java javac kotlinc gradle node npm python3 cargo rustc go make cc cmake; do p=\$(command -v \"\$t\" 2>/dev/null); if [ -n \"\$p\" ]; then p=\$(realpath -e -- \"\$p\" 2>/dev/null); [ -x \"\$p\" ] && printf 'TOOL:%s=%s\\n' \"\$t\" \"\$p\"; fi; done")
         if (!result.isSuccess) return DevelopmentDiscovery(workspaceRoot, "unknown", reason = "Remote workspace canonicalization or IPC failed: ${result.message ?: result.stderr.take(300)}").also { discovery = it }
         val markers = result.stdout.lineSequence().filter { it.startsWith("MARKER:") }.map { it.removePrefix("MARKER:") }.toList()
+        val sources = result.stdout.lineSequence().filter { it.startsWith("SOURCE:") }.map { it.removePrefix("SOURCE:") }
+            .filter { DevelopmentPaths.isSafeRelative(it) && '/' !in it }.distinct().sorted().take(64).toList()
         val tools = result.stdout.lineSequence().filter { it.startsWith("TOOL:") }.map { it.removePrefix("TOOL:") }.mapNotNull {
             val name = it.substringBefore('='); val path = it.substringAfter('=', "")
-            if (path.startsWith('/') && path.length <= 512 && '\u0000' !in path && !path.startsWith("$workspaceRoot/")) name to path else null
+            val origin = ExecutableClassifier.classify(if (environment == TerminalEnvironment.DEBIAN_PROOT) "proot:$guestAlias" else "termux_host", path)
+            if (path.startsWith('/') && path.length <= 512 && '\u0000' !in path && !path.startsWith("$workspaceRoot/") &&
+                (environment != TerminalEnvironment.DEBIAN_PROOT || ExecutableClassifier.isUsableInGuest(origin))) name to path else null
         }.toMap()
         val missing = mutableListOf<String>()
         for (tool in listOf("realpath", "sha256sum", "head", "wc", "base64", "mktemp", "mv", "cp", "mkdir", "cut", "chmod", "find", "timeout", "dd")) if (tool !in tools) missing += tool
@@ -209,7 +242,7 @@ class TerminalAgentTools(
         when {
             markers.any { "gradle" in it } -> {
                 val android = if (missing.isEmpty()) listOf("build.gradle.kts", "build.gradle", "app/build.gradle.kts", "app/build.gradle")
-                    .mapNotNull { snapshot(it, 16_000)?.content }.any { "com.android." in it } else false
+                    .mapNotNull { snapshot(it, 16_000)?.content }.any { hasAndroidPlugin(it) } else false
                 type = if (android) "android-gradle" else "jvm-gradle"
                 tool("java"); tool("javac")
                 val gradle = if ("gradlew" in markers) "./gradlew" else tool("gradle")
@@ -234,14 +267,62 @@ class TerminalAgentTools(
             "Cargo.toml" in markers -> { type = "rust"; tool("rustc"); val cargo = tool("cargo"); buildCommand = "$cargo build --offline"; testCommand = "$cargo test --offline" }
             "go.mod" in markers -> { type = "go"; val go = tool("go"); buildCommand = "GOPROXY=off GOSUMDB=off $go build ./..."; testCommand = "GOPROXY=off GOSUMDB=off $go test ./..." }
             "Makefile" in markers -> { type = "make"; tool("cc"); val make = tool("make"); buildCommand = make; testCommand = "$make test" }
+            sources.any { it.endsWith(".kt") } -> {
+                type = "kotlin-cli"
+                val compiler = tool("kotlinc"); val java = tool("java")
+                val main = sources.filter { it.endsWith(".kt") && it != "TestMain.kt" }
+                if (main.isEmpty()) missing += "Kotlin application sources"
+                if ("TestMain.kt" !in sources) missing += "TestMain.kt (default-package main test entry point)"
+                val guarded = main.joinToString("") { fileGuard("$workspaceRoot/$it") }
+                val args = main.joinToString(" ") { quote("./$it") }
+                buildCommand = guarded + outputGuard("nyx-main.jar") + "$compiler $args -include-runtime -d build/nyx-main.jar"
+                testCommand = guarded + fileGuard("$workspaceRoot/TestMain.kt") + outputGuard("nyx-test.jar") +
+                    "$compiler $args './TestMain.kt' -include-runtime -d build/nyx-test.jar && $java -cp build/nyx-test.jar TestMainKt"
+            }
+            sources.any { it.endsWith(".java") } -> {
+                type = "java-cli"
+                val compiler = tool("javac"); val java = tool("java")
+                val main = sources.filter { it.endsWith(".java") && it != "TestMain.java" }
+                if (main.isEmpty()) missing += "Java application sources"
+                if ("TestMain.java" !in sources) missing += "TestMain.java (default-package main test entry point)"
+                val guarded = main.joinToString("") { fileGuard("$workspaceRoot/$it") }
+                val args = main.joinToString(" ") { quote("./$it") }
+                // A fresh private directory avoids javac following pre-existing class-file symlinks.
+                val output = outputGuard() + "out=\$(mktemp -d build/nyx-java-XXXXXXXX) || exit 73; "
+                buildCommand = guarded + output + "$compiler -d \"\$out\" $args"
+                testCommand = guarded + fileGuard("$workspaceRoot/TestMain.java") + output +
+                    "$compiler -d \"\$out\" $args './TestMain.java' && $java -cp \"\$out\" TestMain"
+            }
+            sources.any { it.endsWith(".sh") } -> {
+                type = "shell"
+                val shell = tool("sh")
+                if ("test.sh" !in sources) missing += "test.sh (behavioral shell test entry point)"
+                val shellSources = sources.filter { it.endsWith(".sh") }
+                buildCommand = shellSources.joinToString("") { fileGuard("$workspaceRoot/$it") } +
+                    shellSources.joinToString(" && ") { "$shell -n ${quote("./$it")}" }
+                testCommand = fileGuard("$workspaceRoot/test.sh") + "$shell './test.sh'"
+            }
+            markers.isEmpty() && result.stdout.lineSequence().any { it == "EMPTY:1" } -> type = "empty"
             else -> { type = "unknown"; missing += "supported build/test project markers" }
         }
         val commands = listOfNotNull(buildCommand?.let { ProjectRunKind.BUILD to it }, testCommand?.let { ProjectRunKind.TEST to it }).toMap()
+        if (result.stdout.lineSequence().count { it.startsWith("SOURCE:") } > 64) missing += "standalone source limit (64 files)"
+        if (commands.values.any { command -> (rootGuard() + command).length > 7_500 ||
+                ShellCommandBuilder.wrap(rootGuard() + command, workspaceRoot, buildCeiling, true).length > TerminalCommandRequest.MAX_ARGUMENT_CHARS }) {
+            missing += "fixed project command exceeds IPC payload bound"
+        }
         return DevelopmentDiscovery(workspaceRoot, type, commands, missing.distinct(), workspaceApproved && missing.isEmpty() && commands.size == 2,
-            when { !workspaceApproved -> "Trusted workspace execution/write approval is required"; missing.isNotEmpty() -> "Missing toolchain; no commands executed and no install attempted"; else -> "Observed fixed toolchain commands; trusted project scripts may execute arbitrary code" }, markers).also { discovery = it }
+            when { !workspaceApproved -> "Trusted workspace execution/write approval is required"; missing.isNotEmpty() -> "Missing toolchain; no commands executed and no install attempted";
+                type == "empty" -> "Approved empty workspace: create root-level sources and behavioral tests, then discover the real build commands";
+                type.endsWith("cli") -> "Observed standalone JVM commands; use a default-package TestMain main entry point for behavioral tests";
+                else -> "Observed fixed toolchain commands; trusted project scripts may execute arbitrary code" }, markers,
+            canCreateProject = type == "empty" && workspaceApproved && missing.isEmpty()).also { discovery = it }
     }
 
-    suspend fun indexSources(maxFiles: Int, maxFileBytes: Int): List<SourceSnapshot> {
+    suspend fun indexSources(maxFiles: Int, maxFileBytes: Int): List<SourceSnapshot> =
+        workspaceLease(true) { indexSourcesLocked(maxFiles, maxFileBytes) }
+
+    private suspend fun indexSourcesLocked(maxFiles: Int, maxFileBytes: Int): List<SourceSnapshot> {
         val listing = controlled("source_index", rootGuard() +
             "find . -maxdepth 8 \\( -name .git -o -name .hg -o -name .svn -o -name .ssh -o -name .aws -o -name .gnupg -o -name .nyx-checkpoints -o -name .gradle -o -name .idea -o -name node_modules -o -name build -o -name dist -o -name target -o -name __pycache__ -o -name .venv -o -name venv \\) -prune -o -type f -print | head -c 16000")
         if (!listing.isSuccess) return emptyList()
@@ -289,19 +370,23 @@ class TerminalAgentTools(
         return result.toString().take(12_000)
     }
 
-    suspend fun runProject(kind: ProjectRunKind): DevelopmentCommand {
+    suspend fun runProject(kind: ProjectRunKind): DevelopmentCommand = workspaceLease(false) { runProjectLocked(kind) }
+
+    private suspend fun runProjectLocked(kind: ProjectRunKind): DevelopmentCommand {
         if (!workspaceApproved) return deniedCommand(kind, "Trusted workspace approval required")
         // Re-discover before every invocation; the model can never pass a replacement command.
         val inspected = inspectProject()
         val command = inspected.commands[kind] ?: return deniedCommand(kind, "No detected fixed command")
         if (!inspected.ready) return deniedCommand(kind, inspected.reason + ": " + inspected.missingTools.joinToString())
         val start = System.currentTimeMillis()
-        val result = controlled("project_run_${kind.name.lowercase()}", rootGuard() + command, timeout = timeoutSeconds.coerceIn(1, 600), mutating = true, hardTimeout = true)
+        val result = controlled("project_run_${kind.name.lowercase()}", rootGuard() + command, timeout = buildCeiling, mutating = true, hardTimeout = true, buildOperation = true)
         return DevelopmentCommand(kind, command, result.exitCode, result.stdout, result.stderr + result.message?.let { "\n$it" }.orEmpty(), start, System.currentTimeMillis(),
             result.kind in setOf(TerminalResultKind.SUCCEEDED, TerminalResultKind.PROCESS_EXIT) && result.exitCode != null)
     }
 
-    suspend fun applyPatch(patch: DevelopmentPatch): PatchApplication = mutationLock.withLock {
+    suspend fun applyPatch(patch: DevelopmentPatch): PatchApplication = workspaceLease(false) { applyPatchLocked(patch) }
+
+    private suspend fun applyPatchLocked(patch: DevelopmentPatch): PatchApplication = mutationLock.withLock {
         if (!workspaceApproved) return@withLock PatchApplication(false, reason = "Trusted workspace approval required")
         if (patch.files.isEmpty() || patch.files.size > 16 || patch.files.map { it.path }.distinct().size != patch.files.size) return@withLock PatchApplication(false, reason = "Invalid patch file count or duplicates")
         if (patch.files.any { !DevelopmentPaths.isSafeRelative(it.path) || it.content.toByteArray(Charsets.UTF_8).size > MAX_FILE_BYTES || '\u0000' in it.content ||
@@ -342,7 +427,9 @@ class TerminalAgentTools(
     }
 
     /** Explicit rollback only. All current hashes are preflighted, then rechecked at each atomic move. */
-    suspend fun rollbackCheckpoint(checkpoint: DevelopmentCheckpoint): PatchApplication = mutationLock.withLock {
+    suspend fun rollbackCheckpoint(checkpoint: DevelopmentCheckpoint): PatchApplication = workspaceLease(false) { rollbackCheckpointLocked(checkpoint) }
+
+    private suspend fun rollbackCheckpointLocked(checkpoint: DevelopmentCheckpoint): PatchApplication = mutationLock.withLock {
         if (!workspaceApproved || knownCheckpoints[checkpoint.id] != checkpoint) return@withLock PatchApplication(false, reason = "Unknown checkpoint or workspace not approved", humanReviewRequired = true)
         if (checkpoint.files.any { !it.committed }) return@withLock PatchApplication(false, checkpoint, "Uncertain/partial checkpoint requires human review", true)
         if (checkpoint.files.any { it.before == null }) return@withLock PatchApplication(false, checkpoint, "New files require human review; rollback never deletes files", true)
@@ -367,7 +454,9 @@ class TerminalAgentTools(
         return output.toString().take(maxChars.coerceIn(1, 128_000))
     }
 
-    private suspend fun snapshot(path: String, maxBytes: Int): SourceSnapshot? {
+    private suspend fun snapshot(path: String, maxBytes: Int): SourceSnapshot? = workspaceLease(true) { snapshotLocked(path, maxBytes) }
+
+    private suspend fun snapshotLocked(path: String, maxBytes: Int): SourceSnapshot? {
         val rel = relative(path) ?: return null
         val target = "$workspaceRoot/$rel"
         val hash = hashTarget(target, rel) ?: return null
@@ -433,6 +522,19 @@ class TerminalAgentTools(
         return PatchApplication(false, checkpoint, reason, uncertain || files.isNotEmpty())
     }
 
+    private fun outputGuard(file: String? = null): String {
+        val directory = "$workspaceRoot/build"
+        return "if [ ! -e ${quote(directory)} ] && [ ! -L ${quote(directory)} ]; then mkdir -- ${quote(directory)} || exit 73; fi; " +
+            "[ ! -L ${quote(directory)} ] && [ -d ${quote(directory)} ] && [ \"\$(realpath -e -- ${quote(directory)})\" = ${quote(directory)} ] || exit 73; " +
+            if (file == null) "" else "[ ! -L ${quote("$directory/$file")} ] && { [ ! -e ${quote("$directory/$file")} ] || [ -f ${quote("$directory/$file")} ]; } || exit 73; "
+    }
+
+    /** Comments and runtime Android mentions do not turn a JVM Gradle project into an SDK build. */
+    private fun hasAndroidPlugin(content: String): Boolean {
+        val code = Regex("(?s)/\\*.*?\\*/|(?m)//[^\\r\\n]*").replace(content, "")
+        return Regex("(?:id\\s*\\(?\\s*[\"']com\\.android\\.(?:application|library|test|dynamic-feature)[\"']|apply\\s+plugin\\s*:\\s*[\"']com\\.android\\.(?:application|library|test|dynamic-feature)[\"']|alias\\s*\\(\\s*libs\\.plugins\\.android\\.(?:application|library)\\s*\\))").containsMatchIn(code)
+    }
+
     private fun rootGuard(): String = "r=\$(realpath -e -- ${quote(workspaceRoot)}) || exit 71; [ \"\$r\" = ${quote(workspaceRoot)} ] && [ -d \"\$r\" ] || exit 71; cd -- \"\$r\" || exit 71; "
     private fun fileGuard(target: String, allowMissing: Boolean = false): String {
         val parent = target.substringBeforeLast('/')
@@ -444,7 +546,10 @@ class TerminalAgentTools(
         val rel = if (path.startsWith("$workspaceRoot/")) path.removePrefix("$workspaceRoot/") else path
         return rel.takeIf { DevelopmentPaths.isSafeRelative(it) }
     }
-    private suspend fun controlled(tool: String, command: String, timeout: Long = 45, mutating: Boolean = false, files: List<String> = emptyList(), hardTimeout: Boolean = useTimeoutBinary): TerminalCommandResult {
+    private suspend fun controlled(tool: String, command: String, timeout: Long = 45, mutating: Boolean = false, files: List<String> = emptyList(), hardTimeout: Boolean = useTimeoutBinary, buildOperation: Boolean = false): TerminalCommandResult =
+        workspaceLease(!mutating) { controlledLocked(tool, command, minOf(timeout.coerceAtLeast(1), if (buildOperation) buildCeiling else terminalCeiling), mutating, files, hardTimeout) }
+
+    private suspend fun controlledLocked(tool: String, command: String, timeout: Long, mutating: Boolean, files: List<String>, hardTimeout: Boolean): TerminalCommandResult {
         // Bound the fully wrapped IPC argv too; do not depend on CommandPolicy regex for confinement.
         if (!workspaceApproved) return TerminalCommandResult(null, TerminalResultKind.DENIED, message = "Approved trusted workspace required for terminal IPC").also {
             record(tool, it, mutating, files, System.currentTimeMillis())
@@ -467,7 +572,7 @@ class TerminalAgentTools(
     }
     private fun record(tool: String, result: TerminalCommandResult, mutating: Boolean, files: List<String>, start: Long) {
         evidence += ToolExecutionEvidence(tool, result.exitCode, result.stdout.take(32_768),
-            result.stderr.take(32_000) + result.message?.let { "\n$it" }.orEmpty(), files, mutating, start, System.currentTimeMillis())
+            result.stderr.take(32_000) + result.message?.let { "\n$it" }.orEmpty(), files, mutating, start, System.currentTimeMillis(), taskContext?.objectiveId, taskContext?.taskId)
     }
     private fun denied(tool: String, reason: String): String {
         record(tool, TerminalCommandResult(null, TerminalResultKind.DENIED, message = reason), false, emptyList(), System.currentTimeMillis())
@@ -479,7 +584,8 @@ class TerminalAgentTools(
     }
     private fun discoveryJson(value: DevelopmentDiscovery): String = JSONObject().put("path", value.workspace).put("projectType", value.projectType)
         .put("markers", JSONArray(value.markers)).put("buildCommand", value.commands[ProjectRunKind.BUILD])
-        .put("testCommand", value.commands[ProjectRunKind.TEST]).put("ready", value.ready).put("missingTools", JSONArray(value.missingTools)).put("reason", value.reason).toString()
+        .put("testCommand", value.commands[ProjectRunKind.TEST]).put("ready", value.ready).put("canCreateProject", value.canCreateProject)
+        .put("missingTools", JSONArray(value.missingTools)).put("reason", value.reason).toString()
     private fun quote(value: String) = ShellCommandBuilder.quote(value)
     private fun schema(name: String, description: String, properties: JSONObject, required: List<String>) = JSONObject().put("type", "function")
         .put("function", JSONObject().put("name", name).put("description", description).put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false)))
@@ -492,5 +598,28 @@ class TerminalAgentTools(
         // files and a 96 KB payload keep the encoded result well below that bound.
         private const val BATCH_FILES_PER_COMMAND = 4
         private const val MAX_BATCH_TOTAL_BYTES = 96_000
+    }
+}
+
+/** In-process multi-IPC transactions; durable bridge reservations still own uncertain processes. */
+internal object TerminalToolWorkspaceRegistry {
+    private val registry = TerminalOperationRegistry()
+    private class Lease(val context: TerminalOperationContext) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<Lease>
+    }
+    suspend fun <T> withLease(context: TerminalOperationContext, block: suspend () -> T): T {
+        val held = currentCoroutineContext()[Lease]?.context
+        if (held != null && held.namespace == context.namespace && held.workspace == context.workspace) {
+            check(!held.readOnly || context.readOnly) { "Cannot upgrade a workspace read lease" }
+            return block()
+        }
+        registry.enqueue(context)
+        try {
+            while (!registry.tryStart(context.operationId, TerminalOperationRegistry.MAX_CONTEXTS)) delay(10)
+            return withContext(Lease(context)) { block() }
+        } finally {
+            // This releases only the transaction lease, not the bridge's durable process ownership.
+            registry.finish(context.operationId, "TRANSACTION_FINISHED", null, "", "", null, uncertain = false)
+        }
     }
 }

@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,12 +53,13 @@ private val AText = Color(0xFFEDEAF5)
 
 @Composable
 fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
-    var showImport by remember { mutableStateOf(false) }
-    var importText by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf<String?>(null) }
-    var configTarget by remember { mutableStateOf<ArsenalSkill?>(null) }
-    var configKey by remember { mutableStateOf("") }
-    var configValue by remember { mutableStateOf("") }
+    var showImport by rememberSaveable { mutableStateOf(false) }
+    var importText by rememberSaveable { mutableStateOf("") }
+    var expanded by rememberSaveable { mutableStateOf<String?>(null) }
+    var configTargetId by rememberSaveable { mutableStateOf<String?>(null) }
+    val configTarget = state.arsenalSkills.firstOrNull { it.id == configTargetId }
+    var configKey by rememberSaveable { mutableStateOf("") }
+    var configValue by rememberSaveable { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -78,7 +80,7 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
                     skill, expanded == skill.id,
                     onToggleExpand = { expanded = if (expanded == skill.id) null else skill.id },
                     onEnabled = { vm.setArsenalEnabled(skill.id, it) },
-                    onConfigure = { configTarget = skill; configKey = ""; configValue = "" },
+                    onConfigure = { configTargetId = skill.id; configKey = ""; configValue = "" },
                     onRemove = { vm.removeArsenal(skill.id) },
                 )
             }
@@ -90,10 +92,10 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
         containerColor = ASurface,
         title = { Text("Import a skill manifest", color = AText) },
         text = {
-            Column(Modifier.height(320.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("Paste a bounded JSON manifest. The import is validated as untrusted and cannot claim write, terminal, build, or test tools.", color = AMuted, fontSize = 11.sp, lineHeight = 15.sp)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(importText, { importText = it }, Modifier.fillMaxSize(), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), placeholder = { Text("{\"id\":\"...\",\"version\":\"1.0.0\"...}") })
+                ExpandableDraftField(importText, { importText = it }, label = "Skill manifest JSON", modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             }
         },
         confirmButton = { TextButton(onClick = { vm.importArsenal(importText); showImport = false }) { Text("Validate & import") } },
@@ -101,11 +103,11 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
     )
     configTarget?.let { skill ->
         AlertDialog(
-            onDismissRequest = { configTarget = null },
+            onDismissRequest = { configTargetId = null },
             containerColor = ASurface,
             title = { Text("Configure ${skill.id}", color = AText) },
             text = {
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text("Configuration is validated against the skill's declared constraints. It never grants new tools.", color = AMuted, fontSize = 11.sp)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(configKey, { configKey = it }, label = { Text("Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -114,8 +116,8 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
                     if (skill.config.isNotEmpty()) Text(skill.config.entries.joinToString("\n") { "${it.key} = ${it.value}" }, color = AMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 6.dp))
                 }
             },
-            confirmButton = { TextButton(onClick = { vm.configureArsenal(skill.id, configKey, configValue); configTarget = null }) { Text("Save") } },
-            dismissButton = { TextButton(onClick = { configTarget = null }) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { vm.configureArsenal(skill.id, configKey, configValue); configTargetId = null }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { configTargetId = null }) { Text("Cancel") } },
         )
     }
 }

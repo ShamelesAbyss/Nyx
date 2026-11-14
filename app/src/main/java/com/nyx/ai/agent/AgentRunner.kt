@@ -132,6 +132,11 @@ class AgentRunner private constructor(
             )
         }
 
+        suspend fun requestChat(requestTools: JSONArray?, visibleText: (String) -> Unit): ChatResult =
+            withExecutionTimeouts(options, visibleText) { observedText ->
+                chat(spec.model, messages, requestTools, options, observedText)
+            }
+
         for (step in 1..maxSteps) {
             currentCoroutineContext().ensureActive()
             onEvent(AgentEvent("thinking", "${spec.name}: planning step $step/$maxSteps"))
@@ -148,15 +153,23 @@ class AgentRunner private constructor(
             }
             modelCalls++
             val response = try {
-                chat(spec.model, messages, if (structured || allowed.isEmpty()) null else schemas, options, if (structured) ({}) else onToken)
+                requestChat(if (structured || allowed.isEmpty()) null else schemas, if (structured) ({}) else onToken)
             } catch (unsupported: ToolCallingUnsupportedException) {
                 if (allowed.isEmpty() || structured) throw unsupported
                 structured = true; configureTextActions()
                 val warning = AgentEvent("warning", "Provider lacks native function calls. Using validated text JSON actions; no shell commands are inferred from prose.")
                 events += warning; onEvent(warning)
+                if (modelCalls >= maxModelCalls) {
+                    return AgentOutcome(
+                        "Stopped at the $maxModelCalls-call model budget before structured fallback. No completion is assumed.",
+                        events.toList(), step, evidence.toList(), workingStateJson = state?.toJson(),
+                        modelCalls = modelCalls, toolCalls = toolCalls,
+                    )
+                }
                 modelCalls++
-                chat(spec.model, messages, null, options, {})
+                requestChat(null, {})
             }
+            check(response.done) { "Provider marked the agent response incomplete; no action from this response was accepted." }
             val calls: List<ToolCall>
             var pendingSummary: String? = null
             if (structured) {

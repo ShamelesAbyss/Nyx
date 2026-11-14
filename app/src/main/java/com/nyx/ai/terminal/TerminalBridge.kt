@@ -1,10 +1,20 @@
 package com.nyx.ai.terminal
 
 import android.content.Context
+import com.nyx.ai.autonomy.DeviceResourceReader
+import com.nyx.ai.autonomy.ExecutionTimeoutPolicy
+import com.nyx.ai.autonomy.ResourcePolicy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
 /**
@@ -25,6 +35,28 @@ class TerminalBridge(
         prootProbe ?: ProotDistroProbe { ProotExecutableStore.resolve(app) },
     )
     private val active = ConcurrentHashMap<String, TerminalCommandHandle>()
+    private val cancellationEpoch = AtomicLong()
+    private val registry get() = sharedRegistry(app)
+
+    /** Device/performance guards still apply. Changes affect admission, never kill active work. */
+    fun configureCommandContexts(maxContexts: Int) {
+        app.getSharedPreferences("terminal_execution", Context.MODE_PRIVATE).edit()
+            .putInt("max_contexts", maxContexts.coerceIn(1, TerminalOperationRegistry.MAX_CONTEXTS)).apply()
+    }
+
+    suspend fun operationEvidence(): List<TerminalOperationEvidence> = withContext(Dispatchers.IO) { registry.snapshot() }
+    suspend fun operationHistory(): List<TerminalOperationEvidence> = withContext(Dispatchers.IO) { registry.history() }
+
+    suspend fun acknowledgeReviewedOperation(id: String, confirmedNoLongerRunning: Boolean): Boolean =
+        withContext(Dispatchers.IO) { registry.acknowledgeReviewed(id, confirmedNoLongerRunning) }
+
+    private fun capacity(): Int = runCatching {
+        ResourcePolicy.terminalCapacity(
+            DeviceResourceReader.read(app),
+            app.getSharedPreferences("terminal_execution", Context.MODE_PRIVATE).getInt("max_contexts", 3),
+            com.nyx.ai.performance.PerformanceController.tuning().autonomyParallelism,
+        )
+    }.getOrDefault(1)
 
     internal fun configureDiscoveredProot(path: String?) {
         // Persist the verified host path so a manager, service, or bridge created later in this
@@ -106,15 +138,78 @@ class TerminalBridge(
         }
     }
 
-    suspend fun execute(request: TerminalCommandRequest): TerminalCommandResult =
+    suspend fun execute(
+        request: TerminalCommandRequest,
+        operation: TerminalOperationContext = TerminalOperationContext(
+            namespace = if (request.environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:${request.distroAlias}",
+            workspace = request.workingDirectory,
+        ),
+    ): TerminalCommandResult {
+        val scope = coroutineContext[TerminalExecutionScope]
+        return executeOwned(request, operation.copy(objectiveId = operation.objectiveId ?: scope?.objectiveId,
+            taskId = operation.taskId ?: scope?.taskId))
+    }
+
+    private suspend fun executeOwned(request: TerminalCommandRequest, operation: TerminalOperationContext): TerminalCommandResult = withContext(Dispatchers.IO) {
+        val epoch = cancellationEpoch.get()
+        registry.enqueue(operation)
+        var dispatched = false
+        try {
+            val queuedAt = System.nanoTime()
+            while (true) {
+                if (epoch != cancellationEpoch.get()) {
+                    val result = TerminalCommandResult(operation.operationId, TerminalResultKind.CANCELLED,
+                        message = "Cancelled before dispatch; no command started.")
+                    registry.finish(operation.operationId, result.kind.name, null, "", "", result.message, uncertain = false)
+                    return@withContext result
+                }
+                if (registry.tryStart(operation.operationId, capacity())) break
+                if ((System.nanoTime() - queuedAt) / 1_000_000L >= request.timeoutMillis) {
+                    val result = TerminalCommandResult(operation.operationId, TerminalResultKind.TIMEOUT,
+                        message = "Terminal admission timed out before dispatch; no command started. Review resource/conflict reservations.")
+                    registry.finish(operation.operationId, result.kind.name, null, "", "", result.message, uncertain = false)
+                    return@withContext result
+                }
+                delay(100)
+            }
+            dispatched = true
+            val remainingMs = (request.timeoutMillis - (System.nanoTime() - queuedAt) / 1_000_000L).coerceAtLeast(1L)
+            val result = awaitResult(request.copy(timeoutMillis = remainingMs), operation.operationId, epoch)
+            registry.finish(operation.operationId, result.kind.name, result.exitCode, result.stdout, result.stderr,
+                result.message, uncertain = result.kind in setOf(TerminalResultKind.TIMEOUT, TerminalResultKind.CANCELLED,
+                    TerminalResultKind.UNKNOWN_RESULT, TerminalResultKind.TERMUX_INFRASTRUCTURE_ERROR))
+            result
+        } catch (cancel: CancellationException) {
+            withContext(NonCancellable) {
+                registry.finish(operation.operationId, TerminalResultKind.CANCELLED.name, null, "", "",
+                    if (dispatched) "Result wait cancelled; Termux command may still run. Review before replay."
+                    else "Cancelled before dispatch; no command started.", uncertain = dispatched)
+            }
+            throw cancel
+        } catch (error: Exception) {
+            withContext(NonCancellable) {
+                runCatching { registry.finish(operation.operationId, TerminalResultKind.DISPATCH_ERROR.name, null, "", "",
+                    error.message?.take(600), uncertain = dispatched) }
+            }
+            TerminalCommandResult(operation.operationId, TerminalResultKind.DISPATCH_ERROR, message = error.message?.take(300))
+        }
+    }
+
+    private suspend fun awaitResult(request: TerminalCommandRequest, operationId: String, epoch: Long): TerminalCommandResult =
         suspendCancellableCoroutine { continuation ->
             val completed = AtomicBoolean(false)
-            val handle = adapter.execute(request) { result ->
+            val handle = synchronized(active) {
+                if (epoch != cancellationEpoch.get() || !continuation.isActive) {
+                    if (continuation.isActive) continuation.resume(TerminalCommandResult(operationId, TerminalResultKind.CANCELLED,
+                        message = "Cancelled at dispatch boundary; no command started."))
+                    return@suspendCancellableCoroutine
+                }
+                adapter.execute(request, operationId) { result ->
                 if (completed.compareAndSet(false, true)) {
-                    result.requestId?.let { active.remove(it) }
+                    synchronized(active) { result.requestId?.let { active.remove(it) } }
                     if (continuation.isActive) continuation.resume(result)
                 }
-            }
+            }.also { handle -> if (handle != null && !completed.get()) active[handle.requestId] = handle } }
             if (handle == null) {
                 if (completed.compareAndSet(false, true) && continuation.isActive) {
                     continuation.resume(
@@ -127,9 +222,8 @@ class TerminalBridge(
                 }
                 return@suspendCancellableCoroutine
             }
-            if (!completed.get()) active[handle.requestId] = handle
             continuation.invokeOnCancellation {
-                active.remove(handle.requestId)
+                synchronized(active) { active.remove(handle.requestId) }
                 handle.cancel()
             }
         }
@@ -146,6 +240,9 @@ class TerminalBridge(
         useTimeoutBinary: Boolean = true,
         approved: Boolean = false,
         guestAlias: String = TerminalCommandRequest.DEFAULT_DISTRO_ALIAS,
+        operation: TerminalOperationContext? = null,
+        executionTimeouts: ExecutionTimeoutPolicy? = null,
+        buildOperation: Boolean = false,
     ): TerminalCommandResult {
         val assessment = CommandPolicy.assess(command)
         if (assessment.blocked) {
@@ -165,14 +262,30 @@ class TerminalBridge(
         if (workingDirectory != null && !ShellCommandBuilder.isValidWorkingDirectory(workingDirectory)) {
             return TerminalCommandResult(null, TerminalResultKind.INVALID_REQUEST, message = "Working directory is not an allowed absolute path.")
         }
+        val ceiling = executionTimeouts?.let { if (buildOperation) it.buildMs else it.terminalMs }
+            ?: TerminalCommandRequest.MAX_TIMEOUT_MILLIS
+        val boundedSeconds = minOf(timeoutSeconds.coerceAtLeast(1L), (ceiling / 1000L).coerceAtLeast(1L))
         val request = when (environment) {
-            TerminalEnvironment.TERMUX_HOST -> ShellCommandBuilder.hostRequest(command, workingDirectory, timeoutSeconds, useTimeoutBinary)
+            TerminalEnvironment.TERMUX_HOST -> ShellCommandBuilder.hostRequest(command, workingDirectory, boundedSeconds, useTimeoutBinary)
             TerminalEnvironment.DEBIAN_PROOT -> ShellCommandBuilder.prootRequest(
-                command, workingDirectory, timeoutSeconds, useTimeoutBinary, distroAlias = guestAlias,
+                command, workingDirectory, boundedSeconds, useTimeoutBinary, distroAlias = guestAlias,
             )
         }
         return try {
-            execute(request)
+            val scope = coroutineContext[TerminalExecutionScope]
+            val context = operation ?: TerminalOperationContext(
+                objectiveId = scope?.objectiveId,
+                taskId = scope?.taskId,
+                namespace = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias",
+                workspace = workingDirectory,
+                readOnly = assessment.risk == CommandRisk.READ_ONLY && TerminalConcurrencyPolicy.canShareWorkspace(command),
+            )
+            // Caller identity cannot change the actual environment, workspace or assessed risk.
+            execute(request, context.copy(
+                namespace = if (environment == TerminalEnvironment.TERMUX_HOST) "termux_host" else "proot:$guestAlias",
+                workspace = workingDirectory,
+                readOnly = assessment.risk == CommandRisk.READ_ONLY && TerminalConcurrencyPolicy.canShareWorkspace(command),
+            ))
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (e: Exception) {
@@ -182,12 +295,18 @@ class TerminalBridge(
 
     /** Stops waiting on every in-flight command; Termux may still finish the underlying process. */
     fun cancelAll() {
-        active.keys.toList().forEach { id ->
-            active.remove(id)?.cancel()
+        val handles = synchronized(active) {
+            cancellationEpoch.incrementAndGet()
+            active.values.toList().also { active.clear() }
         }
+        handles.forEach { it.cancel() }
     }
 
-    private object NoProotProbeAccessor {
-        val probe = ProotDistroProbe { null }
+    companion object {
+        @Volatile private var processRegistry: TerminalOperationRegistry? = null
+        private fun sharedRegistry(context: Context): TerminalOperationRegistry = processRegistry ?: synchronized(this) {
+            processRegistry ?: TerminalOperationRegistry(TerminalOperationJournal(File(context.filesDir, "terminal-operations")))
+                .also { processRegistry = it }
+        }
     }
 }

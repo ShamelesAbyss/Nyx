@@ -10,6 +10,7 @@ data class InferenceSession(
     val provider: InferenceProvider,
     val modelId: String,
     val options: InferenceOptions,
+    val timeouts: ExecutionTimeoutPolicy = options.executionTimeouts ?: ExecutionTimeoutPolicy.forProfile(),
 )
 
 fun interface InferenceSessionFactory {

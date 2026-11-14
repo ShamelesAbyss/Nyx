@@ -23,7 +23,7 @@ data class PlannedObjectiveTask(
     val evidence: List<EvidenceSpec> = emptyList(),
 )
 
-class ObjectivePlanValidationException(message: String, cause: Throwable? = null) :
+class ObjectivePlanValidationException(message: String, cause: Throwable? = null, val malformedJson: Boolean = false) :
     IllegalArgumentException(message, cause)
 
 /**
@@ -41,6 +41,66 @@ object ObjectivePlanValidator {
     private const val MAX_JSON_CHARS = 65_536
     private const val MAX_NESTING_DEPTH = 32
     private val taskKeyPattern = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+    /** Accept one complete JSON object, optionally in a Markdown/prose envelope; never salvage a prefix. */
+    fun parseResponse(raw: String, objectiveId: String, agentId: String): List<PlannedObjectiveTask> =
+        parse(extractSingleObject(raw), objectiveId, agentId)
+
+    internal fun extractSingleObject(raw: String): String {
+        if (raw.length > MAX_JSON_CHARS || raw.toByteArray(StandardCharsets.UTF_8).size > MAX_JSON_BYTES) {
+            invalid("Plan JSON response exceeds the $MAX_JSON_BYTES-byte limit.")
+        }
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) invalid("Plan response is empty.")
+        // A response starting as JSON must validate in its entirety (including trailing content).
+        if (trimmed.first() in "{[\"-0123456789" || Regex("^(true|false|null)(?:\\s|$)").containsMatchIn(trimmed)) return trimmed
+        if (trimmed.startsWith("```")) {
+            val openingEnd = trimmed.indexOf('\n')
+            val language = if (openingEnd >= 0) trimmed.substring(3, openingEnd).trim() else "invalid"
+            if (openingEnd < 0 || language !in setOf("", "json") || !trimmed.endsWith("```")) {
+                invalid("Plan JSON fence is incomplete or unsupported.")
+            }
+            val body = trimmed.substring(openingEnd + 1, trimmed.length - 3).trim()
+            if (body.contains("```") || !body.startsWith("{")) invalid("Plan must contain a single JSON object.")
+            return body
+        }
+        val start = trimmed.indexOf('{')
+        if (start < 0 || trimmed.substring(0, start).any { it in "[]}`" }) invalid("Plan must contain a single JSON object.")
+        if (isStandaloneJsonValue(trimmed.substring(0, start))) invalid("Plan envelope contains another JSON value.")
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (index in start until trimmed.length) {
+            val ch = trimmed[index]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (ch == '\\') escaped = true
+                else if (ch == '"') inString = false
+            } else when (ch) {
+                '"' -> inString = true
+                '{' -> { depth++; if (depth > MAX_NESTING_DEPTH) invalid("Plan JSON nesting is too deep.") }
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        val suffix = trimmed.substring(index + 1)
+                        if (suffix.any { it in "{}[]`" } || isStandaloneJsonValue(suffix)) invalid("Trailing content contains another JSON value or fence.")
+                        return trimmed.substring(start, index + 1)
+                    }
+                }
+            }
+        }
+        invalid("Plan JSON object is incomplete; no partial plan is accepted.")
+    }
+
+    private fun isStandaloneJsonValue(value: String): Boolean {
+        if (value.isBlank()) return false
+        return try {
+            StrictJsonSyntaxValidator(value, MAX_NESTING_DEPTH).validate()
+            true
+        } catch (_: ObjectivePlanValidationException) {
+            false
+        }
+    }
 
     /**
      * @param rawJson model-produced JSON, bounded to 64 KiB in both UTF-8 bytes and chars.
@@ -69,7 +129,15 @@ object ObjectivePlanValidator {
         val root = try {
             JSONObject(rawJson)
         } catch (e: JSONException) {
-            throw ObjectivePlanValidationException("Plan must be a JSON object.", e)
+            throw ObjectivePlanValidationException("Plan must be a JSON object.", e, malformedJson = true)
+        }
+        if (root.has("do")) {
+            // The one-field format always becomes inference; it cannot omit a tool permission.
+            return parse(CompactPlanningPolicy.expandMinimal(root).toString(), objectiveId, agentId)
+        }
+        if (root.has("steps")) {
+            // Re-enter the same validator so expanded plans retain all identity, size and DAG checks.
+            return parse(CompactPlanningPolicy.expand(root).toString(), objectiveId, agentId)
         }
         val taskArray = root.opt("tasks") as? JSONArray
             ?: invalid("Plan must contain a 'tasks' array.")
@@ -105,11 +173,17 @@ object ObjectivePlanValidator {
             val title = requiredString(obj, "title", index, MAX_TITLE_LENGTH)
             val instruction = requiredAliasedString(obj, "instruction", "instructions", index, MAX_INSTRUCTION_LENGTH)
             val verify = requiredAliasedString(obj, "verify", "verification", index, MAX_VERIFY_LENGTH)
-            val worker = (obj.opt("worker") as? String)
-                ?.trim()?.lowercase()
-                ?.takeIf { it in ALLOWED_WORKERS }
-                ?: "inference"
-            val evidence = EvidenceSpecParser.parse(obj.opt("evidence") as? JSONArray)
+            // Missing worker remains compatible with old inference graphs; an explicit invalid
+            // worker must not silently downgrade a requested tool task to inference.
+            val worker = if (!obj.has("worker")) "inference" else {
+                val value = (obj.opt("worker") as? String)?.trim()?.lowercase()
+                if (value !in ALLOWED_WORKERS) invalid("Task '$key' has an unsupported worker.")
+                value!!
+            }
+            val evidence = strictEvidence(obj, key)
+            if (worker != "inference" && (evidence.isEmpty() || evidence.any { it.kind == EvidenceKind.ARTIFACT_NONEMPTY })) {
+                invalid("Tool task '$key' must declare locally checkable evidence, not output existence.")
+            }
             val depends = obj.opt("dependsOn") as? JSONArray
                 ?: invalid("Task '$key' must contain a 'dependsOn' array.")
             if (depends.length() > MAX_TASKS) {
@@ -186,6 +260,41 @@ object ObjectivePlanValidator {
                 evidence = task.evidence,
             )
         }
+    }
+
+    /** No malformed declaration is skipped, defaulted or truncated into apparently valid proof. */
+    private fun strictEvidence(task: JSONObject, key: String): List<EvidenceSpec> {
+        if (!task.has("evidence")) return emptyList()
+        val array = task.opt("evidence") as? JSONArray ?: invalid("Task '$key' evidence must be an array.")
+        if (array.length() > EvidenceSpecParser.MAX_SPECS) invalid("Task '$key' declares too many evidence checks.")
+        val result = ArrayList<EvidenceSpec>(array.length())
+        for (index in 0 until array.length()) {
+            val obj = array.optJSONObject(index) ?: invalid("Task '$key' evidence $index must be an object.")
+            val kindText = evidenceString(obj, "kind", key)
+            val kind = runCatching { EvidenceKind.valueOf(kindText.trim().uppercase()) }.getOrNull()
+                ?: invalid("Task '$key' has an unsupported evidence kind.")
+            val hasTarget = kind in setOf(EvidenceKind.FILE_EXISTS, EvidenceKind.FILE_CONTAINS, EvidenceKind.CHECKSUM_SHA256)
+            val hasExpected = kind !in setOf(EvidenceKind.FILE_EXISTS, EvidenceKind.ARTIFACT_NONEMPTY)
+            val target = if (hasTarget) evidenceString(obj, "target", key) else null
+            if (!hasTarget && obj.has("target")) invalid("Task '$key' evidence kind must not contain a target.")
+            val expected = if (hasExpected) evidenceString(obj, "expected", key) else null
+            if (expected != null) {
+                if (kind == EvidenceKind.EXIT_CODE && expected.trim().toIntOrNull() == null) invalid("Task '$key' exit evidence must be an integer string.")
+                if (kind == EvidenceKind.CHECKSUM_SHA256 && !Regex("[A-Fa-f0-9]{64}").matches(expected)) invalid("Task '$key' checksum evidence must be 64 hexadecimal characters.")
+            } else if (obj.has("expected")) invalid("Task '$key' evidence kind must not contain expected.")
+            if (obj.has("description")) {
+                val description = obj.opt("description") as? String ?: invalid("Task '$key' evidence description must be a string.")
+                if (description.length > 512) invalid("Task '$key' evidence description is too long.")
+            }
+            result += EvidenceSpec(kind, target, expected, obj.optString("description"))
+        }
+        return result
+    }
+
+    private fun evidenceString(obj: JSONObject, field: String, key: String): String {
+        val value = obj.opt(field) as? String ?: invalid("Task '$key' evidence '$field' must be a string.")
+        if (value.isBlank() || value.length > 512) invalid("Task '$key' evidence '$field' must contain 1-512 characters.")
+        return value
     }
 
     private val ALLOWED_WORKERS = setOf("inference", "terminal", "filesystem", "verification", "development")
@@ -383,5 +492,5 @@ private class StrictJsonSyntaxValidator(
         while (position < source.length && source[position] in " \t\r\n") position++
     }
 
-    private fun fail(message: String): Nothing = throw ObjectivePlanValidationException(message)
+    private fun fail(message: String): Nothing = throw ObjectivePlanValidationException(message, malformedJson = true)
 }
