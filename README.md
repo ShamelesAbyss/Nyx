@@ -70,7 +70,7 @@ It is also a private inference workstation. Run a quantized GGUF through the bun
 | | |
 | :--- | :--- |
 | **Package** | `com.nyx.ai` |
-| **Version** | `0.9.2.1` (versionCode 26), Project Relay Ownership Hotfix — current release |
+| **Version** | `0.9.3` (versionCode 27), Project PRISM — current release |
 | **Android** | 8.0+ / API 26–37 |
 | **Architecture** | `arm64-v8a` |
 | **Inference** | Native GGUF CPU · Ollama · OpenAI-compatible `/v1` |
@@ -567,6 +567,8 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 | [V092_IMPLEMENTATION_REPORT.md](V092_IMPLEMENTATION_REPORT.md) | Relay implementation, exact tests, package identity and remaining device checks |
 | [RELEASE_NOTES_v0.9.1.md](RELEASE_NOTES_v0.9.1.md) | Historical Project Ignition release: Quick Actions, evidence, verification and limits |
 | [V091_IMPLEMENTATION_REPORT.md](V091_IMPLEMENTATION_REPORT.md) | Ignition implementation, actual verification and signing/device limitations |
+| [AGENTS.md](AGENTS.md) | Agent operating rules, signing boundaries, build gates and release guardrails |
+| [docs/CODEX_HANDOFF.md](docs/CODEX_HANDOFF.md) | Permanent Codex handoff: setup, build, signing, protected release workflow and device checks |
 | [BUILD.md](BUILD.md) | Toolchain, reproducible builds, tests, signing, packaging |
 | [USER_GUIDE.md](USER_GUIDE.md) | Setup, models, agents, objectives, terminal, troubleshooting |
 | [NYX_DEVELOPMENT_REPORT.md](NYX_DEVELOPMENT_REPORT.md) | What was built, what was verified, what remains |

@@ -1,0 +1,298 @@
+name: Release
+
+# Manual publication only. Ordinary commits and pull requests never reach this
+# workflow; the protected `release` environment supplies the required owner
+# approval and the signing secret.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing annotated release tag (for example v0.9.4)'
+        required: true
+        type: string
+      confirm_publish:
+        description: 'Type PUBLISH to confirm the release'
+        required: true
+        type: string
+      implementation_report:
+        description: 'Optional repository-relative implementation report path'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout requested tag without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate tag, version, confirmation, and notes
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          CONFIRM_PUBLISH: ${{ inputs.confirm_publish }}
+          IMPLEMENTATION_REPORT: ${{ inputs.implementation_report }}
+        run: |
+          set -euo pipefail
+
+          [[ "$CONFIRM_PUBLISH" == "PUBLISH" ]] || {
+            echo "::error::Set confirm_publish to PUBLISH to authorize a release." >&2
+            exit 1
+          }
+          [[ "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || {
+            echo "::error::tag must look like v0.9.4 or v0.9.4.1." >&2
+            exit 1
+          }
+
+          VERSION=$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path("app/build.gradle.kts").read_text(encoding="utf-8")
+          matches = re.findall(r'(?m)^\s*versionName\s*=\s*["\']([^"\']+)["\']\s*(?://.*)?$', text)
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one literal versionName, found {len(matches)}")
+          print(matches[0])
+          PY
+          )
+          [[ "$REQUESTED_TAG" == "v$VERSION" ]] || {
+            echo "::error::tag $REQUESTED_TAG does not match Gradle versionName $VERSION." >&2
+            exit 1
+          }
+          [[ -f "RELEASE_NOTES_${REQUESTED_TAG}.md" ]] || {
+            echo "::error::Missing RELEASE_NOTES_${REQUESTED_TAG}.md." >&2
+            exit 1
+          }
+
+          if [[ -n "$IMPLEMENTATION_REPORT" ]]; then
+            python3 - "$IMPLEMENTATION_REPORT" <<'PY'
+          from pathlib import Path
+          import sys
+          candidate = Path(sys.argv[1])
+          root = Path.cwd().resolve()
+          resolved = (root / candidate).resolve()
+          if candidate.is_absolute() or ".." in candidate.parts:
+              raise SystemExit("implementation_report must be repository-relative")
+          if resolved.is_symlink() or not resolved.is_file() or not resolved.is_relative_to(root):
+              raise SystemExit("implementation_report must resolve to a regular file inside the checkout")
+          PY
+          fi
+
+          echo "Release request validated: $REQUESTED_TAG (versionName $VERSION)"
+
+  build:
+    name: Build and verify signed release
+    needs: validate
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      REQUESTED_TAG: ${{ inputs.tag }}
+      IMPLEMENTATION_REPORT: ${{ inputs.implementation_report }}
+    steps:
+      - name: Checkout requested tag without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Validate wrappers and cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+        with:
+          cache-provider: basic
+          cache-read-only: false
+          validate-wrappers: true
+          dependency-graph: disabled
+          build-scan-publish: false
+
+      - name: Install exact SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Hosted runner must expose the Android SDK}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            'platforms;android-37.0' 'build-tools;36.0.0' \
+            'ndk;28.2.13676358' 'cmake;3.22.1'
+
+      - name: Install checksum-pinned Kotlin compiler
+        shell: bash
+        run: bash tools/setup_ci_kotlin.sh "$RUNNER_TEMP/nyx-kotlin-2.2.10"
+
+      - name: Install preserved signing identity
+        shell: bash
+        env:
+          NYX_KEYSTORE_BASE64: ${{ secrets.NYX_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "$NYX_KEYSTORE_BASE64" ]] || {
+            echo "::error::Missing protected secret NYX_KEYSTORE_BASE64 in the release environment." >&2
+            exit 1
+          }
+          umask 077
+          install -d -m 700 "$HOME/.android"
+          printf '%s' "$NYX_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          [[ -s "$HOME/.android/debug.keystore" ]] || {
+            echo "::error::Decoded signing keystore is empty." >&2
+            exit 1
+          }
+          echo "Signing identity installed from protected secret (contents not printed)."
+
+      - name: Build, test, and assemble signed APKs
+        shell: bash
+        env:
+          NYX_KOTLINC: ${{ runner.temp }}/nyx-kotlin-2.2.10/kotlinc/bin/kotlinc
+          NYX_REAL_NETWORK_TEST: '1'
+        run: |
+          set -euo pipefail
+          BUILD_OUT="$RUNNER_TEMP/nyx-build"
+          bash tools/build_release.sh --build "$BUILD_OUT"
+          printf 'NYX_BUILD_OUT=%s\n' "$BUILD_OUT" >> "$GITHUB_ENV"
+
+      - name: Package versioned release assets and evidence
+        shell: bash
+        env:
+          NYX_RELEASE_NOTES: RELEASE_NOTES_${{ inputs.tag }}.md
+          NYX_IMPLEMENTATION_REPORT: ${{ inputs.implementation_report }}
+        run: |
+          set -euo pipefail
+          DELIVERY="$RUNNER_TEMP/nyx-delivery"
+          bash tools/build_release.sh --package "$DELIVERY"
+          printf 'NYX_DELIVERY=%s\n' "$DELIVERY" >> "$GITHUB_ENV"
+
+      - name: Re-verify delivery checksums and signing identity
+        shell: bash
+        env:
+          NYX_KOTLINC: ${{ runner.temp }}/nyx-kotlin-2.2.10/kotlinc/bin/kotlinc
+        run: |
+          set -euo pipefail
+          DELIVERY="${NYX_DELIVERY:?package step did not publish its path}"
+          extra=(--extra-delivery-file "NYX-${REQUESTED_TAG}-RELEASE_NOTES.md" \
+                 --extra-delivery-file "NYX-${REQUESTED_TAG}-VERIFICATION.zip")
+          if [[ -n "${IMPLEMENTATION_REPORT:-}" ]]; then
+            extra+=(--extra-delivery-file "NYX-${REQUESTED_TAG}-IMPLEMENTATION_REPORT.md")
+          fi
+          python3 tools/check_release_integrity.py --verify-delivery-dir "$DELIVERY" "${extra[@]}"
+          (cd "$DELIVERY" && sha256sum -c "NYX-${REQUESTED_TAG}-SHA256SUMS.txt")
+          python3 - "$DELIVERY/artifact-checks/artifact-verification.json" <<'PY'
+          import json
+          import sys
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert report["signerSha256"] == "aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55", report
+          assert report["package"] == "com.nyx.ai", report
+          print("Artifact report signer/package PASS")
+          PY
+
+      - name: Upload bounded release artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: nyx-release-${{ inputs.tag }}
+          path: ${{ env.NYX_DELIVERY }}
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+  publish:
+    name: Publish approved GitHub Release
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      REQUESTED_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout requested tag without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Download verified release artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: nyx-release-${{ inputs.tag }}
+          path: ${{ runner.temp }}/nyx-release
+
+      - name: Verify tag target and downloaded checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          DELIVERY="$RUNNER_TEMP/nyx-release"
+          TAG_COMMIT=$(git rev-parse "${REQUESTED_TAG}^{commit}")
+          HEAD_COMMIT=$(git rev-parse HEAD)
+          [[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || {
+            echo "::error::Tag $REQUESTED_TAG does not point at checked-out commit." >&2
+            exit 1
+          }
+          (cd "$DELIVERY" && sha256sum -c "NYX-${REQUESTED_TAG}-SHA256SUMS.txt")
+
+      - name: Create GitHub Release with verified binary assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DELIVERY="$RUNNER_TEMP/nyx-release"
+          assets=(
+            "$DELIVERY/NYX-${REQUESTED_TAG}.apk"
+            "$DELIVERY/NYX-${REQUESTED_TAG}-androidTest.apk"
+            "$DELIVERY/NYX-Source-${REQUESTED_TAG}.zip"
+            "$DELIVERY/NYX-${REQUESTED_TAG}-SHA256SUMS.txt"
+            "$DELIVERY/NYX-${REQUESTED_TAG}-RELEASE_NOTES.md"
+            "$DELIVERY/NYX-${REQUESTED_TAG}-VERIFICATION.zip"
+          )
+          if [[ -f "$DELIVERY/NYX-${REQUESTED_TAG}-IMPLEMENTATION_REPORT.md" ]]; then
+            assets+=("$DELIVERY/NYX-${REQUESTED_TAG}-IMPLEMENTATION_REPORT.md")
+          fi
+          gh release create "$REQUESTED_TAG" \
+            --verify-tag \
+            --latest \
+            --title "NYX ${REQUESTED_TAG}" \
+            --notes-file "$DELIVERY/NYX-${REQUESTED_TAG}-RELEASE_NOTES.md" \
+            "${assets[@]}"
+
+      - name: Verify public release metadata and downloads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$REQUESTED_TAG" \
+            --json url,tagName,isDraft,isPrerelease,assets \
+            --jq '{url,tagName,isDraft,isPrerelease,assets:[.assets[].name]}'
+          VERIFY_DIR="$RUNNER_TEMP/nyx-public-verify"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          gh release download "$REQUESTED_TAG" --dir "$VERIFY_DIR"
+          (cd "$VERIFY_DIR" && sha256sum -c "NYX-${REQUESTED_TAG}-SHA256SUMS.txt")

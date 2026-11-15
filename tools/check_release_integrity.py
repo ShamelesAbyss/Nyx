@@ -412,8 +412,13 @@ def source_files(root: Path) -> list[str]:
 
 
 def check_repository(root: Path) -> None:
-    require(read_gradle_version(root / "app/build.gradle.kts") == GradleVersion("0.9.3", 27, "com.nyx.ai"),
-            "candidate must be literal com.nyx.ai / versionCode 27 / versionName 0.9.3")
+    configured = read_gradle_version(root / "app/build.gradle.kts")
+    require(configured.application_id == "com.nyx.ai",
+            "candidate applicationId must remain literal com.nyx.ai")
+    require(configured.version_code > 0,
+            "candidate versionCode must be a positive literal integer")
+    require(re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.-]+)?", configured.version_name) is not None,
+            "candidate versionName must be a semantic release version")
     wrapper = root / "gradle/wrapper/gradle-wrapper.jar"
     require(sha256(wrapper.read_bytes()) == WRAPPER_SHA256, "root Gradle wrapper JAR checksum mismatch")
     properties = (root / "gradle/wrapper/gradle-wrapper.properties").read_text()
@@ -432,14 +437,21 @@ def check_repository(root: Path) -> None:
     funding = json.loads((root / "funding.json").read_text())
     require(funding["projects"][0]["licenses"] == ["spdx:Apache-2.0"], "funding license changed")
     files = source_files(root)
-    print(f"Repository gate PASS: wrapper/identity/notices; {len(files)} safe source inputs")
+    print(
+        f"Repository gate PASS: com.nyx.ai / {configured.version_name} ({configured.version_code}); "
+        f"wrapper/notices; {len(files)} safe source inputs"
+    )
     print("Secret check scope: current first-party private-key/GitHub-token markers and all source paths; vendor content/history not scanned.")
 
 
-def parse_badging(text: str, instrumentation: bool = False) -> None:
+def parse_badging(text: str, expected_version: str, expected_code: int, instrumentation: bool = False) -> None:
     package = re.findall(r"^package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'", text, re.M)
     require(len(package) == 1, "missing/ambiguous aapt2 package metadata")
-    expected = ("com.nyx.ai.test", "27", "0.9.3") if instrumentation else ("com.nyx.ai", "27", "0.9.3")
+    expected = (
+        ("com.nyx.ai.test", "", "")
+        if instrumentation
+        else ("com.nyx.ai", str(expected_code), expected_version)
+    )
     # AGP's test APK does not inherit the app's version metadata; enforce identity
     # and target/instrumentation binding, not an invented test version guarantee.
     require(package[0][0] == expected[0], f"unexpected APK package: {package[0][0]}")
@@ -501,13 +513,19 @@ def verify_artifacts(args: argparse.Namespace) -> None:
     require(args.apk is not None and args.android_test_apk is not None and args.sdk_root is not None
             and args.report_dir is not None, "artifact gate requires both APKs, --sdk-root and new --report-dir")
     args.report_dir.mkdir(parents=True, exist_ok=False)
+    configured = read_gradle_version(args.root / "app/build.gradle.kts")
     bt = args.sdk_root / "build-tools/36.0.0"
     objdump = args.sdk_root / "ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
     expected = None if args.ci_ephemeral_signer else ESTABLISHED_SIGNER
     signers = []
     for label, apk, instrumentation in (("app", args.apk, False), ("androidTest", args.android_test_apk, True)):
         require(apk.is_file() and not apk.is_symlink(), f"missing/nonregular APK: {apk}")
-        parse_badging(tool([str(bt / "aapt2"), "dump", "badging", str(apk)], args.report_dir / f"{label}-badging.txt"), instrumentation)
+        parse_badging(
+            tool([str(bt / "aapt2"), "dump", "badging", str(apk)], args.report_dir / f"{label}-badging.txt"),
+            configured.version_name,
+            configured.version_code,
+            instrumentation,
+        )
         if instrumentation:
             manifest = tool([str(bt / "aapt2"), "dump", "xmltree", str(apk), "--file", "AndroidManifest.xml"],
                             args.report_dir / "androidTest-manifest.txt")
@@ -522,7 +540,8 @@ def verify_artifacts(args: argparse.Namespace) -> None:
                 library.write_bytes(archive.read(name))
                 tool([str(objdump), "-p", str(library)], args.report_dir / f"{label}-{Path(name).name}-elf.txt")
     require(signers[0] == signers[1], "app and instrumentation APK signers differ")
-    result = {"package": "com.nyx.ai", "versionCode": 27, "versionName": "0.9.3", "signerSha256": signers[0],
+    result = {"package": "com.nyx.ai", "versionCode": configured.version_code,
+              "versionName": configured.version_name, "signerSha256": signers[0],
               "signingScope": "ephemeral CI verification only" if args.ci_ephemeral_signer else "established debug distribution identity",
               "androidRuntime": "UNVERIFIED", "apkSha256": sha256(args.apk.read_bytes()),
               "androidTestApkSha256": sha256(args.android_test_apk.read_bytes())}
@@ -563,13 +582,22 @@ def verify_source(root: Path, source: Path) -> None:
     print(f"Source ZIP PASS: {len(files)} exact current working-tree inputs; legacy bundles excluded; not a tagged-tree claim")
 
 
-def verify_delivery(directory: Path, extras: list[str]) -> None:
-    names = {"NYX-v0.9.3.apk", "NYX-v0.9.3-androidTest.apk", "NYX-Source-v0.9.3.zip"}
+def verify_delivery(directory: Path, extras: list[str], configured: GradleVersion | None = None) -> None:
+    if configured is None:
+        configured = read_gradle_version(ROOT / "app/build.gradle.kts")
+    version = configured.version_name
+    tag = f"v{version}"
+    names = {
+        f"NYX-{tag}.apk",
+        f"NYX-{tag}-androidTest.apk",
+        f"NYX-Source-{tag}.zip",
+    }
     for name in extras:
         safe_member(name)
-        require(PurePosixPath(name).name == name and "0.9.3" in name, "extra delivery must be a candidate basename")
+        require(PurePosixPath(name).name == name, "extra delivery must be a candidate basename")
+        check_delivery_name(name, version)
         names.add(name)
-    text = (directory / "NYX-v0.9.3-SHA256SUMS.txt").read_text()
+    text = (directory / f"NYX-{tag}-SHA256SUMS.txt").read_text()
     records = []
     for line in text.splitlines():
         match = re.fullmatch(r"([0-9a-f]{64})  ([^\n]+)", line)
@@ -594,14 +622,15 @@ def self_test() -> None:
         raise AssertionError("invalid fixture accepted: " + label)
 
     badging = "package: name='com.nyx.ai' versionCode='27' versionName='0.9.3'\nsdkVersion:'26'\ntargetSdkVersion:'37'\n"
-    parse_badging(badging)
-    parse_badging(badging.replace("sdkVersion:", "minSdkVersion:"))
+    parse_badging(badging, "0.9.3", 27)
+    parse_badging(badging.replace("sdkVersion:", "minSdkVersion:"), "0.9.3", 27)
     parse_badging(badging.replace("name='com.nyx.ai' versionCode='27' versionName='0.9.3'",
-        "name='com.nyx.ai.test' versionCode='' versionName=''"), instrumentation=True)
-    rejected(lambda: parse_badging(badging + "minSdkVersion:'26'\n"), "ambiguous minimum SDK")
-    rejected(lambda: parse_badging(badging.replace("versionCode='27'", "versionCode=''")), "missing app version")
+        "name='com.nyx.ai.test' versionCode='' versionName=''"), "0.9.3", 27, instrumentation=True)
+    rejected(lambda: parse_badging(badging + "minSdkVersion:'26'\n", "0.9.3", 27), "ambiguous minimum SDK")
+    rejected(lambda: parse_badging(badging.replace("versionCode='27'", "versionCode=''"), "0.9.3", 27), "missing app version")
     for old, new in (("com.nyx.ai", "com.evil.ai"), ("'27'", "'26'"), ("'0.9.3'", "'0.9.2'"), ("'37'", "'36'")):
-        rejected(lambda old=old, new=new: parse_badging(badging.replace(old, new)), "wrong APK metadata " + new)
+        rejected(lambda old=old, new=new: parse_badging(badging.replace(old, new), "0.9.3", 27),
+                 "wrong APK metadata " + new)
     signer = "Signer #1 certificate SHA-256 digest: " + ESTABLISHED_SIGNER + "\n"
     parse_signer(signer, ESTABLISHED_SIGNER)
     rejected(lambda: parse_signer(signer, "0" * 64), "wrong signer")
@@ -656,11 +685,12 @@ def self_test() -> None:
             (root / name).write_bytes(name.encode())
         sums = root / "NYX-v0.9.3-SHA256SUMS.txt"
         sums.write_text("".join(f"{sha256((root / name).read_bytes())}  {name}\n" for name in names))
-        verify_delivery(root, [])
+        fixture_version = GradleVersion("0.9.3", 27, "com.nyx.ai")
+        verify_delivery(root, [], fixture_version)
         (root / names[0]).write_bytes(b"changed")
-        rejected(lambda: verify_delivery(root, []), "changed delivery bytes")
+        rejected(lambda: verify_delivery(root, [], fixture_version), "changed delivery bytes")
         sums.write_text("")
-        rejected(lambda: verify_delivery(root, []), "missing checksum coverage")
+        rejected(lambda: verify_delivery(root, [], fixture_version), "missing checksum coverage")
         doc = root / "CHANGELOG.md"
         doc.write_text("# History\n## 0.9.3 candidate\nversionCode 27\n## 0.9.2 historical\nversionCode 25\n")
         check_release_doc(doc, "0.9.3", 27)
@@ -740,7 +770,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.verify_source:
             verify_source(args.root, args.verify_source)
         elif args.verify_delivery_dir:
-            verify_delivery(args.verify_delivery_dir, args.extra_delivery_file)
+            verify_delivery(
+                args.verify_delivery_dir,
+                args.extra_delivery_file,
+                read_gradle_version(args.root / "app/build.gradle.kts"),
+            )
         else:
             require((args.apk is not None or args.no_apk) and args.delivery_file and args.release_doc,
                     "metadata mode requires --apk/--no-apk, --delivery-file and --release-doc")

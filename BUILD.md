@@ -3,6 +3,8 @@ Current source: `com.nyx.ai`, versionCode 27 / versionName 0.9.3. All SDK/native
 
 Run `python3 tools/check_prism_preservation.py`, `bash tools/prism_ui_host_tests.sh current NEW_OUTPUT_DIR` and `bash tools/console_ui_host_tests.sh current ANOTHER_NEW_OUTPUT_DIR` with ANDROID_HOME set. These opt-in runners temporarily generate isolated Robolectric tests, remove them on exit, and retain XML/screenshots. They do not change production dependencies or SDK policy. See [PRISM report](PRISM_IMPLEMENTATION_REPORT.md) for exact results, emulator acceptance and remaining physical-device gates. These commands do not publish or make an AAB.
 
+For the permanent Codex/GitHub Actions handoff, use [AGENTS.md](AGENTS.md) and [docs/CODEX_HANDOFF.md](docs/CODEX_HANDOFF.md). The only publication path is the manual, protected `.github/workflows/release.yml` workflow; ordinary verification remains read-only. The release workflow requires `release` environment approval and the protected `NYX_KEYSTORE_BASE64` secret, and it uses the established signing certificate rather than an ephemeral CI identity.
+
 ## Historical build records
 
 # Building NYX 0.9.2.1 — Project Relay Ownership Hotfix
