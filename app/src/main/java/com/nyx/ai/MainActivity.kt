@@ -1,5 +1,15 @@
 package com.nyx.ai
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismOutlinedTextField as OutlinedTextField
+import com.nyx.ai.ui.prism.PrismSlider as Slider
+import com.nyx.ai.ui.prism.PrismSwitch as Switch
+import com.nyx.ai.ui.prism.PrismCheckbox as Checkbox
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismIconButton as IconButton
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismOutlinedButton as OutlinedButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
@@ -64,31 +74,21 @@ import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -101,6 +101,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -169,119 +170,57 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun NyxTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme(
-        primary = Violet, onPrimary = Obsidian, secondary = VioletSoft,
-        background = Obsidian, surface = Surface1, onSurface = TextMain,
-        onBackground = TextMain, error = Red, outline = Color(0xFF393744)
-    ), content = content)
-}
+private fun NyxTheme(content: @Composable () -> Unit) = com.nyx.ai.ui.prism.PrismTheme(content = content)
 
 @Composable
 private fun NyxApp(vm: NyxViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     var tab by rememberSaveable { mutableStateOf(0) }
-    var showMore by rememberSaveable { mutableStateOf(false) }
-    val destinationState = rememberSaveableStateHolder()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.registerGguf(uri, context.displayName(uri))
     }
     val textDocumentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importTextDocument(uri)
     }
-    val destinations = listOf("Chat", "Models", "Agents", "Autonomy", "Arsenal", "Gateways", "Workflows", "Performance", "Settings")
-    val icons = listOf(
-        Icons.Rounded.ChatBubbleOutline, Icons.Rounded.Memory, Icons.Rounded.SmartToy,
-        Icons.Rounded.PlayArrow, Icons.Rounded.AutoAwesome, Icons.Rounded.Hub,
-        Icons.Rounded.AccountTree, Icons.Rounded.Tune, Icons.Rounded.Settings,
-    )
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val expanded = maxWidth >= 840.dp
-        Scaffold(
-            // One IME owner for all destinations; descendants must not reserve it again.
-            modifier = Modifier.imePadding(),
-            containerColor = Obsidian,
-            contentWindowInsets = WindowInsets.safeDrawing,
-            bottomBar = {
-                if (!expanded) NavigationBar(containerColor = Surface1, contentColor = TextMain) {
-                    listOf(0, 1, 3, 4, 5).forEach { index ->
-                        NavigationBarItem(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            icon = { Icon(icons[index], contentDescription = destinations[index]) },
-                            label = { Text(destinations[index], fontSize = 9.sp) },
-                            alwaysShowLabel = false
-                        )
-                    }
-                    NavigationBarItem(
-                        selected = tab in setOf(2, 6, 7, 8),
-                        onClick = { showMore = true },
-                        icon = { Icon(Icons.Rounded.MoreHoriz, contentDescription = "More destinations") },
-                        label = { Text("More", fontSize = 9.sp) },
-                        alwaysShowLabel = false,
-                    )
-                }
-            }
-        ) { padding ->
-            Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).background(Obsidian)) {
-                if (expanded) NavigationRail(containerColor = Surface1, contentColor = TextMain) {
-                    destinations.forEachIndexed { index, label ->
-                        NavigationRailItem(
-                            selected = tab == index, onClick = { tab = index },
-                            icon = { Icon(icons[index], contentDescription = label) },
-                            label = { Text(label, fontSize = 10.sp) }, alwaysShowLabel = true
-                        )
-                    }
-                }
-                Column(Modifier.weight(1f).fillMaxSize().background(Obsidian)) {
-                    AppHeader(tab = destinations[tab], connected = state.connected, model = state.selectedModel, endpoint = state.endpoint)
-                    LaunchedEffect(tab) {
-                        if (tab !in setOf(0, 1, 3, 7, 8)) vm.clearError()
-                    }
-                    if (state.error.isNotBlank() && tab in setOf(0, 1, 3, 7, 8)) ErrorBanner(state.error, vm::clearError)
-                    destinationState.SaveableStateProvider(tab) {
-                        when (tab) {
-                            0 -> ChatScreen(state, vm)
-                            1 -> ModelsScreen(state, vm) { picker.launch(arrayOf("*/*")) }
-                            2 -> AgentsScreen(state, vm) { textDocumentPicker.launch(arrayOf("text/*", "application/json")) }
-                            3 -> AutonomyScreen(state, vm)
-                            4 -> ArsenalScreen(state, vm)
-                            5 -> GatewaysScreen(state, vm)
-                            6 -> WorkflowScreen(state, vm)
-                            7 -> PerformanceScreen(state, vm)
-                            8 -> SettingsScreen(state, vm)
-                            else -> SettingsScreen(state, vm)
-                        }
-                    }
-                }
-            }
+    val highlighted = state.objectives.firstOrNull { it.status in setOf("running", "planning") }
+        ?: state.objectives.maxByOrNull { it.completedAt ?: it.updatedAt }
+    com.nyx.ai.ui.prism.PrismShell(selected = tab, onSelect = { tab = it }, model = state.selectedModel,
+        connected = state.connected, missionLabel = highlighted?.let { "${it.status.replace('_', ' ')} · ${it.title}" }.orEmpty(),
+        onMission = { highlighted?.let { vm.selectObjective(it.id) }; tab = 3 }) { destination ->
+        LaunchedEffect(destination) { if (destination !in setOf(0, 1, 3, 7, 8)) vm.clearError() }
+        Column(Modifier.fillMaxSize()) {
+            if (state.error.isNotBlank() && destination in setOf(0, 1, 3, 7, 8)) ErrorBanner(state.error, vm::clearError)
+            NyxDestinationContent(destination, state, vm,
+                onImport = { picker.launch(arrayOf("*/*")) },
+                onImportDocument = { textDocumentPicker.launch(arrayOf("text/*", "application/json")) },
+                onOpenSettings = { tab = 8 })
         }
     }
-    if (showMore) AlertDialog(
-        onDismissRequest = { showMore = false },
-        containerColor = Surface1,
-        title = { Text("More destinations", color = TextMain) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(2, 6, 7, 8).forEach { index ->
-                    OutlinedButton(onClick = { tab = index; showMore = false }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(icons[index], null, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(destinations[index], modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { showMore = false }) { Text("Close") } },
-    )
+}
+
+/** Stable testable UI boundary. All operational callbacks still belong to the existing ViewModel. */
+@Composable
+internal fun NyxDestinationContent(destination: Int, state: NyxState, vm: NyxViewModel,
+    onImport: () -> Unit, onImportDocument: () -> Unit, onOpenSettings: () -> Unit) {
+    when (destination) {
+        0 -> ChatScreen(state, vm)
+        1 -> ModelsScreen(state, vm, onOpenSettings = onOpenSettings, onImport = onImport)
+        2 -> AgentsScreen(state, vm, onImportDocument)
+        3 -> AutonomyScreen(state, vm)
+        4 -> ArsenalScreen(state, vm)
+        5 -> GatewaysScreen(state, vm)
+        6 -> WorkflowScreen(state, vm)
+        7 -> PerformanceScreen(state, vm)
+        8 -> SettingsScreen(state, vm)
+    }
 }
 
 @Composable
 private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
     var mode by rememberSaveable { mutableStateOf(0) }
     Column(Modifier.fillMaxSize()) {
-        Row(
+        com.nyx.ai.ui.prism.PrismActionRow(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -302,7 +241,7 @@ private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
             }
         }
         when (mode) {
-            0 -> ObjectivesPanel(state, vm, openWorkbench = { mode = 2 })
+            0 -> ObjectivesPanel(state, vm, openWorkbench = { mode = 2 }, openTerminal = { mode = 1 })
             1 -> TerminalPanel(state, vm)
             else -> com.nyx.ai.ui.WorkbenchScreen(state, vm)
         }
@@ -354,7 +293,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     Text("Tools: ${readiness.tools.keys.sorted().joinToString().ifBlank { "none detected" }}", color = TextMuted, fontSize = 11.sp)
                 }
                 Text("SELECT EXECUTION TARGET", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.terminalEnvironment == TerminalEnvironment.TERMUX_HOST) {
                         Button(onClick = { vm.setTerminalEnvironment(TerminalEnvironment.TERMUX_HOST) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian), shape = RoundedCornerShape(11.dp)) { Text("Termux Host", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                     } else {
@@ -471,7 +410,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     Text("APPROVAL REQUIRED", color = Color(0xFFF2C879), fontSize = 10.sp, letterSpacing = 1.sp)
                     Text(state.terminalPendingCommand.orEmpty(), color = TextMain, fontSize = 12.sp)
                     Text("This command can modify files or the environment. Approve only if you intend this exact command.", color = TextMuted, fontSize = 11.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { vm.confirmTerminalCommand(); command = "" }, colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) { Text("Approve and run") }
                         OutlinedButton(onClick = vm::dismissTerminalCommand) { Text("Cancel") }
                     }
@@ -531,7 +470,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { vm.createWorkspace(projectName) },
                         enabled = !state.workspaceProvisioning,
@@ -551,7 +490,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                                 "Create a new, write-verified project folder for “$pending”? Existing folders are never adopted.",
                                 color = TextMain, fontSize = 11.sp,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = vm::approveWorkspaceCreation,
                                     colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian),
@@ -579,7 +518,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                                             "${record.environment.name.replace('_', ' ')} · parent ${record.base}",
                                             color = TextMuted, fontSize = 9.sp,
                                         )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             OutlinedButton(onClick = { vm.setTerminalWorkspace(record.path) }, enabled = !state.workspaceLifecycleBusy) { Text("Use", fontSize = 10.sp) }
                                             OutlinedButton(onClick = { vm.requestDeleteWorkspace(record) }, enabled = !state.workspaceLifecycleBusy) { Text("Delete", fontSize = 10.sp) }
                                         }
@@ -631,7 +570,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
                     }
                 }
                 if (state.policyMessage.isNotBlank()) Text(state.policyMessage, color = TextMuted, fontSize = 11.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = vm::emergencyStopAutonomy,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7F1D1D), contentColor = Color.White)
@@ -684,7 +623,7 @@ private fun TerminalPanel(state: NyxState, vm: NyxViewModel) {
 }
 
 @Composable
-private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: () -> Unit) {
+private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: () -> Unit, openTerminal: () -> Unit) {
     var goal by rememberSaveable { mutableStateOf("") }
     var development by rememberSaveable { mutableStateOf(false) }
     var showConsole by rememberSaveable { mutableStateOf(false) }
@@ -693,9 +632,12 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
     var expandedTaskIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
 
     val selected = state.objectives.firstOrNull { it.id == state.selectedObjectiveId }
-    val liveObjective = state.objectives.firstOrNull { it.status == "running" }
-        ?: selected
+    val liveObjective = selected
+        ?: state.objectives.firstOrNull { it.status == "running" }
         ?: state.objectives.firstOrNull { it.status in setOf("planning", "paused", "needs_attention", "failed") }
+    LaunchedEffect(liveObjective?.id, state.selectedObjectiveId) {
+        if (state.selectedObjectiveId == null && liveObjective != null) vm.selectObjective(liveObjective.id)
+    }
     val graphLoaded = liveObjective != null && state.selectedObjectiveId == liveObjective.id
     val missionTasks = if (graphLoaded) {
         state.objectiveTasks.filter { it.objectiveId == liveObjective?.id }.sortedBy { it.ordinal }
@@ -711,6 +653,27 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        com.nyx.ai.ui.prism.PrismAdaptivePair(primary = {
+            com.nyx.ai.ui.prism.MissionResultsSection(state, vm, liveObjective,
+                onWorkbench = openWorkbench, onTerminal = openTerminal,
+                onReview = { liveObjective?.let { confirmResumeFor = it.id } })
+        }, secondary = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.nyx.ai.ui.prism.PrismSectionHeading("Start a mission", "Use a model-planned objective, or choose a fixed Quick Action below.")
+        NewObjectiveCard(
+            goal = goal,
+            onGoalChange = { goal = it.take(8_000) },
+            development = development,
+            onDevelopmentChange = { development = it },
+            state = state,
+            onPreflight = vm::preflightDevelopment,
+            onCreate = { vm.createObjective(goal, development); goal = "" },
+        )
+            }
+        })
+        com.nyx.ai.ui.QuickActionsCard(state, vm, openWorkbench = openWorkbench)
+        com.nyx.ai.ui.prism.PrismDisclosure("Mission controls, workers & readiness", "Pause, cancel, review recovery, inspect workers and open the live console.", initiallyExpanded = state.objectiveRunning) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         MissionControlHeader()
         com.nyx.ai.ui.TerminalWorkersCard(state, vm)
         SystemReadinessCard(state = state, mission = liveObjective)
@@ -734,21 +697,13 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
             onReviewResume = { liveObjective?.let { confirmResumeFor = it.id } },
             onLoadTaskGraph = { liveObjective?.let { vm.selectObjective(it.id) } },
         )
+            }
+        }
         if (state.error.isNotBlank()) {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1D27)), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Red.copy(alpha = .35f))) {
                 Text(state.error, color = Color(0xFFFFB3BC), fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.fillMaxWidth().padding(13.dp))
             }
         }
-        com.nyx.ai.ui.QuickActionsCard(state, vm, openWorkbench = openWorkbench)
-        NewObjectiveCard(
-            goal = goal,
-            onGoalChange = { goal = it.take(8_000) },
-            development = development,
-            onDevelopmentChange = { development = it },
-            state = state,
-            onPreflight = vm::preflightDevelopment,
-            onCreate = { vm.createObjective(goal, development); goal = "" },
-        )
         if (state.objectives.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("MISSIONS", color = TextMuted, fontSize = 10.sp, letterSpacing = 1.1.sp, fontWeight = FontWeight.SemiBold)
@@ -765,6 +720,8 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
                 )
             }
         }
+        com.nyx.ai.ui.prism.PrismDisclosure("Task progress & recorded evidence", "Task graph, live model output, recorded text artifacts and the original execution trace.") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TaskTimeline(
             mission = liveObjective,
             tasks = missionTasks,
@@ -775,7 +732,7 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
         )
         if (liveObjective != null && state.objectiveStreaming.isNotBlank()) OutputCard("Live model output", state.objectiveStreaming)
         if (liveObjective != null && graphLoaded && state.objectiveArtifacts.isNotEmpty()) {
-            SectionLabel("VERIFIED ARTIFACTS", "Outputs recorded for this objective")
+            SectionLabel("RECORDED TEXT REPORTS", "Task output records; retained files are shown in Mission Results / Workbench")
             state.objectiveArtifacts.forEach { artifact -> OutputCard(artifact.name, artifact.content) }
         }
         if (liveObjective != null && graphLoaded && state.objectiveEvents.isNotEmpty()) {
@@ -796,6 +753,8 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
             "Completion requires locally checked evidence—exit codes, expected output, file existence/content, or checksums. Failed or interrupted actions require explicit review before retry.",
             color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp,
         )
+            }
+        }
         Spacer(Modifier.height(8.dp))
     }
 
@@ -820,7 +779,7 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
         objectiveTitles = state.objectives.associate { it.id to it.title },
         onDismiss = { showConsole = false },
         onPause = vm::pauseObjective,
-        onResume = liveObjective?.let { objective -> { vm.resumeObjective(objective.id, userApprovedRetry = true) } },
+        onResume = liveObjective?.let { objective -> { confirmResumeFor = objective.id } },
         onCancel = liveObjective?.let { objective -> { vm.cancelObjective(objective.id) } },
         onClearHistory = { objectiveId, runId ->
             WorkerActivityBus.clearHistory(
@@ -974,7 +933,7 @@ private fun ActiveMissionCard(
                     Text(if (mission.status == "planning") "Planning · no persisted task count yet" else "No persisted tasks are available for this mission.", color = TextMuted, fontSize = 11.sp)
                 }
                 if (!mission.goal.isNullOrBlank()) Text(mission.goal, color = TextMuted, fontSize = 11.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     if (isRunning) OutlinedButton(onClick = onPause, shape = RoundedCornerShape(10.dp)) { Icon(Icons.Rounded.Stop, null); Spacer(Modifier.width(4.dp)); Text("Pause") }
                     if (mission.status in setOf("paused", "needs_attention", "failed")) OutlinedButton(onClick = onReviewResume, shape = RoundedCornerShape(10.dp)) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Review & resume") }
                     if (mission.status !in setOf("completed", "cancelled")) OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(10.dp)) { Text("Cancel") }
@@ -1217,11 +1176,11 @@ private fun ChatScreen(state: NyxState, vm: NyxViewModel) {
         WorkerConsoleModel.forRun(activities, activeObjective.id, consoleRun?.runId)
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 780.dp
+        val wide = maxWidth >= 720.dp
         Row(Modifier.fillMaxSize()) {
             if (wide) HistoryPanel(state.conversations, state.activeConversationId, vm, Modifier.width(250.dp).fillMaxSize())
             Column(Modifier.weight(1f).fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { vm.newConversation() }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(6.dp)); Text("New chat") }
                     if (!wide) OutlinedButton(onClick = { showHistory = true }) { Icon(Icons.Rounded.History, null); Spacer(Modifier.width(5.dp)); Text("History") }
                     ModelSelector(state.models, state.selectedModel, vm)
@@ -1377,7 +1336,7 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, generating: Boole
 }
 
 @Composable
-private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit) {
+private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onOpenSettings: () -> Unit, onImport: () -> Unit) {
     val busy = state.isGenerating || state.agentRunning || state.workflowRunning || state.objectiveRunning || state.nativeStatus.phase == NativePhase.LOADING
     var deleting by remember { mutableStateOf<com.nyx.ai.nativeinference.NativeModel?>(null) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1394,9 +1353,16 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
                 }
             }
         }
-        item { OllamaServerCard(state, vm) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.nyx.ai.ui.prism.PrismSectionHeading("Connection & selected model", "Provider credentials and external consent stay under your control.")
+            OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) { Text("Connection & credentials in Settings") }
+            Text("Selected: ${state.selectedModel.ifBlank { "No model selected" }} · ${if (state.connected) "connected" else "not connected"}", color = TextMuted)
+        }
+        item { com.nyx.ai.ui.prism.PrismSectionHeading("Managed Ollama", "Read-only recovery and verified ownership controls are unchanged.") }
+        item { OllamaServerCard(state, vm) }
+        item { com.nyx.ai.ui.prism.PrismSectionHeading("Native GGUF library", "Import and run compatible weights on the existing ARM64 CPU backend.") }
+        item {
+            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = vm::useNativeProvider, enabled = !busy) { Text(if (state.nativeMode) "Native · selected" else "Use native GGUF") }
                 OutlinedButton(onClick = vm::refreshNativeModels) { Icon(Icons.Rounded.Refresh, "Refresh native models") }
             }
@@ -1409,7 +1375,7 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
                     state.nativeStatus.detail?.let { Text(it, color = TextMuted, fontSize = 11.sp) }
                     Text("Load ${state.nativeStatus.lastLoadMillis ?: "—"}ms · last generation ${state.nativeStatus.generatedTokens ?: "unknown"} true tokens / ${state.nativeStatus.lastGenerateMillis ?: "—"}ms", color = TextMuted, fontSize = 11.sp)
                     Text("${state.nativeStatus.modelName ?: "No model loaded"} · context ${state.nativeStatus.contextLength ?: state.contextLength}", color = TextMuted, fontSize = 12.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = onImport, enabled = !state.nativeImporting) { Icon(Icons.Rounded.FolderOpen, null); Text(if (state.nativeImporting) "Importing…" else "Import GGUF") }
                         if (state.nativeStatus.loaded || state.nativeStatus.phase == NativePhase.LOADING) OutlinedButton(onClick = vm::unloadNativeModel) { Text("Stop / unload") }
                     }
@@ -1434,6 +1400,7 @@ private fun ModelsScreen(state: NyxState, vm: NyxViewModel, onImport: () -> Unit
             }
         }
         if (!state.nativeMode) {
+            item { com.nyx.ai.ui.prism.PrismSectionHeading("Server models", "Select a model advertised by this provider.") }
             item { Text("SERVER PROVIDER · ${state.endpoint}", color = TextMuted, fontSize = 11.sp) }
             item { OutlinedButton(onClick = vm::refreshModels) { Text("Refresh server models") } }
             items(state.models, key = { it.name }) { model -> ModelCard(model, model.name == state.selectedModel, if (state.endpoint.endsWith("/v1")) "OpenAI-compatible" else "Ollama") { vm.selectModel(model.name) } }
@@ -1482,7 +1449,7 @@ private fun OllamaServerCard(state: NyxState, vm: NyxViewModel) {
             if (server.pid != null) Text("PID ${server.pid} · ${if (server.startedByNyx) "started by NYX (verified ownership)" else "adopted external process"} · RSS ${server.rssKb?.div(1024) ?: "?"} MB", color = TextMuted, fontSize = 10.sp)
             if (server.sessionPid != null) Text("PRoot session PID ${server.sessionPid} · ${server.launchMode?.name?.lowercase()?.replace('_', ' ') ?: "managed"}", color = TextMuted, fontSize = 10.sp)
             if (server.logTail.isNotBlank()) Text(server.logTail.takeLast(500), color = TextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace, maxLines = 5)
-            Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(onClick = vm::detectOllamaServer, enabled = !state.ollamaOperationRunning) { Text("Detect", fontSize = 11.sp) }
                 OutlinedButton(onClick = vm::refreshOllamaServer, enabled = !state.ollamaOperationRunning) {
                     Text(if (server.recoveryRequired) "Reconcile" else "Refresh", fontSize = 11.sp)
@@ -1552,7 +1519,7 @@ private fun AgentsScreen(state: NyxState, vm: NyxViewModel, onImportDocument: ()
     var createName by rememberSaveable { mutableStateOf("") }
     var createPrompt by rememberSaveable { mutableStateOf("") }
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        val dualPane = maxWidth >= 900.dp
+        val dualPane = maxWidth >= 720.dp
         if (dualPane) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Column(Modifier.width(290.dp).fillMaxHeight()) {
@@ -1621,10 +1588,11 @@ private fun AgentWorkspaceContent(state: NyxState, vm: NyxViewModel, modifier: M
             }
         }
         Text("Import accepts user-selected text, Markdown, CSV, JSON, or log files up to 256 KB. Task content is sent to the selected inference server when you run the agent.", color = TextMuted, fontSize = 11.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::runAgent, enabled = !state.agentRunning, colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(5.dp)); Text("Run agent") }
             if (state.agentRunning) OutlinedButton(onClick = vm::stopAgent) { Icon(Icons.Rounded.Stop, null); Text("Stop") }
         }
+        if (!state.connected || state.selectedModel.isBlank() || state.selectedAgentId.isBlank()) Text("Select an agent and an available model before running. Existing connection and authorization checks still apply.", color = TextMuted, fontSize = 12.sp)
         if (state.agentEvents.isNotEmpty()) {
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(15.dp)) {
                 Column(Modifier.padding(14.dp)) {
@@ -1646,6 +1614,7 @@ private fun AgentCard(agent: AgentEntity, selected: Boolean, onEdit: () -> Unit,
             Column(Modifier.weight(1f)) {
                 Text(agent.name, color = TextMain, fontWeight = FontWeight.SemiBold)
                 Text(agent.description.orEmpty(), color = TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("Tools remain limited by this agent's configuration and objective approval.", color = TextMuted, fontSize = 12.sp)
             }
             IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, "Edit ${agent.name}", tint = TextMuted, modifier = Modifier.size(18.dp)) }
             RadioButton(selected, onClick)
@@ -1656,7 +1625,7 @@ private fun AgentCard(agent: AgentEntity, selected: Boolean, onEdit: () -> Unit,
 @Composable
 private fun WorkflowScreen(state: NyxState, vm: NyxViewModel) {
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        val dualPane = maxWidth >= 900.dp
+        val dualPane = maxWidth >= 720.dp
         if (dualPane) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Column(Modifier.width(340.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
@@ -1703,16 +1672,18 @@ private fun WorkflowRunContent(state: NyxState, vm: NyxViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
         ExpandableDraftField(value = state.workflowTask, onValueChange = vm::setWorkflowTask, modifier = Modifier.fillMaxWidth(), label = "Workflow goal", minLines = 3)
         Text("New requests use the ${state.executionTimeoutPolicy.profile.name.lowercase()} timeout profile (Settings); each request is bounded, not an unlimited pipeline grant.", color = TextMuted, fontSize = 11.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::runWorkflow, enabled = !state.workflowRunning, colors = ButtonDefaults.buttonColors(containerColor = Violet, contentColor = Obsidian)) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(5.dp)); Text("Run pipeline") }
             if (state.workflowRunning) OutlinedButton(onClick = vm::stopWorkflow) { Icon(Icons.Rounded.Stop, null); Text("Pause / stop") }
         }
+        if (state.workflowAgentIds.isEmpty() || state.selectedModel.isBlank()) Text("Choose the workflow agents and a model before running this pipeline.", color = TextMuted, fontSize = 12.sp)
         if (state.workflowOutput.isNotBlank()) OutputCard("Workflow execution", state.workflowOutput)
     }
 }
 
 @Composable
 private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
+    var settingsGroup by rememberSaveable { mutableStateOf("Connections") }
     var endpoint by rememberSaveable(state.endpoint, state.nativeMode) { mutableStateOf(if (state.nativeMode) "http://127.0.0.1:11434" else state.endpoint) }
     // Never put a credential draft in instance state or ordinary settings preferences.
     var apiKeyDraft by remember(state.endpoint) { mutableStateOf("") }
@@ -1720,6 +1691,15 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
     val openAiEndpoint = endpoint.trimEnd('/').substringBefore('?').endsWith("/v1", ignoreCase = true)
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionIntro("Privacy & performance", "NYX stores app data locally. Network requests target the endpoint below; no account, analytics, or cloud backend is built in.") }
+        item {
+            com.nyx.ai.ui.prism.PrismActionRow {
+                listOf("Connections", "Inference", "Autonomy", "Advanced").forEach { group ->
+                    androidx.compose.material3.FilterChip(modifier = Modifier.testTag("prism_settings_$group"), selected = settingsGroup == group, onClick = { settingsGroup = group }, label = { Text(group) })
+                }
+            }
+        }
+        if (settingsGroup == "Connections") {
+
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1735,7 +1715,7 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                             keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password, imeAction = ImeAction.Done)
                         )
                         if (!endpointSaved) Text("Save & connect this endpoint before adding its credential.", color = TextMuted, fontSize = 11.sp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Button(onClick = { if (vm.saveApiKey(apiKeyDraft)) apiKeyDraft = "" }, enabled = endpointSaved && apiKeyDraft.isNotBlank(), modifier = Modifier.weight(1f)) { Text("Save key securely") }
                             if (state.credentialConfigured && endpoint == state.endpoint) OutlinedButton(onClick = vm::removeApiKey) { Text("Remove key") }
                         }
@@ -1753,6 +1733,8 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                 }
             }
         }
+        }
+        if (settingsGroup == "Inference") {
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Surface1), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1776,8 +1758,12 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
             }
         }
         item { ExecutionTimeoutProfileCard(state.executionTimeoutPolicy, vm::setExecutionTimeoutProfile) }
+        }
+        if (settingsGroup == "Autonomy") {
         item { AutonomyPolicyCard(state, vm) }
         item { ExecutionPermissions() }
+        }
+        if (settingsGroup == "Advanced") {
         item { RepairBudgetCard() }
         item { DiagnosticsCard(state) }
         item {
@@ -1791,6 +1777,7 @@ private fun SettingsScreen(state: NyxState, vm: NyxViewModel) {
                     Text("Android 8+ · Ollama and OpenAI-compatible APIs, Keystore-protected credentials, bounded agents, durable objective records, and user-approved text import. Native GGUF CPU runtime is bundled; compatible user-imported weights are required. Hardware verification remains separate.", color = TextMuted, fontSize = 12.sp)
                 }
             }
+        }
         }
     }
 }
@@ -1829,7 +1816,7 @@ private fun AutonomyPolicyCard(state: NyxState, vm: NyxViewModel) {
                     ". Routine grants are workspace-only and are removed when you return to Manual.",
                 color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (state.autonomyStopped) {
                     Button(onClick = vm::resumeAutonomy) { Text("Resume autonomy") }
                 } else {

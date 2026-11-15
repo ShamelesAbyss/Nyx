@@ -25,6 +25,9 @@
 ---
 
 > [!NOTE]
+> **Source candidate: v0.9.3 — Project PRISM** (`com.nyx.ai`, versionCode 27). An adaptive Eclipse interface puts owned Mission Results and available files first, adds a complete Sections menu and scrollable expanded rail, and groups advanced controls without changing execution authority. This is unpublished source; the stable downloads below remain **v0.9.2.1**. See the [PRISM implementation and Manus handoff](PRISM_IMPLEMENTATION_REPORT.md), [control inventory](docs/prism/CONTROL_PRESERVATION.md), and [candidate notes](RELEASE_NOTES_v0.9.3.md). Physical phone/foldable acceptance remains required before release.
+
+> [!NOTE]
 > **v0.9.2.1 — Project Relay Ownership Hotfix is the current release** (`com.nyx.ai`, versionCode 26). It repairs a persistent PRoot ownership fence that could leave managed Ollama stuck in `ERROR` after an interrupted launch, adds evidence-based recovery and token/start-verified session termination, and bounds reconciliation so a launch no longer opens a stream of short-lived Termux sessions. The full JVM suite passed **1,233 tests across 136 suites with zero failures and errors**; both APKs assembled with the established signing certificate and 16 KB alignment. **Release:** [GitHub release v0.9.2.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2.1). See [patch release notes](RELEASE_NOTES_v0.9.2.1.md) and [implementation report](V0921_IMPLEMENTATION_REPORT.md).
 
 > [!IMPORTANT]

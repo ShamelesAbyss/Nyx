@@ -1,5 +1,12 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismOutlinedTextField as OutlinedTextField
+import com.nyx.ai.ui.prism.PrismSwitch as Switch
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismOutlinedButton as OutlinedButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,15 +24,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +53,7 @@ private val AText = Color(0xFFEDEAF5)
 
 @Composable
 fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
+    var prismQuery by rememberSaveable { mutableStateOf("") }
     var showImport by rememberSaveable { mutableStateOf(false) }
     var importText by rememberSaveable { mutableStateOf("") }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
@@ -60,8 +61,11 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
     val configTarget = state.arsenalSkills.firstOrNull { it.id == configTargetId }
     var configKey by rememberSaveable { mutableStateOf("") }
     var configValue by rememberSaveable { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Column(Modifier.fillMaxWidth()) {
+
+        com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("ARSENAL", color = AViolet, fontSize = 11.sp, letterSpacing = 1.2.sp, fontWeight = FontWeight.SemiBold)
                 Text("Offline operational skills. Only relevant procedures enter a task prompt.", color = AMuted, fontSize = 11.sp)
@@ -74,8 +78,12 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
             Text(state.arsenalMessage, color = if (state.arsenalMessage.contains("fail", true) || state.arsenalMessage.contains("reject", true)) Color(0xFFFF8E9B) else AMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
         }
         Text("Built-in skills are trusted and versioned with the app. Imported JSON is untrusted: unknown tools, writes, terminal authority, and duplicate IDs are rejected. Enabling a skill never bypasses the autonomy policy.", color = AMuted, fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
-        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.arsenalSkills, key = { it.id }) { skill ->
+        OutlinedTextField(prismQuery, { prismQuery = it }, label = { Text("Find a skill") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), trailingIcon = { if (prismQuery.isNotEmpty()) TextButton(onClick = { prismQuery = "" }) { Text("Clear") } })
+            }
+        }
+
+            items(state.arsenalSkills.filter { prismQuery.isBlank() || (it.id + " " + it.manifest.description).contains(prismQuery, ignoreCase = true) }, key = { it.id }) { skill ->
                 SkillCard(
                     skill, expanded == skill.id,
                     onToggleExpand = { expanded = if (expanded == skill.id) null else skill.id },
@@ -85,7 +93,6 @@ fun ArsenalScreen(state: NyxState, vm: NyxViewModel) {
                 )
             }
             if (state.arsenalSkills.isEmpty()) item { Text("No skills loaded. Tap Refresh or import a manifest.", color = AMuted, fontSize = 12.sp, modifier = Modifier.padding(12.dp)) }
-        }
     }
     if (showImport) AlertDialog(
         onDismissRequest = { showImport = false },
@@ -134,7 +141,7 @@ private fun SkillCard(skill: ArsenalSkill, expanded: Boolean, onToggleExpand: ()
                 Switch(checked = skill.enabled, onCheckedChange = onEnabled)
             }
             Text(skill.manifest.description, color = AMuted, fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 4.dp))
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("TOOLS  ${skill.manifest.tools.joinToString().ifBlank { "none" }}", color = AViolet, fontSize = 9.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 TextButton(onClick = onToggleExpand) { Text(if (expanded) "Hide procedure" else "Procedure", fontSize = 11.sp) }
                 TextButton(onClick = onConfigure) { Text("Configure", fontSize = 11.sp) }

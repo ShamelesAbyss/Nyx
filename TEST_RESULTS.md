@@ -1,3 +1,21 @@
+# v0.9.3 Project PRISM candidate verification
+
+| Check | Actual result |
+|---|---|
+| Coordinated clean JVM/app/instrumentation build, real kotlinc and opt-in network tests | PASS: 1,251 tests / 137 suites; 0 failures, errors or skips; app and androidTest APKs assembled |
+| Deterministic Mission Results regressions (included above) | PASS: 18 tests covering ownership, inspection/test evidence, history, malformed/coercive/deep input, paths/files/sources, redaction and clock bounds |
+| Production-screen Compose interactions, API35 Robolectric native graphics | PASS: 40 checks (10 each at 360×640, 1000×800, 640×360 dp and 360×640 / fontScale1.7) |
+| Existing console host UI regressions | PASS: 24 checks, compact/expanded/short windows |
+| Source/control preservation | PASS: 235 archived primitive call sites, 7 supplemental clickable surfaces, 134 original VM binding occurrences accounted for; one reviewed Resume relocation; protected source byte preservation |
+| SDK/release checker positive/negative fixtures and independent APK gates | PASS: com.nyx.ai / 0.9.3 / 27, API26–37, ARM64-only, notices, ZIP+ELF 16KB alignment, matching build-only app/test signer |
+| Release signer / distribution packaging | NOT ACCEPTED locally: generated key differs from established upgrade signer; ephemeral verification does not permit packaging |
+| Android hardware, actual fold/IME/TalkBack/process/upgrade/Termux/provider/SAF/share | NOT RUN; independent Manus acceptance required |
+
+The UI tests use real production composables with execution services intentionally unconstructed. Checks cover all nine destinations, Settings groups, search state, chat draft navigation/resizing without submission, owned historical results while another mission runs, real scroll gestures through long output, explicit callbacks, failed-file disabled exports and unresolved server recovery keeping Start unavailable. Native Canvas PNGs are host render evidence. UI testing initially caught an adaptive-resource painter crash, cramped primary labels at large font, and test selectors that needed lazy-list scrolling; those were corrected and rerun.
+
+Local ignored evidence: `verification-output/prism-clean-final` (full suite/build and independent APK checks), final coordinated delivery verification under `verification-output/prism-delivery`, `verification-output/prism-ui-delivery` (40 checks/PNG renders), and `verification-output/prism-console-final` (24 console checks). GitHub Actions reruns the clean suite and both host UI suites on the exact pushed commit and retains bounded XML/log/PNG evidence. The release candidate remains unpublished. Full architecture, evidence sources, limitations and exact release instructions are in [PRISM_IMPLEMENTATION_REPORT.md](PRISM_IMPLEMENTATION_REPORT.md). Physical acceptance matrix: [DEVICE_ACCEPTANCE.md](docs/prism/DEVICE_ACCEPTANCE.md).
+
+
 # NYX v0.9.2.1 — Project Relay Ownership Hotfix verification
 **Release candidate (2026-11-14):** package `com.nyx.ai`, versionName `0.9.2.1`, versionCode `26`, API 26–37, ARM64 only. One coordinated clean build (`clean testDebugUnitTest assembleDebug assembleDebugAndroidTest`) with `NYX_REAL_NETWORK_TEST=1` passed in **2m 31s** and assembled both APKs. Result: **1,233 JVM tests across 136 suites, zero failures, zero errors, zero skipped**, including the two opt-in public HTTPS acceptance tests. Focused recovery/guest-runtime/process/lifecycle regressions passed before the clean build. App APK SHA-256 `c5be938f42dca7b9fa2db5779c4f5e068a866312b64b0b105e205305ddef73d9` (35,500,791 bytes); androidTest APK SHA-256 `33a4247615607bdf170ac21dd32a01d82c387e1176163ad2bfe17bd25d8c514a` (1,024,814 bytes). `aapt2` identity, established signer `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`, ARM64-only native packaging, and `zipalign -c -P 16 -v 4` passed. **Physical Android instrumentation, real-device Ollama/Termux, keyboard/fold behavior and upgrade compatibility were NOT tested.** See [implementation report](V0921_IMPLEMENTATION_REPORT.md).
 

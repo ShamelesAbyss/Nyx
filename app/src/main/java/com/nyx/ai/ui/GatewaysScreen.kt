@@ -1,5 +1,12 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismOutlinedTextField as OutlinedTextField
+import com.nyx.ai.ui.prism.PrismSwitch as Switch
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismOutlinedButton as OutlinedButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,17 +24,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,13 +60,17 @@ private val GRed = Color(0xFFFF8E9B)
 
 @Composable
 fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
+    var prismQuery by rememberSaveable { mutableStateOf("") }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     val editing = state.gatewayServers.firstOrNull { it.id == editingId }
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var invokeServerId by rememberSaveable { mutableStateOf<String?>(null) }
     var outputOpen by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Column(Modifier.fillMaxWidth()) {
+
+        com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("GATEWAYS", color = GViolet, fontSize = 11.sp, letterSpacing = 1.2.sp, fontWeight = FontWeight.SemiBold)
                 Text("Real MCP HTTP and GitHub tools, with explicit server allowlists.", color = GMuted, fontSize = 11.sp)
@@ -77,8 +81,12 @@ fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
         }
         if (state.gatewayMessage.isNotBlank()) Text(state.gatewayMessage, color = if (state.gatewayMessage.contains("fail", true) || state.gatewayMessage.contains("denied", true)) GRed else GMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
         Text("Tokens are stored only in Android Keystore-backed storage; only the opaque reference is saved here. GitHub writes are distinct tools and still pass the autonomy policy.", color = GMuted, fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
-        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.gatewayServers, key = { it.id }) { server ->
+        OutlinedTextField(prismQuery, { prismQuery = it }, label = { Text("Find a gateway") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), trailingIcon = { if (prismQuery.isNotEmpty()) TextButton(onClick = { prismQuery = "" }) { Text("Clear") } })
+            }
+        }
+
+            items(state.gatewayServers.filter { prismQuery.isBlank() || (it.name + " " + it.endpoint).contains(prismQuery, ignoreCase = true) }, key = { it.id }) { server ->
                 GatewayCard(
                     server = server,
                     health = state.gatewayHealth[server.id],
@@ -100,7 +108,6 @@ fun GatewaysScreen(state: NyxState, vm: NyxViewModel) {
                     }
                 }
             }
-        }
     }
     // Wait for a restored ID to resolve instead of silently opening a new-server editor.
     if (showCreate && (editingId == null || editing != null)) GatewayEditor(initial = editing, onDismiss = { showCreate = false; editingId = null }, onSave = { id, name, kind, endpoint, token, allow, enabled ->
@@ -131,7 +138,7 @@ private fun GatewayCard(server: GatewayServerConfig, health: GatewayHealth?, too
                 Text("${toolCount ?: 0} tools · allowlist ${server.allowedTools.size}", color = GMuted, fontSize = 9.sp)
             }
             if (!health?.detail.isNullOrBlank()) Text(health.detail, color = GMuted, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = onCheck) { Text("Check", fontSize = 11.sp) }
                 TextButton(onClick = onTools) { Text("Tools / call", fontSize = 11.sp) }
                 TextButton(onClick = onEdit) { Text("Edit", fontSize = 11.sp) }

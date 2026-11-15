@@ -1,3 +1,10 @@
+# Building NYX 0.9.3 — Project PRISM source candidate
+Current source: `com.nyx.ai`, versionCode 27 / versionName 0.9.3. All SDK/native/toolchain pins remain unchanged. Use the existing coordinated clean build and integrity gates. `--ci-ephemeral-signer` permits verification only and cannot package distribution files; the established signer remains mandatory for an upgrade APK. Never distribute the locally generated key's APK.
+
+Run `python3 tools/check_prism_preservation.py`, `bash tools/prism_ui_host_tests.sh current NEW_OUTPUT_DIR` and `bash tools/console_ui_host_tests.sh current ANOTHER_NEW_OUTPUT_DIR` with ANDROID_HOME set. These opt-in runners temporarily generate isolated Robolectric tests, remove them on exit, and retain XML/screenshots. They do not change production dependencies or SDK policy. See [PRISM report](PRISM_IMPLEMENTATION_REPORT.md) for exact results and Manus acceptance gates. No tag, upload or publication is performed by these commands.
+
+## Historical build records
+
 # Building NYX 0.9.2.1 — Project Relay Ownership Hotfix
 Current source: `com.nyx.ai`, versionCode 26 / versionName 0.9.2.1. Toolchain and SDK/native pins below remain unchanged. Run one coordinated clean `testDebugUnitTest assembleDebug assembleDebugAndroidTest` build with a real Kotlin fixture compiler. The repository's `tools/build_release.sh` and `tools/check_release_integrity.py` use the v0.9.2.1 delivery names and identity. A newly generated debug key is build-only: public packaging must reject it because it differs from the established signer. Hosted CI may use `--ci-ephemeral-signer` for verification only. The final network-enabled clean build passed in **2m 31s** with **1,233 tests/136 suites, zero failures/errors/skips**, and assembled both APKs with the established signing certificate. See [TEST_RESULTS.md](TEST_RESULTS.md). See [patch report](V0921_IMPLEMENTATION_REPORT.md).
 

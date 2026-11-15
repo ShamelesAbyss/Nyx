@@ -1,5 +1,11 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismIconButton as IconButton
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismOutlinedButton as OutlinedButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,19 +39,13 @@ import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -264,7 +264,7 @@ fun WorkerConsoleDialog(
             if (isCurrent && activeTask.isNotBlank()) {
                 Text("active task: ${activeTask.take(180)}", color = ConsoleViolet, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (running && onPause != null) OutlinedButton(onClick = onPause, shape = RoundedCornerShape(9.dp)) { Text("Pause", fontSize = 10.sp) }
                 if (!running && onResume != null && displayStatus in setOf("paused", "needs_attention", "failed")) {
                     OutlinedButton(onClick = onResume, shape = RoundedCornerShape(9.dp)) { Text("Resume", fontSize = 10.sp) }
@@ -288,7 +288,7 @@ fun WorkerConsoleDialog(
                     modifier = Modifier.size(40.dp),
                 ) { Icon(Icons.Rounded.Share, "Share diagnostic log", tint = ConsoleViolet, modifier = Modifier.size(16.dp)) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box {
                     TextButton(onClick = { historyOpen = true }) {
                         Text("History · ${runs.size}", fontSize = 10.sp, color = ConsoleViolet)
@@ -445,7 +445,7 @@ private fun ConsoleTimeline(
         if (onBack != null) TextButton(onClick = onBack, modifier = Modifier.testTag("console_back")) {
             Text("← Operations", fontSize = 10.sp, color = ConsoleViolet)
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        com.nyx.ai.ui.prism.PrismActionRow(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { followLive = false; scope.launch { listState.scrollToItem(0) } }, modifier = Modifier.weight(1f).testTag("console_jump_first")) { Text("First", fontSize = 10.sp, color = ConsoleViolet) }
             TextButton(onClick = { scope.launch { jumpLatest() } }, modifier = Modifier.weight(1f).testTag("console_jump_latest")) { Text("Jump to latest", fontSize = 10.sp, color = ConsoleViolet) }
             TextButton(onClick = { followLive = !followLive }, modifier = Modifier.weight(1f).testTag("console_follow_live")) {

@@ -1,5 +1,10 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismOutlinedTextField as OutlinedTextField
+import com.nyx.ai.ui.prism.PrismCheckbox as Checkbox
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,13 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf

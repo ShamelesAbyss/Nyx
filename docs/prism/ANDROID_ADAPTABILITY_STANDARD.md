@@ -1,0 +1,9 @@
+# Permanent Android adaptability engineering standard
+
+All future NYX UI work must use actual available window/content width, not device identity. Support compact phones and expanded foldable/tablet windows as equal targets. Account for system bars, display cutouts and IME; let users scroll to every control in short windows. Avoid fixed-height text containers, inaccessible horizontal action rows, nested unbounded lazy lists and assumptions that a foldable is always expanded.
+
+Preserve destination, draft, selection, expansion and scroll state using stable saveable identities or the existing ViewModel. Keep secrets out of saved state. A resize, fold, rotation, navigation or recomposition must never launch inference, repeat a tool call, grant a permission, resume work or replay a command. Route operational callbacks through the established authority and ownership gates.
+
+Use semantic labels and state/error explanations, at least 48dp interactive targets, readable scalable text and sufficient contrast. Wrap actions or provide clearly labeled overflow; do not remove capabilities to fit compact layouts. Keep empty/loading/disabled/running/failure/success/history states truthful and actionable. Use shared PRISM primitives and destination accents rather than screen-specific control systems.
+
+For each UI change, update the control-preservation mapping and run relevant JVM, Compose and build checks. Test compact, expanded, short and large-font layouts, window transitions and retained drafts. Review rendered images as well as semantics. Before a release, validate real phone and foldable folding, rotation, multi-window, keyboard, accessibility traversal, process restoration and current-byte file actions. Record exact devices/configurations and distinguish instrumentation compilation, host simulation and real device execution. Never infer device acceptance from a successful build.

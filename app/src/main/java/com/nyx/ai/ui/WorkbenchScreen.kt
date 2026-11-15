@@ -1,5 +1,11 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismOutlinedTextField as OutlinedTextField
+import com.nyx.ai.ui.prism.PrismCheckbox as Checkbox
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismOutlinedButton as OutlinedButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
@@ -21,6 +27,7 @@ import com.nyx.ai.workbench.*
 /** No WebView or external viewer: all previews are inert, selectable text. */
 @Composable
 fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
+    var showResultDetails by rememberSaveable(state.selectedObjectiveId) { mutableStateOf(false) }
     var goal by rememberSaveable { mutableStateOf("") }
     var filename by rememberSaveable { mutableStateOf("report.md") }
     var formatName by rememberSaveable { mutableStateOf(ArtifactFormat.MARKDOWN.name) }
@@ -119,6 +126,12 @@ fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
             }
         }
         if (selected != null) item {
+            val result = remember(selected, state.objectiveTasks, state.objectiveEvents, state.objectiveArtifacts, manifest) {
+                com.nyx.ai.ui.prism.MissionResults.present(selected, state.objectiveTasks, state.objectiveEvents, state.objectiveArtifacts, manifest)
+            }
+            com.nyx.ai.ui.prism.MissionResultsCard(result, onTechnical = { showResultDetails = true })
+        }
+        if (selected != null) item {
             Card { Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(selected.title, style = MaterialTheme.typography.titleMedium)
                 Text("Status: ${selected.status} · ${state.objectiveTasks.count { it.status == "completed" }}/${state.objectiveTasks.size} verified tasks", style = MaterialTheme.typography.bodySmall)
@@ -177,8 +190,7 @@ fun WorkbenchScreen(state: NyxState, vm: NyxViewModel) {
         text = { Text("Tools may already have written files. Resume explicitly reviews/retries uncertain tasks under the same Workbench file/URL approval; it does not authorize new URLs or overwrite existing conflicting artifacts. A non-tool-capable model may remain blocked.") },
         confirmButton = { TextButton(onClick = { retryId?.let { vm.resumeObjective(it, true) }; retryId = null }) { Text("Approve resume") } },
         dismissButton = { TextButton(onClick = { retryId = null }) { Text("Cancel") } })
-    if (state.workbenchPreviewText.isNotBlank()) AlertDialog(onDismissRequest = vm::closeWorkbenchPreview,
-        title = { Text(state.workbenchPreviewTitle) },
-        text = { LazyColumn(Modifier.heightIn(max = 440.dp)) { item { SelectionContainer { Text(state.workbenchPreviewText, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) } } } },
-        confirmButton = { TextButton(onClick = vm::closeWorkbenchPreview) { Text("Close read-only preview") } })
+    if (showResultDetails && selected != null) com.nyx.ai.ui.prism.MissionTechnicalDialog(selected,
+        state.objectiveTasks, state.objectiveEvents, onClose = { showResultDetails = false })
+    com.nyx.ai.ui.prism.WorkbenchPreviewDialog(state, vm::closeWorkbenchPreview)
 }

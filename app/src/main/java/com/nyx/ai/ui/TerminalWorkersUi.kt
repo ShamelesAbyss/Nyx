@@ -1,5 +1,8 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,7 +33,7 @@ fun TerminalWorkersCard(state: NyxState, vm: NyxViewModel) {
             val uncertain = state.terminalOperations.count { it.state == TerminalOperationState.UNCERTAIN }
             Text("$active active · $queued queued · $uncertain need review", color = TextMain)
             Text("Independent commands, not persistent interactive sessions. Requested capacity is capped by memory, heat, battery, energy mode and workspace conflicts.", color = TextMuted, fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { vm.setTerminalContexts(state.requestedTerminalContexts - 1) }, enabled = state.requestedTerminalContexts > 1) { Text("−") }
                 Text("${state.requestedTerminalContexts} requested", modifier = Modifier.padding(top = 12.dp), color = TextMain)
                 TextButton(onClick = { vm.setTerminalContexts(state.requestedTerminalContexts + 1) }, enabled = state.requestedTerminalContexts < 8) { Text("+") }

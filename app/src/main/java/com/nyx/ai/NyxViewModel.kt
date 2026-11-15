@@ -1060,17 +1060,17 @@ class NyxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectObjective(id: String) {
-        _state.update { it.copy(selectedObjectiveId = id, workbenchManifest = null, workbenchApproval = WorkbenchAuthorization(), workbenchPreviewText = "") }
+        _state.update { it.copy(selectedObjectiveId = id, objectiveTasks = emptyList(), objectiveEvents = emptyList(), objectiveArtifacts = emptyList(), workbenchManifest = null, workbenchApproval = WorkbenchAuthorization(), workbenchPreviewText = "") }
         objectiveObservation?.cancel()
         objectiveObservation = viewModelScope.launch {
             val dao = db.objectiveDao()
             kotlinx.coroutines.coroutineScope {
-                launch { dao.observeTasks(id).collect { rows -> _state.update { it.copy(objectiveTasks = rows) } } }
+                launch { dao.observeTasks(id).collect { rows -> _state.update { if (it.selectedObjectiveId == id) it.copy(objectiveTasks = rows) else it } } }
                 launch { dao.observeEvents(id).collect { rows ->
-                    _state.update { it.copy(objectiveEvents = rows) }
+                    _state.update { if (it.selectedObjectiveId == id) it.copy(objectiveEvents = rows) else it }
                     refreshWorkbenchNow(id, rows)
                 } }
-                launch { dao.observeArtifacts(id).collect { rows -> _state.update { it.copy(objectiveArtifacts = rows) } } }
+                launch { dao.observeArtifacts(id).collect { rows -> _state.update { if (it.selectedObjectiveId == id) it.copy(objectiveArtifacts = rows) else it } } }
             }
         }
     }

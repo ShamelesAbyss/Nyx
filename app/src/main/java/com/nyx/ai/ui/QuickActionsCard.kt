@@ -1,5 +1,9 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCheckbox as Checkbox
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*

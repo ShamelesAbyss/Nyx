@@ -1,3 +1,6 @@
+# 0.9.3 — Project PRISM (unpublished source candidate)
+VersionCode 27, package `com.nyx.ai`. Replaces the crowded navigation with adaptive primary tabs, a complete Sections menu and a scrollable expanded rail. Adds deterministic owned Mission Results, recorded checks, full output, technical records and existing guarded Workbench file actions; no model formatting call. Shared Eclipse controls, readable type, wrapping actions, search in Arsenal/Gateways and grouped Settings improve all nine destinations. Preserves execution engines, permissions, Room schema, provider/native code and managed-server recovery. See [implementation and verification](PRISM_IMPLEMENTATION_REPORT.md). Stable downloads remain v0.9.2.1; no v0.9.3 tag or release is created by Codex.
+
 # Changelog
 
 ## 0.9.2.1 — Project Relay Ownership Hotfix (patch release)

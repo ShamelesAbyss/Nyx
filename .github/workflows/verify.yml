@@ -60,6 +60,13 @@ jobs:
           cp -R app/build/test-results/testDebugUnitTest verification-output/ci/jvm-test-results
           cp -R app/build/reports/tests/testDebugUnitTest verification-output/ci/jvm-test-report
           bash tools/console_ui_host_tests.sh current verification-output/console-ui
+      - name: PRISM control preservation and production screen interactions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 24c941cbd82d33b64c3b0e3c01b4bd1c1a68f750
+          python3 tools/check_prism_preservation.py
+          bash tools/prism_ui_host_tests.sh current verification-output/prism-ui
       - name: Retain bounded verification evidence (never CI-signed installation APKs)
         if: ${{ always() }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -80,3 +87,7 @@ jobs:
             verification-output/console-ui/screenshots/*.png
             verification-output/console-ui/inputs.json
             verification-output/console-ui/build.log
+            verification-output/prism-ui/test-results/*.xml
+            verification-output/prism-ui/screenshots/*.png
+            verification-output/prism-ui/inputs.json
+            verification-output/prism-ui/build.log

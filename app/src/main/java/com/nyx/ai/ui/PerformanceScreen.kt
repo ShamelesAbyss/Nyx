@@ -1,5 +1,11 @@
 package com.nyx.ai.ui
 
+import com.nyx.ai.ui.prism.PrismCard as Card
+import com.nyx.ai.ui.prism.PrismSwitch as Switch
+import com.nyx.ai.ui.prism.PrismText as Text
+import com.nyx.ai.ui.prism.PrismTextButton as TextButton
+import com.nyx.ai.ui.prism.PrismOutlinedButton as OutlinedButton
+import com.nyx.ai.ui.prism.PrismButton as Button
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,15 +20,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -273,7 +273,7 @@ private fun CalibrationCard(state: NyxState, vm: NyxViewModel, capabilities: Dev
             } else if (!gate.allowed && gate.reason != null) {
                 Text(gate.reason, color = Amber, fontSize = 10.sp, lineHeight = 14.sp)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { confirm = true },
                     enabled = gate.allowed && !busy && !performance.calibrationRunning,
