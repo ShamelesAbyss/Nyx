@@ -1,4 +1,4 @@
-# v0.9.3 Project PRISM candidate verification
+# v0.9.3 Project PRISM verification (published release)
 
 | Check | Actual result |
 |---|---|
@@ -7,13 +7,17 @@
 | Production-screen Compose interactions, API35 Robolectric native graphics | PASS: 48 checks (12 each at 360×640, 1000×800, 640×360 dp and 360×640 / fontScale1.7) |
 | Existing console host UI regressions | PASS: 24 checks, compact/expanded/short windows |
 | Source/control preservation | PASS: 235 archived primitive call sites, 7 supplemental clickable surfaces, 134 original VM binding occurrences accounted for; one reviewed Resume relocation; protected source byte preservation |
-| SDK/release checker positive/negative fixtures and independent APK gates | PASS: com.nyx.ai / 0.9.3 / 27, API26–37, ARM64-only, notices, ZIP+ELF 16KB alignment, matching build-only app/test signer |
-| Release signer / distribution packaging | NOT ACCEPTED locally: generated key differs from established upgrade signer; ephemeral verification does not permit packaging |
-| Android hardware, actual fold/IME/TalkBack/process/upgrade/Termux/provider/SAF/share | NOT RUN; independent Manus acceptance required |
+| SDK/release checker positive/negative fixtures and independent APK gates | PASS: com.nyx.ai / 0.9.3 / 27, API26–37, ARM64-only, notices, ZIP+ELF 16KB alignment, matching established app/test signer |
+| Release signer / distribution packaging | PASS: app and androidTest APKs signed with the established certificate `aa188be93aff8afda48936af2ddc4ee3e9a02a0cc6b4607addb09c8dd3a6bb55`; packaging gates accepted both |
+| Android emulator: nine destinations, expanded rail, 170% text, install-over-upgrade | PASS on API 30 x86_64 with ARM64 translation; exact APK hash `ec24559247a33efc62314b0f43ccc306ca91eac8d151b5d1f7cddfc19e98bbb7` |
+| Compiled PRISM instrumentation on the emulator | PASS: 12/12 tests in 272.6 s at default font scale |
+| Physical hardware, real fold/IME/TalkBack/process/Termux/provider/SAF/share | NOT RUN; emulator evidence is not physical-hardware or live-service acceptance |
+
+Final artifacts: app APK SHA-256 `ec24559247a33efc62314b0f43ccc306ca91eac8d151b5d1f7cddfc19e98bbb7` (35,599,095 bytes); androidTest APK SHA-256 `6ef6d94af58d4a3f09fa9638a453cfe9db5d1292df8c1f7ab48152d88806dfbb` (1,046,382 bytes). Both are signed by the established certificate and pass `zipalign -c -P 16 -v 4`. The app APK hash was identical before and after the final clean build, so the emulator acceptance binary is the release binary.
 
 The UI tests use real production composables with execution services intentionally unconstructed. Checks cover all nine destinations, Settings groups, search state, chat draft navigation/resizing without submission, owned historical results while another mission runs, real scroll gestures through long output, explicit callbacks, failed-file disabled exports unresolved server recovery keeping Start unavailable, and historical-console browsing hiding controls bound to another run. Native Canvas PNGs are host render evidence. A local Ubuntu OpenJDK21 daemon SIGSEGV occurred in AGP TestsAnalytics after a suite; its JVM crash log is retained in ignored `verification-output/prism-ui-state`. A fresh run passed all 48 checks without a build/production workaround. UI testing initially caught an adaptive-resource painter crash, cramped primary labels at large font, and test selectors that needed lazy-list scrolling; those were corrected and rerun.
 
-Local ignored evidence: `verification-output/prism-clean-final` (full suite/build and independent APK checks), final coordinated delivery verification under `verification-output/prism-delivery`, `verification-output/prism-ui-state-final` (48 checks/PNG renders), and `verification-output/prism-console-owned-final` (24 console checks). GitHub Actions reruns the clean suite and both host UI suites on the exact pushed commit and retains bounded XML/log/PNG evidence. The release candidate remains unpublished. Full architecture, evidence sources, limitations and exact release instructions are in [PRISM_IMPLEMENTATION_REPORT.md](PRISM_IMPLEMENTATION_REPORT.md). Physical acceptance matrix: [DEVICE_ACCEPTANCE.md](docs/prism/DEVICE_ACCEPTANCE.md).
+Local ignored evidence: `verification-output/prism-clean-final` (full suite/build and independent APK checks), final coordinated delivery verification under `verification-output/prism-delivery`, `verification-output/prism-ui-state-final` (48 checks/PNG renders), and `verification-output/prism-console-owned-final` (24 console checks). GitHub Actions reruns the clean suite and both host UI suites on the exact pushed commit and retains bounded XML/log/PNG evidence. v0.9.3 is published as the current release. The exact APK was installed over public v0.9.2.1 with `pm install -r`; versionCode 27, the same data directory and a `files/upgrade-marker.txt` marker survived, and the app launched. All nine destinations, the 1000×800 expanded rail and the 360×640/170% compact layout rendered from that APK. The compiled `PrismScreensInstrumentedTest` suite then passed 12/12 tests in 272.6 s at default font scale; the earlier 170% run’s single missing-node failure disappeared when the emulator was reset to default text size. Full architecture, evidence sources, limitations and exact release instructions are in [PRISM_IMPLEMENTATION_REPORT.md](PRISM_IMPLEMENTATION_REPORT.md). Physical acceptance matrix: [DEVICE_ACCEPTANCE.md](docs/prism/DEVICE_ACCEPTANCE.md).
 
 
 # NYX v0.9.2.1 — Project Relay Ownership Hotfix verification

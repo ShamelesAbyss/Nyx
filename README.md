@@ -10,7 +10,7 @@
 
 **Local intelligence. Independent execution. Real deliverables.**
 
-[![Release](https://img.shields.io/badge/release-v0.9.2.1-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2.1)
+[![Release](https://img.shields.io/badge/release-v0.9.3-8B5CF6?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.3)
 [![Android](https://img.shields.io/badge/Android-API%2037%20target-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#%E2%80%8D-build-from-source)
 
@@ -25,33 +25,33 @@
 ---
 
 > [!NOTE]
-> **Source candidate: v0.9.3 — Project PRISM** (`com.nyx.ai`, versionCode 27). An adaptive Eclipse interface puts owned Mission Results and available files first, adds a complete Sections menu and scrollable expanded rail, and groups advanced controls without changing execution authority. This is unpublished source; the stable downloads below remain **v0.9.2.1**. See the [PRISM implementation and Manus handoff](PRISM_IMPLEMENTATION_REPORT.md), [control inventory](docs/prism/CONTROL_PRESERVATION.md), and [candidate notes](RELEASE_NOTES_v0.9.3.md). Physical phone/foldable acceptance remains required before release.
+> **v0.9.3 — Project PRISM is the current release** (`com.nyx.ai`, versionCode 27). An adaptive Eclipse interface puts owned Mission Results and available files first, adds a complete Sections menu and scrollable expanded rail, and groups advanced controls without changing execution authority. The full JVM suite passed **1,251 tests across 137 suites with zero failures, errors or skips**; both APKs assembled with the established signing certificate and 16 KB alignment. The exact APK rendered all nine destinations, passed the compiled 12-test PRISM instrumentation suite, and updated in place over v0.9.2.1 with app data retained on an API 30 ARM64-translation emulator. **Release:** [GitHub release v0.9.3](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.3). See the [PRISM implementation and verification report](PRISM_IMPLEMENTATION_REPORT.md), [control inventory](docs/prism/CONTROL_PRESERVATION.md), and [release notes](RELEASE_NOTES_v0.9.3.md). Physical phone/foldable, IME, TalkBack, Termux and real-model acceptance remain required.
 
 > [!NOTE]
-> **v0.9.2.1 — Project Relay Ownership Hotfix is the current release** (`com.nyx.ai`, versionCode 26). It repairs a persistent PRoot ownership fence that could leave managed Ollama stuck in `ERROR` after an interrupted launch, adds evidence-based recovery and token/start-verified session termination, and bounds reconciliation so a launch no longer opens a stream of short-lived Termux sessions. The full JVM suite passed **1,233 tests across 136 suites with zero failures and errors**; both APKs assembled with the established signing certificate and 16 KB alignment. **Release:** [GitHub release v0.9.2.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2.1). See [patch release notes](RELEASE_NOTES_v0.9.2.1.md) and [implementation report](V0921_IMPLEMENTATION_REPORT.md).
+> **v0.9.2.1 — Project Relay Ownership Hotfix is the previous release** (`com.nyx.ai`, versionCode 26). It repairs a persistent PRoot ownership fence that could leave managed Ollama stuck in `ERROR` after an interrupted launch, adds evidence-based recovery and token/start-verified session termination, and bounds reconciliation so a launch no longer opens a stream of short-lived Termux sessions. The full JVM suite passed **1,233 tests across 136 suites with zero failures and errors**; both APKs assembled with the established signing certificate and 16 KB alignment. **Release:** [GitHub release v0.9.2.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2.1). See [patch release notes](RELEASE_NOTES_v0.9.2.1.md) and [implementation report](V0921_IMPLEMENTATION_REPORT.md).
 
 > [!IMPORTANT]
-> **Previous stable release: v0.9.2 — Project Relay** (`com.nyx.ai`, versionCode 25) required explicit local evidence in compact plans, routed bounded chat/readiness goals directly, gave bounded planning more output room, and exposed provider timing/token telemetry. Its published build passed **1,210 JVM tests across 135 suites with zero failures, errors or skips** and 16 KB alignment. See [Relay release notes](RELEASE_NOTES_v0.9.2.md) and [implementation report](V092_IMPLEMENTATION_REPORT.md).
+> **Earlier release: v0.9.2 — Project Relay** (`com.nyx.ai`, versionCode 25) required explicit local evidence in compact plans, routed bounded chat/readiness goals directly, gave bounded planning more output room, and exposed provider timing/token telemetry. Its published build passed **1,210 JVM tests across 135 suites with zero failures, errors or skips** and 16 KB alignment. See [Relay release notes](RELEASE_NOTES_v0.9.2.md) and [implementation report](V092_IMPLEMENTATION_REPORT.md).
 
 > **Historical public v0.9.1 — Project Ignition** added three explicitly approved Quick Actions that start fixed operations without model planning. **v0.9.0 — Project Bedrock** hardened autonomous execution and security boundaries, improved model capability detection, integrated development-to-Workbench artifacts, and documented reproducible verification. Read the [Ignition notes](RELEASE_NOTES_v0.9.1.md), [Bedrock notes](RELEASE_NOTES_v0.9.0.md), and [Bedrock implementation report](V090_IMPLEMENTATION_REPORT.md).
 
 > [!WARNING]
 > **The APK is ARM64-only and debug-signed.** It is a development build, not a Play Store or production-signed release. Install it only on a 64-bit ARM Android device. Existing NYX installations signed with the established debug certificate can update in place; back up anything important before experimenting.
 
-## ⬇️ Download NYX v0.9.2.1 — Project Relay
+## ⬇️ Download NYX v0.9.3 — Project PRISM
 
 <div align="center">
 
-### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2.1)
+### [**Get the latest release →**](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.3)
 
 | Asset | What it is |
 | :--- | :--- |
-| **[NYX-v0.9.2.1.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2.1/NYX-v0.9.2.1.apk)** | Primary installation APK. ARM64, debug-signed with the established NYX certificate. |
-| **[NYX-Source-v0.9.2.1.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2.1/NYX-Source-v0.9.2.1.zip)** | Source, tests, docs, licenses and Gradle wrapper; excludes private files, models, caches and build outputs. |
-| **[NYX-v0.9.2.1-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2.1/NYX-v0.9.2.1-androidTest.apk)** | Instrumentation tests for device verification; compiled, not executed on hardware. |
-| **[NYX-v0.9.2.1-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2.1/NYX-v0.9.2.1-SHA256SUMS.txt)** | Integrity manifest for every release asset except itself. |
-| **[NYX-v0.9.2.1-RELEASE_NOTES.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2.1/NYX-v0.9.2.1-RELEASE_NOTES.md)** | Release scope, verification evidence, and known limitations. |
-| **[NYX-v0.9.2.1-IMPLEMENTATION_REPORT.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.2.1/NYX-v0.9.2.1-IMPLEMENTATION_REPORT.md)** | Implementation, exact tests, package identity and remaining device checks. |
+| **[NYX-v0.9.3.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.3/NYX-v0.9.3.apk)** | Primary installation APK. ARM64, debug-signed with the established NYX certificate. |
+| **[NYX-Source-v0.9.3.zip](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.3/NYX-Source-v0.9.3.zip)** | Source, tests, docs, licenses and Gradle wrapper; excludes private files, models, caches and build outputs. |
+| **[NYX-v0.9.3-androidTest.apk](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.3/NYX-v0.9.3-androidTest.apk)** | Instrumentation tests for device verification; compiled and executed on the emulator, not physical hardware. |
+| **[NYX-v0.9.3-SHA256SUMS.txt](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.3/NYX-v0.9.3-SHA256SUMS.txt)** | Integrity manifest for every release asset except itself. |
+| **[NYX-v0.9.3-RELEASE_NOTES.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.3/NYX-v0.9.3-RELEASE_NOTES.md)** | Release scope, verification evidence, and known limitations. |
+| **[NYX-v0.9.3-IMPLEMENTATION_REPORT.md](https://github.com/ShamelesAbyss/Nyx/releases/download/v0.9.3/NYX-v0.9.3-IMPLEMENTATION_REPORT.md)** | Implementation, exact tests, package identity and remaining device checks. |
 
 </div>
 
@@ -520,6 +520,7 @@ The long-term vision is an autonomous assistant that runs on hardware you own, u
 
 | Version | Codename | Focus |
 | :--- | :--- | :--- |
+| **[v0.9.3](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.3)** | **Project PRISM** | Adaptive Eclipse shell, complete Sections menu, scrollable rail, deterministic owned Mission Results, searchable Arsenal/Gateways and grouped Settings |
 | **[v0.9.2.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2.1)** | **Project Relay Ownership Hotfix** | Evidence-based PRoot recovery, token/start-verified session stop, read-only reconciliation, bounded managed-Ollama polling |
 | **[v0.9.2](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.2)** | **Project Relay** | Required compact-plan evidence, direct conversational routing, larger bounded planning output, provider timing/token telemetry |
 | **[v0.9.1](https://github.com/ShamelesAbyss/Nyx/releases/tag/v0.9.1)** | **Project Ignition** | Explicit deterministic Quick Actions, fixed project tools, retained-artifact verification and timing |
@@ -558,7 +559,9 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The native ru
 
 | Document | Contents |
 | :--- | :--- |
-| [RELEASE_NOTES_v0.9.2.1.md](RELEASE_NOTES_v0.9.2.1.md) | Current ownership hotfix: recovery states, safe stop, bounded reconciliation and limits |
+| [RELEASE_NOTES_v0.9.3.md](RELEASE_NOTES_v0.9.3.md) | Current Project PRISM release: adaptive Eclipse UI, Mission Results, verification and limits |
+| [PRISM_IMPLEMENTATION_REPORT.md](PRISM_IMPLEMENTATION_REPORT.md) | PRISM implementation, control preservation, exact tests, emulator acceptance and remaining device checks |
+| [RELEASE_NOTES_v0.9.2.1.md](RELEASE_NOTES_v0.9.2.1.md) | Previous ownership hotfix: recovery states, safe stop, bounded reconciliation and limits |
 | [V0921_IMPLEMENTATION_REPORT.md](V0921_IMPLEMENTATION_REPORT.md) | Hotfix implementation, exact tests, package identity and remaining device checks |
 | [RELEASE_NOTES_v0.9.2.md](RELEASE_NOTES_v0.9.2.md) | Previous Project Relay release: planner evidence, routing, telemetry and limits |
 | [V092_IMPLEMENTATION_REPORT.md](V092_IMPLEMENTATION_REPORT.md) | Relay implementation, exact tests, package identity and remaining device checks |
@@ -622,6 +625,6 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 **NYX Eclipse AI** · built for the hardware you already own.
 
-<sub>v0.9.2.1 — Project Relay Ownership Hotfix · Apache-2.0 · ARM64 · API 26+</sub>
+<sub>v0.9.3 — Project PRISM · Apache-2.0 · ARM64 · API 26+</sub>
 
 </div>

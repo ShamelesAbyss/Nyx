@@ -1,4 +1,4 @@
-# Project PRISM v0.9.3 candidate interface
+# Project PRISM v0.9.3 interface
 Use Chat, Models and Autonomy in the compact primary navigation. **Sections** opens all nine destinations, including Settings; at large text sizes the primary bar shows Chat, Autonomy and Sections. Expanded windows use a scrollable rail. The header shows the current destination, connection/model state and a link to the most recent active or completed mission. Selecting a section or historical mission never starts work.
 
 In Autonomy → Objectives, select a historical mission to reopen **Mission Results**. Read the summary, recorded check counts, project observations and task output before opening technical details. Inspection describes only retained owned observations; generated prose cannot prove files exist. Development paths are recorded edits, not fresh byte checks. Local verification never proves factual accuracy. Full results and verified previews open a scrollable reader with explicit copy controls; large clipboard copies are labeled excerpts.
@@ -7,9 +7,13 @@ Available files expose the original Preview, Save as… and Share actions. Their
 
 Models groups inference choices and managed Ollama controls; reconciliation remains read-only. Arsenal and Gateways have local search. Settings groups Connections, Inference, Autonomy and Advanced. Endpoint credentials remain memory-only drafts. Existing execution, import, permission, repair, native-model and stop/recovery controls keep their original authority gates.
 
-Window size determines pane layout. The application retains drafts across section changes and avoids execution from recomposition. Actual device folding, IME, split-screen, rotation and installed-app state restoration must be validated before publication; host simulation is not hardware acceptance.
+Window size determines pane layout. The application retains drafts across section changes and avoids execution from recomposition. The exact release APK was exercised on an API 30 ARM64-translation emulator at 360×640, 1000×800 and 170% text, including all nine destinations and an in-place update over public v0.9.2.1 with app data retained. Physical folding, IME, split-screen, rotation, TalkBack, process-death restoration and real services remain unverified; emulator evidence is not physical-hardware acceptance.
 
-# NYX v0.9.2.1 — Project Relay Ownership Hotfix (current)
+# NYX v0.9.3 — Project PRISM (current release)
+
+v0.9.3 is published as the current stable release. The final clean network-enabled build passed in **2m 15s** with **1,251 JVM tests across 137 suites, zero failures/errors/skips**; both APKs use the established NYX signing certificate and pass 16 KB ZIP alignment. The exact APK rendered all nine destinations, the expanded rail and the 170% compact layout, and updated in place over v0.9.2.1 with app data retained on an API 30 ARM64-translation emulator. Physical phone/foldable, IME, TalkBack, process restoration, real Termux/Ollama/native inference and SAF/share acceptance remain unverified. See [release notes](RELEASE_NOTES_v0.9.3.md) and [implementation report](PRISM_IMPLEMENTATION_REPORT.md).
+
+# NYX v0.9.2.1 — Project Relay Ownership Hotfix (previous release)
 
 v0.9.2.1 is a patch over the published v0.9.2 release. It repairs a persistent PRoot ownership fence that could leave managed Ollama in `ERROR` after an interrupted launch. **Refresh / Reconcile** performs only read-only checks. It clears stale evidence only when the guest process probe completed, no NYX-owned guest process remains, no process or session carries the saved launch token, and either the saved detached session is verifiably absent or an old pending checkpoint is outside its grace period. If any observation is missing or ambiguous, Start stays unavailable and the card explains what could not be verified. Stop is shown only for a verified process or detached session handle; a session stop rechecks the token, namespace, PID and kernel start token immediately before `proot-distro kill` and then verifies absence. The managed-server poll is bounded and no longer performs full installation discovery on every tick, so a launch does not open a stream of short-lived Termux sessions. Physical Android, real Ollama/Termux, keyboard/fold and upgrade behavior remain unverified. See [patch release notes](RELEASE_NOTES_v0.9.2.1.md).
 
