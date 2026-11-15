@@ -163,4 +163,16 @@ class PrismScreensInstrumentedTest {
         assertEquals(0, actions)
     }
 
+    @Test fun autonomyModeRoundTripPreservesBothObjectiveAndWorkbenchDrafts() {
+        selected.intValue = 3
+        launch()
+        compose.onAllNodes(hasSetTextAction()).onFirst().performScrollTo().performTextInput("Retained objective draft")
+        compose.onNodeWithText("Workbench", useUnmergedTree = true).performClick()
+        compose.onAllNodes(hasSetTextAction()).onFirst().performScrollTo().performTextInput("Retained file draft")
+        compose.onNodeWithText("Objectives", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Retained objective draft").assertExists()
+        compose.onNodeWithText("Workbench", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Retained file draft").assertExists()
+    }
+
 }

@@ -219,6 +219,7 @@ internal fun NyxDestinationContent(destination: Int, state: NyxState, vm: NyxVie
 @Composable
 private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
     var mode by rememberSaveable { mutableStateOf(0) }
+    val modeState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     Column(Modifier.fillMaxSize()) {
         com.nyx.ai.ui.prism.PrismActionRow(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -240,10 +241,12 @@ private fun AutonomyScreen(state: NyxState, vm: NyxViewModel) {
                 OutlinedButton(onClick = { mode = 2 }) { Text("Workbench") }
             }
         }
+        modeState.SaveableStateProvider(mode) {
         when (mode) {
             0 -> ObjectivesPanel(state, vm, openWorkbench = { mode = 2 }, openTerminal = { mode = 1 })
             1 -> TerminalPanel(state, vm)
             else -> com.nyx.ai.ui.WorkbenchScreen(state, vm)
+        }
         }
     }
 }
