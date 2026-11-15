@@ -94,7 +94,7 @@ import com.nyx.ai.ui.consoleTextParts
     }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> vm.saveWorkbenchExport(uri) }
     if (result != null) {
-        val active = state.objectiveRunning && ExecutionMonitor.state.value.objectiveId == objective?.id
+        val active = state.objectiveRunning && ExecutionMonitor.state.value.running && ExecutionMonitor.state.value.objectiveId == objective?.id
         MissionResultsCard(result, onTechnical = { technical = true }, onWorkbench, onTerminal, onReview,
             onPause = if (active) vm::pauseObjective else null,
             onCancel = if (active && objective != null) ({ vm.cancelObjective(objective.id) }) else null)

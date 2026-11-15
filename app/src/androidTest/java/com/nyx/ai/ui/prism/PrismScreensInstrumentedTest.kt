@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
 class PrismScreensInstrumentedTest {
     @get:Rule val compose = createComposeRule()
     private val selected = mutableIntStateOf(0)
+    @org.junit.After fun resetExecution() { com.nyx.ai.autonomy.ExecutionMonitor.update { com.nyx.ai.autonomy.ExecutionSnapshot() } }
     private fun viewModel(): NyxViewModel {
         val field = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
         val vm = (field.get(null) as sun.misc.Unsafe).allocateInstance(NyxViewModel::class.java) as NyxViewModel
@@ -122,11 +123,16 @@ class PrismScreensInstrumentedTest {
 
     @Test fun historicalSelectionRemainsVisibleWhileAnotherMissionRuns() {
         selected.intValue = 3
+        com.nyx.ai.autonomy.ExecutionMonitor.begin("active")
         val history = ObjectiveEntity("old", "Saved historical mission", "goal", status = "completed", createdAt = 1, updatedAt = 2)
         val active = ObjectiveEntity("active", "Other running mission", "goal", status = "running", createdAt = 3, updatedAt = 4)
         launch(NyxState(objectives = listOf(active, history), selectedObjectiveId = "old", objectiveRunning = true))
         compose.onNodeWithTag("mission_result_status").assertTextEquals("Status: completed")
         compose.onNodeWithTag("mission_result_summary").assertTextContains("incomplete", substring = true)
+        compose.onNodeWithText("Mission controls, workers & readiness").performScrollTo().assertExists()
+        compose.onNodeWithText("Open live console").performScrollTo().performClick()
+        compose.onNodeWithText("Pause").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Close console").performClick()
         compose.onNodeWithText("Workbench", useUnmergedTree = true).performClick()
         compose.onAllNodes(hasScrollToIndexAction()).onFirst().performScrollToNode(hasTestTag("mission_result_status"))
         compose.onNodeWithTag("mission_result_status").assertTextEquals("Status: completed")
@@ -138,6 +144,23 @@ class PrismScreensInstrumentedTest {
         compose.onNodeWithText("Reconcile").assertIsDisplayed()
         compose.onNodeWithText("Start").assertDoesNotExist()
         compose.onNodeWithText("Ownership recovery is unresolved", substring = true).assertExists()
+    }
+
+    @Test fun browsingAnotherConsoleRunNeverOffersCurrentRunControls() {
+        val events = listOf(
+            com.nyx.ai.autonomy.WorkerActivity("old-e", 1, "old", "task", com.nyx.ai.autonomy.WorkerActivityKind.INFO, "Old", "Recorded event", runId = "old-run", status = "failed"),
+            com.nyx.ai.autonomy.WorkerActivity("live-e", 2, "active", "task", com.nyx.ai.autonomy.WorkerActivityKind.INFO, "Live", "Recorded event", runId = "live-run", status = "running"))
+        var actions = 0
+        compose.setContent { PrismTheme { com.nyx.ai.ui.WorkerConsoleDialog(events, true, "Active mission", "running", "running",
+            historyActivities = events, currentObjectiveId = "active", currentRunId = "live-run", objectiveTitles = mapOf("old" to "Older run", "active" to "Active mission"),
+            onDismiss = {}, onPause = { actions++ }, onResume = { actions++ }, onCancel = { actions++ }) } }
+        compose.onNodeWithText("Pause").assertExists()
+        compose.onNodeWithText("History · 2").performClick()
+        compose.onNodeWithText("Older run", substring = true).performClick()
+        compose.onNodeWithText("Pause").assertDoesNotExist()
+        compose.onNodeWithText("Resume").assertDoesNotExist()
+        compose.onNodeWithText("Cancel").assertDoesNotExist()
+        assertEquals(0, actions)
     }
 
 }

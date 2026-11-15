@@ -638,6 +638,8 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
     LaunchedEffect(liveObjective?.id, state.selectedObjectiveId) {
         if (state.selectedObjectiveId == null && liveObjective != null) vm.selectObjective(liveObjective.id)
     }
+    val execution by com.nyx.ai.autonomy.ExecutionMonitor.state.collectAsState()
+    val displayedMissionRunning = state.objectiveRunning && execution.running && liveObjective?.id == execution.objectiveId
     val graphLoaded = liveObjective != null && state.selectedObjectiveId == liveObjective.id
     val missionTasks = if (graphLoaded) {
         state.objectiveTasks.filter { it.objectiveId == liveObjective?.id }.sortedBy { it.ordinal }
@@ -679,9 +681,9 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
         SystemReadinessCard(state = state, mission = liveObjective)
         WorkerActivityEntry(
             activities = consoleActivities,
-            running = state.objectiveRunning,
+            running = displayedMissionRunning,
             objectiveTitle = liveObjective?.title.orEmpty(),
-            phase = state.objectivePhase,
+            phase = if (displayedMissionRunning) state.objectivePhase else liveObjective?.status.orEmpty(),
             status = liveObjective?.status.orEmpty(),
             onOpen = { showConsole = true },
         )
@@ -689,9 +691,9 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
             mission = liveObjective,
             tasks = missionTasks,
             taskGraphLoaded = graphLoaded,
-            phase = if (state.objectiveRunning && liveObjective?.status == "running") state.objectivePhase else liveObjective?.status.orEmpty(),
+            phase = if (displayedMissionRunning) state.objectivePhase else liveObjective?.status.orEmpty(),
             activeTask = activeTask?.title,
-            isRunning = state.objectiveRunning && liveObjective?.status == "running",
+            isRunning = displayedMissionRunning,
             onPause = vm::pauseObjective,
             onCancel = { liveObjective?.let { vm.cancelObjective(it.id) } },
             onReviewResume = { liveObjective?.let { confirmResumeFor = it.id } },
@@ -730,7 +732,7 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
             onToggle = { id -> expandedTaskIds = if (id in expandedTaskIds) expandedTaskIds - id else expandedTaskIds + id },
             onLoadTaskGraph = { liveObjective?.let { vm.selectObjective(it.id) } },
         )
-        if (liveObjective != null && state.objectiveStreaming.isNotBlank()) OutputCard("Live model output", state.objectiveStreaming)
+        if (displayedMissionRunning && state.objectiveStreaming.isNotBlank()) OutputCard("Live model output", state.objectiveStreaming)
         if (liveObjective != null && graphLoaded && state.objectiveArtifacts.isNotEmpty()) {
             SectionLabel("RECORDED TEXT REPORTS", "Task output records; retained files are shown in Mission Results / Workbench")
             state.objectiveArtifacts.forEach { artifact -> OutputCard(artifact.name, artifact.content) }
@@ -768,9 +770,9 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
     )
     if (showConsole) WorkerConsoleDialog(
         activities = consoleActivities,
-        running = state.objectiveRunning,
+        running = displayedMissionRunning,
         objectiveTitle = liveObjective?.title.orEmpty(),
-        phase = state.objectivePhase,
+        phase = if (displayedMissionRunning) state.objectivePhase else liveObjective?.status.orEmpty(),
         objectiveStatus = liveObjective?.status.orEmpty(),
         activeTask = activeTask?.title.orEmpty(),
         historyActivities = activities,
@@ -778,14 +780,15 @@ private fun ObjectivesPanel(state: NyxState, vm: NyxViewModel, openWorkbench: ()
         currentRunId = consoleRun?.runId,
         objectiveTitles = state.objectives.associate { it.id to it.title },
         onDismiss = { showConsole = false },
-        onPause = vm::pauseObjective,
+        onPause = if (displayedMissionRunning) vm::pauseObjective else null,
         onResume = liveObjective?.let { objective -> { confirmResumeFor = objective.id } },
         onCancel = liveObjective?.let { objective -> { vm.cancelObjective(objective.id) } },
         onClearHistory = { objectiveId, runId ->
             WorkerActivityBus.clearHistory(
                 preserveObjectiveId = objectiveId,
                 preserveRunId = runId,
-                additionallyPreserve = listOf(liveObjective?.id to consoleActivities.lastOrNull()?.runId),
+                additionallyPreserve = listOf(liveObjective?.id to consoleActivities.lastOrNull()?.runId,
+                    execution.objectiveId to execution.objectiveId?.let { WorkerConsoleModel.currentRun(activities, it)?.runId }),
             )
         },
     )

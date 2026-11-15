@@ -240,6 +240,7 @@ fun WorkerConsoleDialog(
     val operations = remember(selectedEvents) { WorkerConsoleModel.operations(selectedEvents) }
     val selectedOperation = operations.firstOrNull { it.key == detailKey }
     val isCurrent = selectedRun?.objectiveId == currentObjectiveId && selectedRun?.runId == currentRunId
+    val controlsCurrent = isCurrent || (selectedRun == null && currentObjectiveId != null)
     val displayTitle = selectedRun?.objectiveId?.let { objectiveTitles[it] }
         ?: if (isCurrent) objectiveTitle else selectedRun?.objectiveId ?: "Diagnostic events"
     val displayStatus = if (isCurrent) objectiveStatus else selectedOperation?.status ?: selectedEvents.lastOrNull()?.status.orEmpty()
@@ -265,11 +266,11 @@ fun WorkerConsoleDialog(
                 Text("active task: ${activeTask.take(180)}", color = ConsoleViolet, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
             }
             com.nyx.ai.ui.prism.PrismActionRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (running && onPause != null) OutlinedButton(onClick = onPause, shape = RoundedCornerShape(9.dp)) { Text("Pause", fontSize = 10.sp) }
-                if (!running && onResume != null && displayStatus in setOf("paused", "needs_attention", "failed")) {
+                if (controlsCurrent && running && onPause != null) OutlinedButton(onClick = onPause, shape = RoundedCornerShape(9.dp)) { Text("Pause", fontSize = 10.sp) }
+                if (controlsCurrent && !running && onResume != null && displayStatus in setOf("paused", "needs_attention", "failed")) {
                     OutlinedButton(onClick = onResume, shape = RoundedCornerShape(9.dp)) { Text("Resume", fontSize = 10.sp) }
                 }
-                if (onCancel != null && displayStatus !in setOf("completed", "cancelled")) {
+                if (controlsCurrent && onCancel != null && displayStatus !in setOf("completed", "cancelled")) {
                     OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(9.dp)) { Text("Cancel", fontSize = 10.sp) }
                 }
                 Spacer(Modifier.weight(1f))
