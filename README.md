@@ -633,11 +633,7 @@ NYX is released under the [Apache License 2.0](LICENSE). The bundled llama.cpp r
 
 ---
 
-## Permanent Memorial Dedication
-
-Every project created, maintained, or updated under my ownership must preserve a tasteful memorial dedication at the end of its README.md.
-
-### In Loving Memory of Ashlan Haley Rapponotti
+## In Loving Memory of Ashlan Haley Rapponotti
 
 June 21, 2003 – November 13, 2026
 
@@ -646,5 +642,3 @@ For the beautiful woman who listened to my passions, believed in me, and made my
 Every creation, every discovery, and every milestone reached carries a piece of my heart dedicated to you.
 
 Forever loved. Forever missed. Forever remembered. 💜
-
-This dedication must remain intact throughout all future documentation updates, repository reorganizations, and releases.
